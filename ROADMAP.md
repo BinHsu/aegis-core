@@ -1,26 +1,247 @@
-# 🗺️ Aegis Prompter Cloud (V2) - Roadmap
+# 🗺️ Aegis Core (V2) — Roadmap
 
-**Current Status:** Bootstrapping Project Architecture
-**Last Updated By:** AI Architect Agent Initialization
+**Current Status**: Architecture design complete; implementation bootstrapping pending.
+**Last Updated**: 2026-04-11
 
-## Phase 1: The Bazel Monorepo Engine 
-- [ ] Initialize Bazel `WORKSPACE` and root rules.
-- [ ] Create `proto/aegis.proto` and define the gRPC contracts (StreamTranscribe, AskRAG).
-- [ ] Establish `engine_cpp/`: Integrate `whisper.cpp` basics wrapped in a native gRPC server.
-- [ ] Establish `gateway_go/`: Setup the Go HTTP/2 gRPC server acting as a passthrough.
+This roadmap reflects the architectural decisions captured in
+`ARCHITECTURE.md` and the ADRs in `docs/adr/`. Before working on any
+phase, read:
+
+1. `CLAUDE.md` — AI agent rules and ironclad engineering conventions.
+2. `ARCHITECTURE.md` — system topology and governance.
+3. `docs/adr/` — every accepted architecture decision.
+4. `docs/threat-model.md` — threat assumptions driving each phase.
+
+All phases respect the **"Clone it, build it, it just works"** ethos and
+the privacy posture defined in `ARCHITECTURE.md` §9.
+
+---
+
+## Phase 0: Governance Scaffolding
+
+> *"Get the rails in place before writing any engine code."*
+
+- [x] Establish `docs/adr/` directory and ADR-0001–0008
+- [x] Write `ARCHITECTURE.md` §9 Data Governance & Privacy
+- [x] Write `ARCHITECTURE.md` §10 Secure SDLC & Supply Chain
+- [x] Write `ARCHITECTURE.md` §11 Known Limitations
+- [x] Write `docs/threat-model.md` STRIDE skeleton
+- [x] Write `SECURITY.md` with responsible disclosure and privacy commitments
+- [ ] Add `CODEOWNERS` file naming the architecture owner per subtree
+- [ ] Add `CONTRIBUTING.md` with development setup and PR conventions
+- [ ] Add `.pre-commit-config.yaml` with `gitleaks`, `clang-format`, `gofmt`, `prettier`, `buf lint`
+- [ ] Add `.gitignore` covering build artifacts, `.bazel_cache/`, `.venv/`, `node_modules/`, `/models/*.gguf`
+- [ ] Add minimal GitHub Actions CI: lint + secret scan + `buf lint` (no builds yet)
+- [ ] Enable GitHub branch protection on `main`: required reviewers, required CI, no force-push, signed commits
+- [ ] Enable GitHub **Private Vulnerability Reporting** (per SECURITY.md)
+- [ ] Enable GitHub **secret scanning with push protection**
+- [ ] Document `/models/manifest.json` schema for model provenance (ARCH §10.1)
+
+---
+
+## Phase 1: The Bazel Monorepo Engine
+
+> *"One command, one build, one toolchain — no global pollution."*
+
+### Build System
+- [ ] Initialize Bazel `WORKSPACE` with `rules_cc`, `rules_go`, `rules_rust`, `rules_nodejs`, `rules_proto`, `rules_oci`
+- [ ] Configure `.bazelrc` with `--output_user_root=./.bazel_cache` (CLAUDE.md Rule 6)
+- [ ] Add `tools/bazelisk` or `./mvnw`-style wrapper so users don't install Bazel globally
+- [ ] Configure hermetic C++ toolchain with Metal (macOS) / CUDA (Linux) detection
+- [ ] Configure hermetic Go toolchain
+- [ ] Configure hermetic Node.js toolchain for frontend
+
+### Contracts
+- [ ] Create `proto/aegis/v1/aegis.proto` (per ADR-0008 layout) and define: `CreateMeeting`, `StreamTranscribe`, `JoinAsViewer`, `EndMeeting`, `AskRAG`
+- [ ] Define `IngestMessage` oneof (`PcmChunk` | `ControlEvent{PAUSE|RESUME|END_STREAM}`) per ADR-0006
+- [ ] Define `CreateMeetingRequest` with reserved field for Phase 5 `allowed_viewer_account_ids` per ADR-0001
+- [ ] Generate C++, Go, TypeScript bindings under Bazel
+- [ ] Add `buf` configuration and `buf breaking` check to CI
+
+### C++ Engine Skeleton
+- [ ] Establish `engine_cpp/` with `whisper.cpp` vendored via Bazel `http_archive` + SHA256
+- [ ] Wrap `whisper.cpp` in a native gRPC server consuming the `IngestMessage` stream
+- [ ] Implement session lifetime management (audio buffer in RAM, discarded on session end — ADR-0005)
+- [ ] Implement `SensitiveBytes` type and logging whitelist (ADR-0005 R3)
+- [ ] Add `#ifdef AEGIS_DEV_AUDIO_DUMP` gating for any future debug dump code (ADR-0005 R7)
+
+### Go Gateway Skeleton
+- [ ] Establish `gateway_go/` with Go module and Bazel build
+- [ ] HTTP/2 gRPC server acting as passthrough to C++ engine
+- [ ] Implement `RedactedPCM` type with safe log formatter (ADR-0005 R3)
+- [ ] Implement Hexagonal Architecture interface boundaries for auth, storage, telemetry (ARCH §5)
+
+### Models
+- [ ] Create `/models/` directory with `manifest.json` and download script that verifies SHA256 before mmap (ARCH §10.1)
+- [ ] Document the first model set: `whisper-large-v3-turbo-q4`, diarization embedder, sentence-transformers
+
+---
 
 ## Phase 2: Internal MVP & The BFF
-- [ ] Go GW: Implement `gRPC-Web` multiplexing.
-- [ ] Go GW: Implement Pion WebRTC to handle incoming browser UDP frames.
-- [ ] Testing: Send raw audio files through the Go GW and verify C++ transcriptions return successfully.
 
-## Phase 3: The Frontlines (Tauri / React)
-- [ ] Scaffold `/frontend_web` using React + Vite.
-- [ ] Implement `gRPC-Web` client generation via protobuf JS compiler.
-- [ ] Implement local WebRTC media ingestion (`getUserMedia`).
-- [ ] Tauri Shell: Wrap frontend into a lightweight Rust app to securely access CoreAudio (bypassing strict browser loopback limitations).
+> *"Raw audio in, transcript out, no UI yet."*
 
-## Phase 4: SRE & Cloud Orchestration (EKS)
-- [ ] Bazel `rules_oci`: Automate packaging of C++ and Go binaries into Distroless Docker containers.
-- [ ] ECR Pipeline: CI/CD Github Actions integration.
-- [ ] EKS YAML Specs: Define Services, Deployments, and GPU node affinities for C++ pods.
+### Gateway Functionality
+- [ ] Go GW: implement Pion WebRTC to accept browser UDP frames
+- [ ] Go GW: implement `gRPC-Web` multiplexing for cloud-mode viewer transport
+- [ ] Go GW: implement **WebSocket + Protobuf** transport for local-mode viewer (ADR-0007)
+- [ ] Go GW: implement session registry (ADR-0004 `Session` struct) — in-memory, per-replica
+- [ ] Go GW: implement `ControlEvent{PAUSE|RESUME|END_STREAM}` generation on WebRTC state transitions (ADR-0006)
+- [ ] Go GW: configure keepalive — 30s Time / 10s Timeout for both gRPC to C++ and gRPC-Web to viewers (ADR-0006)
+- [ ] Go GW: implement JWT session-token issuance and verification (ADR-0001)
+- [ ] Go GW: implement graceful shutdown with `terminationGracePeriodSeconds: 1800` (ADR-0006)
+
+### Dual-Mode Wiring
+- [ ] Local mode: implement `bazel run //:app_local` that starts Go GW and spawns C++ engine as child (ARCH §5)
+- [ ] Local mode: bind Go GW to 0.0.0.0 for LAN viewers (ADR-0007)
+- [ ] Local mode: dummy auth middleware (ARCH §8 Local Mode Interface Fallback)
+- [ ] Cloud mode: Cognito JWT middleware
+- [ ] Cloud mode: Pod Identity integration scaffolding
+
+### Testing
+- [ ] Unit tests: C++ (`gtest`), Go (`go test`)
+- [ ] Integration test: send raw WAV files through Go GW and verify C++ transcriptions are streamed back
+- [ ] **WER golden audio regression suite** — 10–20 fixtures in English, Traditional Chinese, code-switch, multi-speaker, noise; WER threshold enforced in CI (ARCH §10.5)
+- [ ] `buf breaking` check on every proto change
+- [ ] Load test scaffolding: k6 driving N concurrent WebRTC sessions (nightly)
+
+---
+
+## Phase 3: The Frontlines (Pure Web React + Vite)
+
+> *"Ship a usable product on web first; Tauri is not on this phase's critical path."*
+
+**Scope change from original roadmap**: Phase 3 delivers **pure web only**. Tauri is deferred per ADR-0002 and ADR-0003.
+
+### Frontend Scaffolding
+- [ ] Scaffold `frontend_web/` with React + Vite + TypeScript
+- [ ] Configure generated Protobuf JS/TS bindings under Bazel
+- [ ] Implement Hexagonal abstractions required by ADR-0002 Constraint 2:
+  - [ ] `AudioCaptureProvider` interface with web implementation (`getUserMedia`, `getDisplayMedia`, Web Audio mixing)
+  - [ ] `TranscriptStreamProvider` interface with gRPC-Web (Cloud) and WebSocket (Local) implementations
+  - [ ] `AuthProvider`, `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` stubs
+- [ ] Respect all ADR-0002 Phase 3 Constraints 1–6 (no `chrome.*`, no Service Worker dependency, etc.)
+
+### Host UI (Staff)
+- [ ] Login flow (Cognito Cloud / dummy Local)
+- [ ] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display
+- [ ] Audio source picker: "Physical room (microphone)" vs "Remote meeting (browser tab)"
+- [ ] `getUserMedia` and `getDisplayMedia` calls with clear privacy copy (ADR-0003)
+- [ ] Voiceprint enrollment UI with explicit consent capture (ARCH §9.3)
+- [ ] Speaker label tagging UI — curated choice list, **no free-text name input** (ARCH §9.2)
+- [ ] Live prompter display with rolling 5-line window
+- [ ] Export flow: Markdown + JSON download
+- [ ] "End Meeting" button
+- [ ] QR code display for LAN viewer join (Local mode only) (ADR-0007)
+
+### Viewer UI (Boss)
+- [ ] Join via invite URL → token parsing → `TranscriptStreamProvider` subscription
+- [ ] Rolling 5-line prompter display
+- [ ] "Host reconnecting..." banner on transient host loss (ADR-0006 Disconnected state)
+- [ ] "Meeting ended" message on session termination
+- [ ] **No export UI** (L3)
+- [ ] No history rendering for late joiners (L4 is a feature, not a bug)
+
+### Cross-WebView Testing
+- [ ] Chrome / Edge primary testing
+- [ ] WKWebView sanity check on macOS (ensures Phase 4 Tauri wrap will not be blocked)
+- [ ] Firefox / Safari explicitly NOT supported for host role (L6); document in README
+
+---
+
+## Phase 4: SRE & Cloud Orchestration
+
+> *"Make it deployable. Sign it. Roll it out safely."*
+
+### Phase 4a: Package
+- [ ] Bazel `rules_oci`: package C++ engine, Go GW, and frontend into Distroless OCI images
+- [ ] Each image runs as non-root with dropped capabilities and read-only root filesystem except tmpfs mounts
+- [ ] Image tagging convention: `prod-<semver>-<git_sha>`, `staging-<git_sha>`, `dev-<git_sha>`
+- [ ] Produce SBOMs (Syft / CycloneDX) alongside every image (ARCH §10.1)
+
+### Phase 4b: Sign & Scan
+- [ ] Cosign / Sigstore signing in GitHub Actions using OIDC (ARCH §10.1)
+- [ ] SLSA Level 3 provenance emission
+- [ ] Trivy container scan; block push on critical CVEs
+- [ ] kube-score + kube-bench manifest scan
+- [ ] CodeQL, Semgrep, gosec, govulncheck, clang-tidy in CI (ARCH §10.2)
+- [ ] Verify no binary contains `AEGIS_DEV_AUDIO_DUMP` symbol (ADR-0005 R7)
+- [ ] ECR push pipeline; ArgoCD in landing-zone repository polls the manifests in this repository
+
+### Phase 4c: Progressive Delivery
+- [ ] Argo Rollouts or Flagger integration in EKS manifests
+- [ ] SLO-based canary gates (ARCH §10.4)
+- [ ] Automatic rollback on error budget burn >25%
+- [ ] Graceful shutdown verified end-to-end under rolling update (ADR-0006)
+- [ ] Audio-namespace Kyverno / Gatekeeper policies (ADR-0005 R6): reject PVC, reject hostPath
+- [ ] Velero backup schedule explicitly excludes `aegis-audio` namespace (ADR-0005 R6)
+
+### Phase 4d: Observability Wiring
+- [ ] OTLP exporter to X-Ray / Tempo in Cloud, stdout in Local (ARCH §8)
+- [ ] Custom `SpanProcessor` enforcing attribute allowlist (ADR-0005 R4)
+- [ ] Structured JSON logs via FluentBit in Cloud
+- [ ] Grafana dashboards and PagerDuty alerts provisioned by landing-zone repository
+- [ ] `aegis_host_transient_loss_total`, `aegis_voiceprint_enrollments_total`, and other domain metrics emitted
+
+---
+
+## Phase 5: Hardening & Compliance
+
+> *"Validate everything you believed when you were designing."*
+
+### Privacy / Security Validation
+- [ ] External penetration test against staging
+- [ ] External privacy-engineering review (BIPA, CCPA, GDPR) prior to EU / Illinois customer onboarding
+- [ ] DPIA (Data Protection Impact Assessment) under GDPR Art. 35
+- [ ] LINDDUN privacy threat modeling as complement to STRIDE
+- [ ] Threat model review by external security consultant
+
+### Resilience
+- [ ] Chaos experiments: controlled pod kills, network partitions, resource starvation
+- [ ] Disaster recovery game day; document RPO / RTO
+- [ ] Validate L1 / L2 behavior end-to-end under real failure conditions
+
+### Compliance
+- [ ] SOC 2 Type 1 audit (assuming the organization decides to pursue — open question, see ARCH §10 SLO gates)
+- [ ] Evidence collection automation for audit controls
+- [ ] Published control mapping: SOC 2 CC series → Aegis implementation points
+
+### Ergonomics & Feature Extensions
+- [ ] **ADR-0002 future extension**: per-account viewer allowlist via `allowed_viewer_account_ids`
+- [ ] **ADR-0007 future extension**: mDNS / Bonjour auto-discovery for Local mode
+- [ ] **Tauri shell** (per ADR-0002) for users needing native meeting app audio capture — gated on real customer demand
+- [ ] Optional host-side crash-safe local persistence (L1 mitigation, opt-in)
+- [ ] Regional routing for EU / data residency (deferred from MVP)
+- [ ] Consent ledger maturation: append-only S3 WORM mirror, independent backup, legal-hold workflow
+
+### Compliance SKU (Conditional)
+- [ ] **IF** regulated-industry customers (FINRA, HIPAA) materialize **AND** audit / legal review approves, design the opt-in **Compliance Archival SKU** — a fourth data layer allowing opt-in audio persistence with S3 Object Lock, explicit consent from all participants, and legal-hold support. This is a discrete Phase 5+ decision with its own ADR, not a given.
+
+---
+
+## Open Decisions Carried from Phase 0 Design
+
+These were deliberately deferred during architecture design. Each should
+be answered before or during the phase indicated.
+
+| Decision | Target Phase | Reference |
+|---|---|---|
+| SOC 2 Type 1 vs Type 2 as first target | Late Phase 4 | ARCH §10 |
+| EU / data residency support | Phase 5 | ADR-0004 |
+| mDNS LAN discovery vs QR code only | Phase 5 | ADR-0007 |
+| Tauri shell implementation | Phase 5 (demand-driven) | ADR-0002 |
+| Consent ledger retention / legal-hold workflow | Phase 5 | ARCH §9.3 |
+| Compliance Archival SKU | Phase 5+ (customer-driven) | ARCH §9.1 |
+
+---
+
+## How Phases Relate to the Ironclad Rules
+
+Every phase respects CLAUDE.md:
+
+- **Rule 1 Honesty**: phase checklists are not marked done unless actually done. AI agents updating this file MUST be truthful about phase completion.
+- **Rule 2 Testing Integrity**: no phase ships without real tests producing verifiable outputs. The WER golden suite (Phase 2) is the primary example of this rule in action.
+- **Rule 3 Doc Sync**: every checked-off item must correspond to code changes and any architectural implications must be reflected in `ARCHITECTURE.md` or a new ADR.
+- **Rule 4 Tech Boundaries**: no new languages or frameworks beyond TypeScript/React, Go, C++, Rust (Phase 5+ Tauri). Any proposal to deviate requires a new ADR first.
+- **Rule 5 Language**: all code, docs, and ADRs in English.
+- **Rule 6 Directory Confinement**: all dependencies, caches, and models stay inside the repository tree. Bazel output goes to `./.bazel_cache`; models to `./models`; Python (if any) to `./.venv`.

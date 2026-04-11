@@ -36,15 +36,33 @@ The Go GW acts as a "Fleet Manager" routing tenants to their respective C++ engi
 *   **Tier 1 (VIP/Enterprise)**: Strictly hardware-isolated (Node Affinity or AWS Fargate). Bootstrapped via Event-Driven architectures (e.g., calendar integrations triggering capacity warmup 15 minutes prior to the event).
 
 ### 4. Data Flow (Audio Pipeline)
-1. Staff opens Tauri App (or Web Browser) and grabs Microphone (via WebAPI or OS CoreAudio).
-2. Audio stream is sent via **WebRTC** to the Go Gateway.
-3. Go GW unwraps the WebRTC UDP packets into raw PCM bytes.
-4. Go GW pushes raw PCM bytes over a **Bidirectional gRPC Stream** to the C++ Engine.
-5. C++ Engine transcribes and performs **Speaker Diarization**. Because we capture a single mixed audio track (simplifying hardware), the AI isolates speakers (e.g., Speaker_0, Speaker_1).
-6. **VIP Identification**: The system maps an anonymous speaker to "The Boss" using either:
-    - *Voice Enrollment*: Pre-meeting voiceprint cosine similarity matching.
-    - *Human-in-the-loop*: The Staff manually tags a speaker ID from the Frontend UI.
-7. C++ Engine streams standard Protobuf answers back to Go GW, which pushes to the Client UI via gRPC-Web or WebSockets.
+
+Aegis Core operates as a **one-host, many-viewer broadcast** topology. Every meeting has exactly one host device (the staff machine) that captures audio and drives inference, and zero or more viewer devices (the boss, additional staff, observers) that receive live transcript and prompter output. See `docs/adr/0001-session-join-mechanism.md` for the session join model.
+
+**MVP capture is pure web** — no native shell is required. Tauri is an architectural option reserved for Phase 4+ and is not on the MVP critical path. See `docs/adr/0002-desktop-shell-technology.md` and `docs/adr/0003-host-audio-capture-strategy.md`.
+
+1. **Session creation (staff host)**. Staff opens Aegis in Chrome or Edge, authenticates (Cognito in Cloud mode; local dummy auth in Local mode), selects a RAG corpus bound to their account, and presses "New Meeting." The Go Gateway returns a `session_id` and a short-lived JWT viewer join token (per ADR-0001 Option B).
+2. **Audio capture (pure web, three modes)**:
+    - *Physical conference room*: `getUserMedia({audio: …})` on the laptop microphone.
+    - *Remote meeting with counterparty on a web meeting client* (Zoom Web / Google Meet / Teams Web): `getDisplayMedia({video: true, audio: true})` capturing the meeting browser tab; the video track is discarded immediately.
+    - *Mixed mic + tab*: Web Audio API combines the two `MediaStream`s into one output stream via `MediaStreamAudioSourceNode` → `MediaStreamAudioDestinationNode`.
+3. **Audio transport**. The unified `MediaStream` is sent via **WebRTC** from the host to the Go Gateway. The host device is the only place in the system that ever holds the full session audio.
+4. **Gateway fan-in**. Go Gateway unwraps WebRTC UDP packets into raw PCM and pushes raw PCM over a **bidirectional gRPC stream** to the C++ Engine. Control messages (`PAUSE`, `RESUME`, `END_STREAM`) share the same stream to handle transient disconnects cleanly, per `docs/adr/0006-liveness-disconnect-handling.md`.
+5. **Inference**. The C++ Engine transcribes and performs **speaker diarization**. Because we capture a **single mixed audio track** (simplifying hardware), the AI isolates speakers as anonymous labels `Speaker_0`, `Speaker_1`, …. Audio PCM and voiceprint embeddings exist only in the engine's process RAM for the session's duration and are never persisted — see `docs/adr/0005-audio-voiceprint-ephemeral-policy.md`.
+6. **Speaker identification**. A specific speaker (e.g., "The Boss") is associated with one of the anonymous labels via:
+    - *Voice enrollment*: a per-session enrollment phrase ("say test123") captured at meeting start. The resulting voiceprint embedding lives in C++ engine RAM for that session only and vanishes on session end. There is **no persistent voiceprint store** in MVP — every meeting re-enrolls.
+    - *Human-in-the-loop*: the staff manually tags a speaker ID from the frontend. The UI **only accepts role labels or numeric identifiers** (e.g., `Host`, `Client`, `Colleague`, `Speaker_1`); entering real names is rejected by design as a privacy-by-default measure (see §9 Data Governance & Privacy).
+7. **Transcript fan-out**. The C++ engine streams speaker-labeled transcript segments back to the Go Gateway as Protobuf messages. The Gateway fans these out to all viewers of the session over **gRPC-Web** (Cloud mode) or **WebSocket** (Local mode; see `docs/adr/0007-local-mode-lan-topology.md`). **Transcript segments are never persisted server-side** — they flow through a bounded in-memory fan-out channel and are discarded after delivery. See `docs/adr/0004-stateless-broadcast-relay.md`.
+8. **Host-local accumulation**. Only the host device accumulates the full transcript — in browser memory for the MVP. The host is the sole source of truth for meeting history and the only device permitted to export. Host-side crash-safe local persistence is deferred (see §11 Known Limitation L1).
+9. **Viewer rendering**. Viewer devices render only what they receive live, in a rolling window of the most recent lines (default 5). They have no history, no export capability, and no server-side replay. Late joiners deliberately see only segments produced after they joined — this is an intentional privacy feature, not a limitation (see §11 L4).
+
+**Key data-plane properties that this flow enforces** (each is load-bearing for the privacy posture):
+
+- Audio PCM never leaves the C++ engine process RAM.
+- Voiceprint embeddings never leave the C++ engine process RAM.
+- Transcript content never lands in any durable store — not DynamoDB, not S3, not EBS, not Redis.
+- The host device's local storage is the only location where a full meeting transcript ever exists.
+- Everything beyond the host device's local memory is pure live relay — no server-side content at rest.
 
 ### 5. Dual-Mode Parity (Local Monolith vs. Cloud Microservices)
 To satisfy both "beginner-friendly local execution" and "EKS Cloud Deployment", the architecture enforces strict **Ports and Adapters (Hexagonal Architecture)** within the Go Gateway:
@@ -90,3 +108,237 @@ To pass strict compliance and enterprise security audits, this application enfor
     - *Auth Fallback*: When `DeployMode=LOCAL`, the Cognito JWT middleware is bypassed or replaced with a dummy local token authenticator.
     - *Secrets Fallback*: The External Secrets Operator logic gracefully falls back to reading a local `.env` file within the Bazel sandbox.
     - *Telemetry Fallback*: OpenTelemetry spans are exported to `stdout` (Console) instead of an AWS X-Ray/Tempo collector.
+
+### 9. Data Governance & Privacy
+
+Aegis Core processes audio and derived artifacts that, if mishandled, carry serious legal, regulatory, and reputational exposure. This section codifies the governance model and the load-bearing privacy properties that the rest of the architecture depends on.
+
+#### 9.1 Layered Privacy Model
+
+The system enforces **three distinct data-handling layers**, each with its own guarantees:
+
+| Layer | Data | Storage | Lifetime | Enforcement |
+|---|---|---|---|---|
+| **Layer 1** | Raw audio PCM | C++ engine process RAM only | Session | ADR-0005 (seven requirements) |
+| **Layer 2** | Voiceprint embeddings | C++ engine process RAM only | Session; re-enroll per meeting | ADR-0005 |
+| **Layer 3** | Transcript segments | Host device local memory only | Until host device closes | ADR-0004 stateless relay |
+
+**No customer-facing configuration switches weaken these layers.** The ephemeral nature of audio and voiceprint is **unconditional** — there is no "enable recording" toggle that turns Layer 1 into durable audio. An optional Phase 5+ Compliance Archival SKU may add a distinct fourth layer (opt-in durable audio with explicit consent and legal-hold support) without modifying the existing three.
+
+#### 9.2 Speaker Labels: Privacy by Design
+
+Diarization output uses **anonymous numeric labels** (`Speaker_0`, `Speaker_1`, …) by default. When the staff tags a speaker manually, the UI permits only **role labels or numeric IDs** (`Host`, `Client`, `Colleague`, `Speaker_1`). **Entering real names is rejected at the input layer** — the frontend input component explicitly does not accept free-text identity, only a curated choice list.
+
+Rationale: diarization labels sit on the boundary between pseudonymized data (not PII) and identified data (PII). Real names convert a label into identified PII, escalating the regulatory posture. Refusing to collect real names at the UI level is the cheapest and most robust mitigation — GDPR Art. 25 "Data Protection by Design and by Default" explicitly blesses this pattern.
+
+**Note**: transcript *content* can still mention names that participants say aloud ("Hi Jason, about the Q4 plan…"). This is regular PII carried in the transcript body. It is handled by the §9.1 Layer 3 statelessness guarantee — transcripts never reach durable server storage, so content-level PII exposure is bounded to host-device storage.
+
+#### 9.3 Consent Capture
+
+Per-session voiceprint enrollment requires explicit consent capture. The UI presents, in clear language:
+
+> *"We will analyze your voice to identify you in this meeting. This data is held in server memory only and is never saved. [Agree]"*
+
+On user agreement, a **consent ledger entry** is recorded containing:
+- `user_id`, `session_id`, `timestamp`, `consent_version`, `client_metadata`.
+- **It does NOT contain the voiceprint itself** — only the fact that consent was given.
+
+The consent ledger is **persistent** (DynamoDB in Cloud mode, SQLite in Local mode) and append-only. It is the only durable record connecting a user to a biometric processing event and is the evidentiary artifact for GDPR / BIPA compliance audits. Default retention: 7 years (matching common audit-trail norms). Deletion is permitted only via an explicit Right-to-Erasure workflow with legal review.
+
+#### 9.4 Data Classification
+
+| Classification | Examples | Storage Rule |
+|---|---|---|
+| **Biometric (Art. 9)** | Voiceprint embeddings | RAM only, session-scoped (ADR-0005) |
+| **Sensitive Content** | Audio PCM, transcript body | Layer 1–3 rules above |
+| **PII (General)** | User account, consent ledger entry, tenant settings | Encrypted at rest, per-tenant KMS CMK |
+| **Operational Metadata** | Request IDs, session IDs, tenant IDs, duration metrics | Standard observability stores |
+| **Public** | Documentation, open-source code | Git |
+
+**Rule**: data moves only from lower classification toward the storage rules of *higher* classification, never the reverse. Operational logs cannot accidentally contain transcript content — this is enforced at compile time / deployment time by ADR-0005 R3 (log formatter type whitelist) and R4 (OpenTelemetry span attribute allowlist).
+
+#### 9.5 Right to Erasure (GDPR Art. 17)
+
+The architecture satisfies Art. 17 for most content by construction:
+
+| Data | Erasure Mechanism |
+|---|---|
+| Audio | Structurally ephemeral; nothing to erase |
+| Voiceprint | Structurally ephemeral after session end |
+| Transcript body on server | Structurally absent; nothing to erase |
+| Transcript on host device | User clears own device / browser storage (user is sole custodian) |
+| Consent ledger | Deletable via explicit Right-to-Erasure workflow |
+| Tenant account data | Deletable via account closure |
+
+**Complex case**: a meeting transcript persisted on one user's host device *mentions* another participant who requests erasure. Aegis cannot reach that content because Aegis does not hold it. This is a known limitation of the architecture and is disclosed in the privacy notice. Mitigation: advise users to redact and re-export meetings involving erasure-requesting participants.
+
+#### 9.6 Late Joiner History Opacity (Intentional Feature)
+
+Per §11 Known Limitation L4, late joiners receive no meeting history — only segments produced after their join time. This is an **intentional privacy feature**, not a technical limitation, and it follows directly from the statelessness property in ADR-0004: there is no server-side history to replay because the server holds nothing to replay.
+
+Product implication: if a participant joins a meeting 20 minutes late, they cannot retroactively see what was said earlier. The host may summarize verbally if appropriate. This behavior **should not be "fixed"** in future phases without explicit re-consideration of the privacy trade-off and a new ADR.
+
+#### 9.7 Enforcement via ADR-0005
+
+All guarantees above depend on the seven mechanical enforcement requirements in `docs/adr/0005-audio-voiceprint-ephemeral-policy.md`:
+
+- **R1** Core dumps disabled on audio-processing processes
+- **R2** Swap disabled on audio-processing nodes
+- **R3** Log formatter type whitelist (compile-time)
+- **R4** OpenTelemetry span attribute allowlist
+- **R5** Temp files on memory-backed filesystems only
+- **R6** No persistent volume mounts on audio namespaces
+- **R7** Debug audio dump compiled out of production builds
+
+Each requirement has a corresponding CI / admission / runtime verification check. **Any environment that fails any of the seven checks must not handle production audio.**
+
+#### 9.8 Voiceprint as Special-Category Biometric Data
+
+Voiceprint embeddings are classified as biometric data under GDPR Art. 4(14) and special-category data under Art. 9. Illinois BIPA, Texas CUBI, and CCPA apply similar or stricter rules, with BIPA notably establishing a private right of action and nine-figure settlement precedents.
+
+By keeping voiceprints **RAM-only and session-scoped with explicit consent**, Aegis satisfies:
+
+- **Data minimization** (Art. 5.1.c): only the current session's embedding.
+- **Storage limitation** (Art. 5.1.e): zero persistent storage.
+- **Lawful basis** (Art. 9.2.a): explicit consent captured at enrollment.
+- **Right to erasure** (Art. 17): trivially satisfied by session end.
+- **Breach notification** (Art. 33): structurally impossible for voiceprints to be involved in a data breach, because they never exist outside process memory.
+
+**Hard product commitments** (codified in `SECURITY.md`):
+
+- Aegis does not train models on user audio or voice data.
+- Aegis does not sell, share, or otherwise disclose audio or voiceprint data to third parties.
+- Aegis does not use audio or voiceprint data for any purpose beyond real-time inference within the meeting that produced it.
+
+### 10. Secure SDLC & Supply Chain
+
+Bazel hermeticity gives Aegis a strong **build reproducibility** foundation, but a 2026-era enterprise security audit requires more: signed artifacts, SBOMs, SAST/DAST coverage, and machine-enforced CI gates. This section codifies the secure software development lifecycle controls that MUST be in place before any artifact leaves the build system destined for production.
+
+#### 10.1 Supply Chain Integrity
+
+- **SBOM (Software Bill of Materials)**: every release artifact (C++ engine binary, Go Gateway binary, frontend bundle, container image) produces a CycloneDX or SPDX SBOM via **Syft**. SBOMs are published alongside artifacts and consumed by downstream license / vulnerability tooling.
+- **Artifact signing**: all container images and release binaries are signed with **Cosign / Sigstore** using GitHub Actions OIDC tokens (keyless signing via Fulcio). Signatures are verified at deployment admission in EKS (Kyverno `verify-image` policy).
+- **SLSA Level 3 provenance**: release pipelines emit SLSA provenance statements referencing the exact Git commit, build runner, and transitive dependency set. Provenance is signed and stored alongside artifacts.
+- **Dependency pinning**: all third-party dependencies (C++ via Bazel `http_archive` with SHA256, Go via `go.sum`, JavaScript via `package-lock.json`) are pinned by cryptographic hash. No floating tags.
+- **Model provenance**: every `.gguf` / `.bin` model file in `/models` has a corresponding `manifest.json` entry with SHA256, origin URL, license, and a PGP-signed attestation. The model loader refuses to `mmap` a file whose hash does not match its manifest entry. See `/models/README.md`.
+- **License scanning**: a license scanner (ScanCode, FOSSA, or equivalent) runs on every PR. Merges to `main` are blocked if any new dependency introduces a license incompatible with the project's stated license terms (GPL/AGPL in particular).
+
+#### 10.2 Static Analysis (SAST)
+
+| Language | Tools |
+|---|---|
+| **C++** | `clang-tidy`, `cppcheck`, **CodeQL C/C++**, **ASan/UBSan** in debug CI runs |
+| **Go** | `go vet`, `staticcheck`, `gosec`, `govulncheck`, **CodeQL Go** |
+| **TypeScript** | `eslint` with security plugins, **Semgrep** |
+| **Rust** (Phase 4+) | `cargo clippy`, `cargo audit`, `cargo deny` |
+
+- All SAST tools run as GitHub Actions checks on every PR.
+- Critical findings **block merge**; high findings require explicit reviewer acknowledgement.
+- Semgrep carries custom rules specific to Aegis: ADR-0005 R3 log-formatter enforcement, ADR-0005 R4 OTLP attribute guard, and the ADR-0002 Constraint 1–6 Phase 3 frontend rules.
+
+#### 10.3 Dynamic & Runtime Analysis
+
+- **Container scanning**: `Trivy` scans every built image for known CVEs. High / critical findings block image push to ECR.
+- **Kubernetes manifest scanning**: `kube-score` + `kube-bench` validate manifests against CIS Kubernetes Benchmarks before ArgoCD sync.
+- **Secret scanning**: `gitleaks` pre-commit hook (local) + **GitHub secret scanning with push protection** (server-side) catch committed credentials.
+- **DAST** (post-MVP): `OWASP ZAP` or equivalent runs against staging deployments on a schedule.
+
+#### 10.4 SLOs, SLIs, and CI Gates
+
+The system defines the following **Service Level Objectives** (SLOs) that double as CI performance gates:
+
+| SLI | SLO (target) | Measurement |
+|---|---|---|
+| Transcription first-token latency | p99 < 800 ms | `aegis_transcription_first_token_ms` metric |
+| Transcription segment lag | p99 < 1200 ms | `aegis_transcription_segment_lag_ms` metric |
+| Word Error Rate (WER) on golden set | < 5% (en), < 8% (zh) | CI WER regression suite (see §10.5) |
+| Session availability | ≥ 99.5% monthly | uptime metric, excluding known L1/L2 events |
+| Go Gateway p99 request latency | < 200 ms | standard observability |
+| Container image scan | 0 critical CVEs | Trivy on every push |
+
+SLO **error budgets** gate progressive delivery: if a canary rollout burns >25% of the remaining error budget, automatic rollback triggers (Argo Rollouts / Flagger).
+
+#### 10.5 Test Integrity
+
+Per CLAUDE.md Rule 2, all tests must have legitimate inputs producing verifiable real outputs. Specifically:
+
+- **Unit tests**: standard per-language frameworks (`gtest` for C++, `go test` for Go, `vitest` for TypeScript, `cargo test` for Rust).
+- **Contract tests**: `buf breaking` runs on every proto change; incompatible changes to `proto/aegis/v1/aegis.proto` are blocked.
+- **Golden audio regression (WER suite)**: a curated set of 10–20 audio fixtures (English, Traditional Chinese, code-switch, multi-speaker, noise) are transcribed in CI; Word Error Rate is computed against known correct transcripts. Regressions above the SLO threshold block merge. This is the primary guard against model / quantization / version drift.
+- **Load test**: k6 or an equivalent tool drives N concurrent WebRTC sessions against a staging environment on a nightly schedule; capacity and latency regressions trigger investigation.
+- **Chaos test** (Phase 5+): controlled pod kills, network partitions, and resource starvation verify the L1/L2/liveness behavior in §11.
+
+#### 10.6 Observability
+
+- **Tracing**: OpenTelemetry spans propagate from WebRTC ingress through Go Gateway and C++ Engine (per §8). Span attributes follow the ADR-0005 R4 allowlist; transcript and audio never appear as span attributes.
+- **Metrics**: RED (Rate / Errors / Duration) metrics on every gRPC method; USE (Utilization / Saturation / Errors) metrics on every pod; domain metrics include `aegis_host_transient_loss_total`, `aegis_voiceprint_enrollments_total`, and others.
+- **Logging**: structured JSON logs with compile-time PII redaction (ADR-0005 R3). In Cloud mode, logs route to CloudWatch via FluentBit; in Local mode, logs go to stdout.
+- **Dashboards and alerts**: landing-zone repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
+
+#### 10.7 Secrets and Credentials
+
+- **Server-side**: no hardcoded credentials; EKS Pod Identity (§8) provides all AWS access.
+- **Client-side**: Cognito JWT only; no refresh token persistence beyond browser lifetime.
+- **Build-time**: GitHub Actions OIDC tokens (not long-lived PATs) for artifact push and ECR login.
+- **Rotation**: secrets injected via External Secrets Operator rotate automatically; application code MUST tolerate mid-session secret rotation without reconnecting WebRTC peers.
+
+### 11. Known Limitations (MVP / Phase 1–4)
+
+The following are **deliberate scope cuts** in the MVP, made to preserve architectural clarity and privacy posture rather than to work around bugs. Each will be revisited in Phase 5 hardening based on real customer feedback. They are documented here so future contributors and AI agents do not mistake them for defects and attempt to "fix" them without explicit re-consideration of the trade-offs.
+
+**L1 — Host crash loses transcript history**
+
+If the host device crashes (browser kill, OS crash, power loss) during an active meeting, the transcript held in host-local memory is lost. Viewers retain only what they had already rendered in their rolling window. There is no server-side recovery mechanism because the server holds no transcript state by design (ADR-0004).
+
+- *Rationale*: accepting this limitation preserves the "server stores nothing" privacy posture and removes the need for incremental host-local persistence (IndexedDB / SQLite append logs) in Phase 1–4.
+- *User-facing guidance*: advise users in-product to export important meetings before closing the application.
+- *Mitigation path (Phase 5+)*: optional host-side append-only persistence, explicitly user-controlled (default off).
+
+**L2 — C++ engine crash terminates meeting**
+
+If the C++ engine process crashes (segfault, OOM kill, pod eviction), the meeting is terminated. There is no mid-meeting engine failover.
+
+- *Rationale*: preserving in-flight audio, voiceprint, and whisper.cpp internal state across engine restarts would require shared state (Redis / etcd), which breaks the ADR-0005 "nothing persists outside process memory" guarantee.
+- *Mitigation path*: not planned. This is an architectural property, not a bug.
+
+**L3 — Viewer cannot export**
+
+Viewer clients render only live transcript in a rolling window; they do not accumulate history and cannot export. Only the host device can export.
+
+- *Rationale*: the viewer role is a "read the prompter live" role, not a "record the meeting" role. Limiting export to the host device matches the intended power structure (host = staff, viewer = boss observing) and reduces the number of places full meeting content can exist.
+- *Mitigation path (Phase 5+)*: configurable per-tenant policy allowing viewer export for certain roles.
+
+**L4 — Late joiner receives no history**
+
+A viewer who joins a meeting mid-stream receives only transcript segments produced from the moment of join forward. Prior content is never sent.
+
+- *Rationale*: this is a privacy feature, not a limitation. It follows directly from ADR-0004 statelessness — there is no server-side history to replay. It also reduces the blast radius of a leaked join URL (a bad actor joining late cannot retroactively see what was said earlier). See §9.6.
+- *Mitigation path*: not planned. Must not be "fixed" without explicit privacy re-consideration and a new ADR.
+
+**L5 — No per-viewer audit trail**
+
+Because viewers join via an anonymous invite token (ADR-0001 Option B), Aegis cannot answer "who specifically viewed this meeting?" Server-side audit logs record only session and join-token events, not identified viewer accounts.
+
+- *Rationale*: frictionless boss-viewer UX outweighs audit granularity for MVP. Enterprise customers who need per-viewer audit will be served by the ADR-0001 future extension (optional `allowed_viewer_account_ids` allowlist with per-account authentication).
+- *Mitigation path (Phase 5+)*: the ADR-0001 future extension adds optional account-based access control and corresponding audit.
+
+**L6 — Host role supported only on Chrome / Edge, and only for web-based meeting clients**
+
+MVP host capture relies on `getUserMedia` + `getDisplayMedia` (ADR-0003), which are fully supported only on Chrome and Edge. Firefox and Safari host-role support is deferred. Additionally, native desktop meeting apps (Zoom Desktop, Teams Desktop) whose audio does not flow through a capturable browser tab are not supported; users of such apps must switch to the web version of their meeting client.
+
+- *Rationale*: pure web capture lets the MVP ship without a native shell; the cost is narrower browser and meeting-client coverage.
+- *Mitigation path (Phase 4+)*: Tauri native shell (ADR-0002) provides CoreAudio / WASAPI capture, enabling native meeting app support and broader browser parity.
+
+**L7 — Local mode has no multi-tenancy**
+
+Local mode supports exactly one active meeting at a time on a host machine. There is no tenant concept and no concurrent session isolation.
+
+- *Rationale*: Local mode's positioning is "portable, air-gapped, single-user-ish." Multi-tenancy adds complexity that conflicts with that positioning.
+- *Mitigation path*: not planned. Users needing concurrent sessions should use Cloud mode.
+
+**L8 — Consent ledger entry is the only audit trail for voiceprint processing**
+
+Because voiceprints themselves are never persisted (§9.1), the only evidentiary artifact that a voice-biometric processing event occurred is the consent ledger entry. If the ledger is lost (operational failure, misconfigured retention), Aegis loses the ability to demonstrate compliance retrospectively.
+
+- *Rationale*: this is the trade-off for the strong ephemeral guarantee.
+- *Mitigation*: consent ledger must have independent backup and replication to S3 WORM bucket (covered by §10.1 supply chain integrity and landing-zone repository's backup strategy).
