@@ -21,7 +21,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 
 > *"Get the rails in place before writing any engine code."*
 
-- [x] Establish `docs/adr/` directory and ADR-0001–0008
+- [x] Establish `docs/adr/` directory and ADR-0001–0012
 - [x] Write `ARCHITECTURE.md` §9 Data Governance & Privacy
 - [x] Write `ARCHITECTURE.md` §10 Secure SDLC & Supply Chain
 - [x] Write `ARCHITECTURE.md` §11 Known Limitations
@@ -127,7 +127,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display
 - [ ] Audio source picker: "Physical room (microphone)" vs "Remote meeting (browser tab)"
 - [ ] `getUserMedia` and `getDisplayMedia` calls with clear privacy copy (ADR-0003)
-- [ ] Voiceprint enrollment UI with explicit consent capture (ARCH §9.3)
+- [ ] One-time audio-processing consent capture on first use (ARCH §9.3; no biometric consent needed — see ADR-0012)
 - [ ] Speaker label tagging UI — curated choice list, **no free-text name input** (ARCH §9.2)
 - [ ] Live prompter display with rolling 5-line window
 - [ ] Export flow: Markdown + JSON download
@@ -181,7 +181,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] Custom `SpanProcessor` enforcing attribute allowlist (ADR-0005 R4)
 - [ ] Structured JSON logs via FluentBit in Cloud
 - [ ] Grafana dashboards and PagerDuty alerts provisioned by landing-zone repository
-- [ ] `aegis_host_transient_loss_total`, `aegis_voiceprint_enrollments_total`, and other domain metrics emitted
+- [ ] `aegis_host_transient_loss_total`, `aegis_questions_detected_total`, `aegis_hints_emitted_total`, and other domain metrics emitted
 
 ---
 

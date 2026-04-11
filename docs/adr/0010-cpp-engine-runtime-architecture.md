@@ -13,8 +13,9 @@ concurrent gRPC bidirectional streams, each carrying one meeting's
 audio PCM to whisper.cpp and producing speaker-labeled transcript
 segments. It must also honor:
 
-- The per-session ephemeral lifetime guarantee of ADR-0005 (audio and
-  voiceprint live only in process RAM and vanish on session end).
+- The per-session ephemeral lifetime guarantee of ADR-0005 (audio PCM
+  lives only in process RAM and vanishes on session end; voiceprint
+  data is not processed at all per ADR-0012).
 - The 16 GB local-mode memory ceiling of ARCHITECTURE.md §6.
 - The Pause / Resume / End stream control semantics of ADR-0006.
 - The clear "fail fast" property of ADR-0004 (a replica loss kills the
@@ -69,9 +70,10 @@ bearing for code coherence.
 - **(ii) Sync gRPC, 1 session = 1 thread** ✅ — use grpc-cpp's sync
   server API. Each gRPC bidirectional stream runs on its own thread
   (grpc-cpp manages the thread). The Session object's lifetime ==
-  the thread's lifetime. Audio buffer and voiceprint live on the
-  thread's stack / heap. When the stream ends, the thread exits, the
-  session destructs, and all resources are freed deterministically.
+  the thread's lifetime. The audio ring buffer and all transient
+  working tensors live on the thread's stack / heap. When the stream
+  ends, the thread exits, the session destructs, and all resources
+  are freed deterministically.
 - **(iii) Sync gRPC + MPSC queue + worker pool** — gRPC thread
   receives `IngestMessage`s and pushes them onto a multi-producer /
   single-consumer queue. A small pool of worker threads pops items,
@@ -87,9 +89,9 @@ bearing for code coherence.
   object, and returns when the stream closes.
 - **D2 session isolation**: lifetime reasoning is trivially local.
   `Session` is a stack or scoped object; its destructor runs when the
-  stream ends; the destructor frees audio, voiceprint, and any
-  derivatives. No reference counting, no shared state between
-  sessions.
+  stream ends; the destructor frees the audio ring buffer and any
+  derived working state. No reference counting, no shared state
+  between sessions.
 - **D6 debuggability**: one thread per session means stack traces are
   narrative — "Session 42 is doing inference at line X of whisper.cpp".
   Async / coroutine stack traces are 30% true stack and 70% runtime
@@ -154,14 +156,14 @@ Assume 8 GB for everything outside the engine. That leaves the engine
 with **~8 GB** in the worst case (Apple Silicon M-series base tier
 typically has 16 GB unified memory).
 
-Fixed model overhead:
+Fixed model overhead (revised per ADR-0012 — embedder removed because
+Aegis no longer performs voiceprint matching):
 
 | Component | RAM |
 |---|---|
 | whisper large-v3-turbo, Q4 quantization | ~1.5 GB |
-| Speaker diarization model | ~1.0 GB |
-| Sentence-transformer embedder (for voiceprint + RAG query) | ~0.5 GB |
-| **Fixed total** | **~3.0 GB** |
+| Speaker diarization model (anonymous clustering only) | ~1.0 GB |
+| **Fixed total** | **~2.5 GB** |
 
 Optional additions (Phase 5+ only, not MVP):
 
@@ -169,30 +171,32 @@ Optional additions (Phase 5+ only, not MVP):
 |---|---|
 | Llama-3-8B-Instruct Q4_K_M (for RAG generative answers) | ~4.8 GB |
 
-Working budget per session:
+Working budget per session (revised per ADR-0012 — voiceprint
+embedding storage removed):
 
 | Component | RAM |
 |---|---|
 | Audio ring buffer (30 seconds @ 16 kHz mono, 16-bit PCM) | ~1 MB |
 | whisper.cpp working tensors | ~50–150 MB |
 | Speaker diarization working state | ~20 MB |
-| Voiceprint embeddings (small) | <1 MB |
 | RAG query scratch space | ~10 MB |
-| **Per-session total** | **~100–200 MB** |
+| **Per-session total** | **~80–180 MB** (budget estimate 150 MB) |
 
-With ~5 GB remaining after fixed costs, the arithmetic is:
+With ~5.5 GB remaining after fixed costs, the arithmetic is:
 
 ```
 Phase 1 max sessions per engine pod
 = (budget - fixed) / per_session
-= (8000 - 3000) / 200
-≈ 25 sessions
+= (8000 - 2500) / 150
+≈ 36 sessions
 ```
 
-This is **Phase 1 only** and assumes no Llama-3. With Llama, subtract
-~4.8 GB and the cap drops to ~1 session per pod (Llama is an optional
-Phase 5+ feature and the cap recovers when deployed on larger pod
-sizes in cloud).
+This is **Phase 1 only** and assumes no Llama-3. Compared to the
+pre-ADR-0012 estimate of ~25 sessions, removing voiceprint matching
+buys approximately **+44% concurrent session capacity** on the same
+hardware. With Llama, subtract ~4.8 GB and the cap drops to ~4
+sessions per pod (Llama is an optional Phase 5+ feature and the cap
+recovers when deployed on larger pod sizes in cloud).
 
 #### Design — `ResourceBudget`
 

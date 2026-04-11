@@ -48,18 +48,16 @@ Aegis Core operates as a **one-host, many-viewer broadcast** topology. Every mee
     - *Mixed mic + tab*: Web Audio API combines the two `MediaStream`s into one output stream via `MediaStreamAudioSourceNode` → `MediaStreamAudioDestinationNode`.
 3. **Audio transport**. The unified `MediaStream` is sent via **WebRTC** from the host to the Go Gateway. The host device is the only place in the system that ever holds the full session audio.
 4. **Gateway fan-in**. Go Gateway unwraps WebRTC UDP packets into raw PCM and pushes raw PCM over a **bidirectional gRPC stream** to the C++ Engine. Control messages (`PAUSE`, `RESUME`, `END_STREAM`) share the same stream to handle transient disconnects cleanly, per `docs/adr/0006-liveness-disconnect-handling.md`.
-5. **Inference**. The C++ Engine transcribes and performs **speaker diarization**. Because we capture a **single mixed audio track** (simplifying hardware), the AI isolates speakers as anonymous labels `Speaker_0`, `Speaker_1`, …. Audio PCM and voiceprint embeddings exist only in the engine's process RAM for the session's duration and are never persisted — see `docs/adr/0005-audio-voiceprint-ephemeral-policy.md`.
-6. **Speaker identification**. A specific speaker (e.g., "The Boss") is associated with one of the anonymous labels via:
-    - *Voice enrollment*: a per-session enrollment phrase ("say test123") captured at meeting start. The resulting voiceprint embedding lives in C++ engine RAM for that session only and vanishes on session end. There is **no persistent voiceprint store** in MVP — every meeting re-enrolls.
-    - *Human-in-the-loop*: the staff manually tags a speaker ID from the frontend. The UI **only accepts role labels or numeric identifiers** (e.g., `Host`, `Client`, `Colleague`, `Speaker_1`); entering real names is rejected by design as a privacy-by-default measure (see §9 Data Governance & Privacy).
-7. **Transcript fan-out**. The C++ engine streams speaker-labeled transcript segments back to the Go Gateway as Protobuf messages. The Gateway fans these out to all viewers of the session over **gRPC-Web** (Cloud mode) or **WebSocket** (Local mode; see `docs/adr/0007-local-mode-lan-topology.md`). **Transcript segments are never persisted server-side** — they flow through a bounded in-memory fan-out channel and are discarded after delivery. See `docs/adr/0004-stateless-broadcast-relay.md`.
+5. **Inference**. The C++ Engine transcribes and performs **anonymous speaker diarization**. Because we capture a **single mixed audio track** (simplifying hardware), the AI isolates speakers as pseudonymous labels `Speaker_0`, `Speaker_1`, …. **Aegis does not perform voiceprint matching or any biometric identification** (see ADR-0012); diarization labels are local to the session and are never matched back to real identities. Audio PCM exists only in the engine's process RAM for the session's duration and is never persisted — see `docs/adr/0005-audio-ephemeral-policy.md`.
+6. **Question-driven hint generation**. The engine scans transcript segments for question patterns (whisper-emitted `?` punctuation plus language-specific heuristics per ADR-0012). Any detected question — regardless of which speaker asked it — triggers a RAG query against the corpus bound to this session, and the result is emitted as a `PrompterHint`. The host sees hints alongside the conversation; when the counterparty's claim contradicts the RAG result, the host gains real-time fact-checking capability (see ADR-0012 "Product Definition Shift"). Staff may still manually tag a speaker from a curated list of role labels (`Host`, `Client`, `Colleague`, `Speaker_1`); the UI **rejects real-name input** by design as a privacy-by-default measure (see §9.2).
+7. **Transcript fan-out**. The C++ engine streams speaker-labeled transcript segments and prompter hints back to the Go Gateway as Protobuf messages. The Gateway fans these out to all viewers of the session over **gRPC-Web** (Cloud mode) or **WebSocket** (Local mode; see `docs/adr/0007-local-mode-lan-topology.md`). **Transcript segments are never persisted server-side** — they flow through a bounded in-memory fan-out channel and are discarded after delivery. See `docs/adr/0004-stateless-broadcast-relay.md`.
 8. **Host-local accumulation**. Only the host device accumulates the full transcript — in browser memory for the MVP. The host is the sole source of truth for meeting history and the only device permitted to export. Host-side crash-safe local persistence is deferred (see §11 Known Limitation L1).
 9. **Viewer rendering**. Viewer devices render only what they receive live, in a rolling window of the most recent lines (default 5). They have no history, no export capability, and no server-side replay. Late joiners deliberately see only segments produced after they joined — this is an intentional privacy feature, not a limitation (see §11 L4).
 
 **Key data-plane properties that this flow enforces** (each is load-bearing for the privacy posture):
 
 - Audio PCM never leaves the C++ engine process RAM.
-- Voiceprint embeddings never leave the C++ engine process RAM.
+- **No biometric data is processed at any stage** — no voiceprint enrollment, no cosine matching, no embedding storage (ADR-0012).
 - Transcript content never lands in any durable store — not DynamoDB, not S3, not EBS, not Redis.
 - The host device's local storage is the only location where a full meeting transcript ever exists.
 - Everything beyond the host device's local memory is pure live relay — no server-side content at rest.
@@ -77,9 +75,9 @@ To satisfy both "beginner-friendly local execution" and "EKS Cloud Deployment", 
 The system targets an absolute physical ceiling of **16GB Unified Memory** (e.g., MacBook Air M4 base-high tier) to guarantee successful `LOCAL` mode deployments without crashing.
 *   **Engine & Model Quantization (The < 8GB Budget)**:
     - **Transcription**: `whisper.cpp` using `large-v3-turbo` (4-bit Q4 quantization). Cost: ~1.5GB
-    - **Diarization**: Lightweight Voice embedding clustering (e.g., pyannote/speaker-diarization). Cost: ~1.0GB
-    - **Embeddings**: `sentence-transformers.cpp` for multilingual text. Cost: ~0.5GB
+    - **Diarization**: Anonymous speaker clustering only (no voiceprint matching per ADR-0012). Cost: ~1.0GB
     - **Inference (Optional LLM)**: `llama.cpp` using Llama-3-8B-Instruct (4-bit Q4_K_M). Cost: ~4.8GB
+    - **Fixed model overhead total**: ~2.5GB without LLM, ~7.3GB with LLM. Per-session working budget (~150 MB) gates concurrent session count via `ResourceBudget` per ADR-0010; Phase 1 baseline is ~36 concurrent sessions on an 8 GB engine pod without Llama.
 *   **Dual-Mode RAG Mounting Strategy**:
     - `LOCAL` Mode: Uses **In-Process Vector Database**. C++ engine mmaps a precompiled `.bin` vector index locally and searches via `hnswlib` in-memory (< 5ms latency, 0 external networking).
     - `CLOUD` Mode: Uses **External Enterprise Vector DB** (e.g., Qdrant, Milvus, AWS OpenSearch). The C++ pod converts text to embedding vector, then shoots a gRPC request to the Vector DB clustered backend allowing dynamic hot-reloads of knowledge bases across multiple active Pods.
@@ -120,10 +118,9 @@ The system enforces **three distinct data-handling layers**, each with its own g
 | Layer | Data | Storage | Lifetime | Enforcement |
 |---|---|---|---|---|
 | **Layer 1** | Raw audio PCM | C++ engine process RAM only | Session | ADR-0005 (seven requirements) |
-| **Layer 2** | Voiceprint embeddings | C++ engine process RAM only | Session; re-enroll per meeting | ADR-0005 |
-| **Layer 3** | Transcript segments | Host device local memory only | Until host device closes | ADR-0004 stateless relay |
+| **Layer 2** | Transcript segments | Host device local memory only | Until host device closes | ADR-0004 stateless relay |
 
-**No customer-facing configuration switches weaken these layers.** The ephemeral nature of audio and voiceprint is **unconditional** — there is no "enable recording" toggle that turns Layer 1 into durable audio. An optional Phase 5+ Compliance Archival SKU may add a distinct fourth layer (opt-in durable audio with explicit consent and legal-hold support) without modifying the existing three.
+**No customer-facing configuration switches weaken these layers.** The ephemeral nature of audio is **unconditional** — there is no "enable recording" toggle that turns Layer 1 into durable audio. Aegis does not process biometric data (voiceprints) at all; see ADR-0012. An optional Phase 5+ Compliance Archival SKU may add a distinct third layer (opt-in durable audio with explicit consent and legal-hold support) without modifying the existing two.
 
 #### 9.2 Speaker Labels: Privacy by Design
 
@@ -135,25 +132,25 @@ Rationale: diarization labels sit on the boundary between pseudonymized data (no
 
 #### 9.3 Consent Capture
 
-Per-session voiceprint enrollment requires explicit consent capture. The UI presents, in clear language:
+Because Aegis processes no biometric data (ADR-0012), biometric consent is not required. Aegis still captures a lightweight **audio-processing consent** at first use — the UI presents a one-time notice per account per privacy-policy-version:
 
-> *"We will analyze your voice to identify you in this meeting. This data is held in server memory only and is never saved. [Agree]"*
+> *"Aegis transcribes your meeting audio in real time and generates suggestion hints from a knowledge corpus you select. Audio is processed only in memory and is never saved. [Agree]"*
 
-On user agreement, a **consent ledger entry** is recorded containing:
-- `user_id`, `session_id`, `timestamp`, `consent_version`, `client_metadata`.
-- **It does NOT contain the voiceprint itself** — only the fact that consent was given.
+On agreement, a consent ledger entry is recorded containing:
+- `user_id`, `policy_version`, `timestamp`, `client_metadata`.
 
-The consent ledger is **persistent** (DynamoDB in Cloud mode, SQLite in Local mode) and append-only. It is the only durable record connecting a user to a biometric processing event and is the evidentiary artifact for GDPR / BIPA compliance audits. Default retention: 7 years (matching common audit-trail norms). Deletion is permitted only via an explicit Right-to-Erasure workflow with legal review.
+The consent ledger is persistent (DynamoDB in Cloud mode, SQLite in Local mode) and append-only. It is the evidentiary artifact that the user agreed to the current privacy-policy version at the moment of acceptance. Default retention: 7 years (matching common audit-trail norms). Deletion is permitted only via an explicit Right-to-Erasure workflow.
 
 #### 9.4 Data Classification
 
 | Classification | Examples | Storage Rule |
 |---|---|---|
-| **Biometric (Art. 9)** | Voiceprint embeddings | RAM only, session-scoped (ADR-0005) |
-| **Sensitive Content** | Audio PCM, transcript body | Layer 1–3 rules above |
+| **Sensitive Content** | Audio PCM, transcript body | Layer 1–2 rules above |
 | **PII (General)** | User account, consent ledger entry, tenant settings | Encrypted at rest, per-tenant KMS CMK |
 | **Operational Metadata** | Request IDs, session IDs, tenant IDs, duration metrics | Standard observability stores |
 | **Public** | Documentation, open-source code | Git |
+
+Note: there is no "Biometric" row because Aegis does not process biometric data at all (ADR-0012). GDPR Art. 9 / BIPA / CCPA biometric rules do not apply.
 
 **Rule**: data moves only from lower classification toward the storage rules of *higher* classification, never the reverse. Operational logs cannot accidentally contain transcript content — this is enforced at compile time / deployment time by ADR-0005 R3 (log formatter type whitelist) and R4 (OpenTelemetry span attribute allowlist).
 
@@ -164,11 +161,12 @@ The architecture satisfies Art. 17 for most content by construction:
 | Data | Erasure Mechanism |
 |---|---|
 | Audio | Structurally ephemeral; nothing to erase |
-| Voiceprint | Structurally ephemeral after session end |
 | Transcript body on server | Structurally absent; nothing to erase |
 | Transcript on host device | User clears own device / browser storage (user is sole custodian) |
 | Consent ledger | Deletable via explicit Right-to-Erasure workflow |
 | Tenant account data | Deletable via account closure |
+
+Voiceprint data does not appear in this table because Aegis does not process it (ADR-0012).
 
 **Complex case**: a meeting transcript persisted on one user's host device *mentions* another participant who requests erasure. Aegis cannot reach that content because Aegis does not hold it. This is a known limitation of the architecture and is disclosed in the privacy notice. Mitigation: advise users to redact and re-export meetings involving erasure-requesting participants.
 
@@ -192,23 +190,23 @@ All guarantees above depend on the seven mechanical enforcement requirements in 
 
 Each requirement has a corresponding CI / admission / runtime verification check. **Any environment that fails any of the seven checks must not handle production audio.**
 
-#### 9.8 Voiceprint as Special-Category Biometric Data
+#### 9.8 No Biometric Processing
 
-Voiceprint embeddings are classified as biometric data under GDPR Art. 4(14) and special-category data under Art. 9. Illinois BIPA, Texas CUBI, and CCPA apply similar or stricter rules, with BIPA notably establishing a private right of action and nine-figure settlement precedents.
+Aegis does not process biometric data of any kind. There is no voiceprint enrollment, no cosine matching, no biometric embedding storage. Speaker diarization produces pseudonymous labels (`Speaker_0`, `Speaker_1`, …) but never matches them to real identities. See ADR-0012 for the decision history and rationale.
 
-By keeping voiceprints **RAM-only and session-scoped with explicit consent**, Aegis satisfies:
+As a consequence, the following regulatory frameworks **do not apply to Aegis** — not because we mitigate them but because we do not process the data they regulate:
 
-- **Data minimization** (Art. 5.1.c): only the current session's embedding.
-- **Storage limitation** (Art. 5.1.e): zero persistent storage.
-- **Lawful basis** (Art. 9.2.a): explicit consent captured at enrollment.
-- **Right to erasure** (Art. 17): trivially satisfied by session end.
-- **Breach notification** (Art. 33): structurally impossible for voiceprints to be involved in a data breach, because they never exist outside process memory.
+- **GDPR Art. 9** special-category data rules (biometric identifiers).
+- **Illinois BIPA** (Biometric Information Privacy Act) and its private right of action.
+- **Texas CUBI** (Capture or Use of Biometric Identifier).
+- **CCPA** sensitive personal information rules for biometrics.
 
 **Hard product commitments** (codified in `SECURITY.md`):
 
-- Aegis does not train models on user audio or voice data.
-- Aegis does not sell, share, or otherwise disclose audio or voiceprint data to third parties.
-- Aegis does not use audio or voiceprint data for any purpose beyond real-time inference within the meeting that produced it.
+- Aegis does not train models on user audio. Models are pretrained and used only for inference.
+- Aegis does not sell, share, or otherwise disclose user audio to third parties.
+- Aegis does not retain user audio for product improvement, analytics, QA, debugging, or any other purpose.
+- Aegis does not process biometric data at any layer, ever, under any configuration.
 
 ### 10. Secure SDLC & Supply Chain
 

@@ -37,18 +37,23 @@ For the full data flow, see `ARCHITECTURE.md` §4. Briefly:
 
 Listed in descending order of value / sensitivity:
 
-1. **Voiceprint embeddings** (Art. 9 biometric data, BIPA, CCPA).
-2. **Audio PCM** (transient, but disclosure is severe).
-3. **Transcript content** (can contain business secrets, personal data).
-4. **Prompter / RAG output** (tactical business advice, reveals
+1. **Audio PCM** (transient, but disclosure is severe).
+2. **Transcript content** (can contain business secrets, personal data).
+3. **Prompter / RAG output** (tactical business advice, reveals
    strategy).
-5. **Consent ledger** (required as compliance evidence; lose it and
-   lose ability to demonstrate lawful basis).
-6. **Session tokens** (invite JWTs; grant viewer access).
-7. **User credentials and Cognito JWTs**.
-8. **RAG corpus** (persistent knowledge base; business-sensitive).
-9. **Tenant metadata** (account, billing, config).
-10. **Operational logs and metrics** (should contain no content).
+4. **Consent ledger** (evidentiary artifact for privacy-policy
+   agreement).
+5. **Session tokens** (invite JWTs; grant viewer access).
+6. **User credentials and Cognito JWTs**.
+7. **RAG corpus** (persistent knowledge base; business-sensitive).
+8. **Tenant metadata** (account, billing, config).
+9. **Operational logs and metrics** (should contain no content).
+
+**Note**: voiceprint / biometric data does NOT appear on this list
+because Aegis does not process it — see ADR-0012. This is the single
+biggest simplification to the threat model: the highest-risk asset
+class that was formerly at the top of the list has been structurally
+removed, not merely mitigated.
 
 ## Attacker Profiles
 
@@ -137,12 +142,12 @@ mitigations are designed specifically to minimize it.
 | I5 | Transcript or audio leaks via temp file written to host disk | Host filesystem | ADR-0005 R5: tmpfs-only for temp paths | Very low |
 | I6 | Backup system (Velero) snapshots audio-processing pod PVs and leaks buffered state | Backup bucket | ADR-0005 R6: audio namespace excluded from Velero; PVCs rejected by admission | Very low |
 | I7 | Debug audio dump code in prod build leaks audio | C++ engine binary | ADR-0005 R7: compile-time `#ifdef` stripping; CI grep verification | Very low |
-| I8 | Insider (A4) reads process memory of running C++ engine to extract voiceprints | Operator threat | `ptrace` restricted by Linux `YAMA` kernel hardening; pod `securityContext.capabilities.drop: ALL`; per-pod IAM isolation; least-privilege operator access | Medium — any operator with shell on a node is a serious threat |
+| I8 | Insider (A4) reads process memory of running C++ engine to extract in-flight audio PCM | Operator threat | `ptrace` restricted by Linux `YAMA` kernel hardening; pod `securityContext.capabilities.drop: ALL`; per-pod IAM isolation; least-privilege operator access. Note: voiceprint extraction is structurally impossible because voiceprints are not processed (ADR-0012) | Medium — any operator with shell on a node is a serious threat |
 | I9 | Leaked viewer JWT allows A3 to eavesdrop on live prompter content | Viewer transport | Token is session-lifetime only; no historical content exists to replay; rolling 5-line window limits exposure duration | Medium — per ADR-0001 negative consequence |
 | I10 | RAG corpus contents leak to unintended tenants | DynamoDB / vector DB | Per-tenant encryption with unique KMS CMK; strict tenant isolation at Go GW authorization layer | Low |
 | I11 | Speaker labels with real names leak identity | UI / storage | §9.2 privacy-by-design: UI rejects real-name input at the component layer | Very low |
 | I12 | Meeting participant inadvertently disclosed by transcript content mentioning them by name | Any transcript | Not mitigable at architecture level; content-layer PII is handled by transcript being host-local only (§9.1 L3) | Medium — accepted product risk |
-| I13 | Transcript or voiceprint used for model training | Model pipeline | §9.8 hard commitment: no training on user data; codified in SECURITY.md | Low (depends on organizational discipline) |
+| I13 | Transcript used for model training | Model pipeline | §9.8 hard commitment: no training on user data; codified in SECURITY.md. Voiceprint training is structurally impossible (ADR-0012) | Low (depends on organizational discipline) |
 | I14 | Local mode host LAN port exposed to malicious device (A7) on shared Wi-Fi | Go Gateway LAN binding | Session JWT required for viewer join (ADR-0007); Local mode's threat model assumes trusted LAN | Medium — do not use Local mode on untrusted networks |
 
 ### Denial of Service
@@ -172,12 +177,14 @@ The following patterns are **explicit anti-patterns** in Aegis. Any PR
 introducing one should be rejected regardless of its other merits.
 
 - ❌ Persisting audio PCM to any durable store (disk, DB, S3).
-- ❌ Persisting voiceprint embeddings to any durable store.
 - ❌ Writing meeting transcript content to any durable store (DynamoDB,
   S3, logs, traces).
 - ❌ Adding a runtime flag / environment variable that enables audio
   dumping.
-- ❌ Mixing voiceprint vault and tenant metadata in the same storage.
+- ❌ Introducing voiceprint enrollment, cosine matching, or any
+  biometric processing in any form. ADR-0012 is Accepted and must not
+  be reversed without a new superseding ADR that re-evaluates all the
+  compliance, UX, and resource trade-offs.
 - ❌ Accepting real-name text input for speaker labels.
 - ❌ Feeding meeting transcripts into the RAG corpus automatically.
 

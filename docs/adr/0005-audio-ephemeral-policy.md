@@ -1,59 +1,55 @@
-# ADR-0005: Audio and Voiceprint Ephemeral Policy
+# ADR-0005: Audio Ephemeral Policy
 
 - **Status**: Accepted
-- **Date**: 2026-04-11
+- **Date**: 2026-04-11 (original)
+- **Last revised**: 2026-04-11 (removed voiceprint scope per ADR-0012)
 - **Deciders**: Project owner, architect
 - **Supersedes**: —
 - **Superseded by**: —
+- **Revision history**: Originally titled "Audio and Voiceprint Ephemeral
+  Policy". The voiceprint sub-policy was removed when Aegis dropped
+  voiceprint matching per ADR-0012; the seven enforcement requirements
+  (R1–R7) remain in full force for audio PCM.
 
 ## Context
 
-Aegis Core processes two categories of data that carry the highest privacy
-and regulatory risk in the entire system:
+Aegis Core processes raw audio PCM that carries the highest privacy and
+regulatory risk in the system's data plane. Unlike transcript text,
+which is already filtered through speech recognition and covered by the
+statelessness guarantee of ADR-0004, audio PCM contains the original
+acoustic signal — tone, pacing, identifiable voice characteristics, and
+the complete conversational content.
 
-1. **Raw audio PCM** — the captured voice of the host staff, the boss,
-   and any counterparties. Contains speech content (often business-
-   sensitive or personal), voice tone, and identifiable biometric
-   characteristics.
-2. **Voiceprint embeddings** — numerical vectors (typically 192 or 256
-   dimensional `float32` arrays) derived from voice samples, used to
-   identify specific speakers within a meeting's diarization output
-   ("this segment was spoken by the person who enrolled as 'The Boss'").
+A policy statement like *"we don't store audio"* is insufficient on its
+own. Core dumps, swap partitions, trace logs, backup systems, debug
+dumps, and accidental TRACE-level logging can all defeat naive
+ephemeral claims. A trustworthy ephemeral policy must be **mechanically
+enforced and testable**, not a matter of developer discipline.
 
-Voiceprint embeddings are **biometric data** under GDPR Art. 4(14),
-BIPA (Illinois 740 ILCS 14), Texas CUBI, and CCPA's "sensitive personal
-information" category. Mishandling them creates both regulatory exposure
-(potential class actions with nine-figure precedents) and severe
-reputational risk.
+This ADR establishes the **ephemeral policy** for audio PCM and the
+**seven enforcement requirements** that turn "we don't store audio"
+from marketing language into a CI-verifiable engineering property.
 
-This ADR establishes the **ephemeral policy** for both categories and
-the **seven enforcement requirements** that turn "we don't store audio"
-from marketing into an engineering property.
-
-Mere statements of intent ("we don't save it") are insufficient. Core
-dumps, swap partitions, trace logs, backup systems, debug dumps, and
-accidental TRACE-level logging can all defeat ephemeral claims. A
-trustworthy ephemeral policy must be mechanically enforced and testable.
+**Note on scope change (2026-04-11)**: this ADR originally also
+covered voiceprint embeddings. Per ADR-0012, Aegis no longer performs
+voiceprint matching; biometric data is not processed by the system at
+all. The voiceprint sub-policy has been removed from this document.
+The R1–R7 enforcement requirements are unchanged and remain mandatory
+for audio PCM.
 
 ## Decision Drivers
 
-- **D1. Biometric data compliance.** Voiceprint embeddings fall under
-  GDPR Art. 9 special-category data and BIPA biometric identifiers.
-  Persistence dramatically raises the regulatory bar (explicit opt-in
-  consent, data protection impact assessment, heightened breach
-  notification, destruction schedules, private right of action in
-  Illinois).
-- **D2. Audio content sensitivity.** Even transient audio that leaks
+- **D1. Audio content sensitivity.** Even transient audio that leaks
   via a core dump, swap partition, or debug log is a content-disclosure
   incident. The bar for "we don't store audio" must be high enough to
   survive adversarial scrutiny.
-- **D3. Enforceability over intention.** A policy that relies on
+- **D2. Enforceability over intention.** A policy that relies on
   developer discipline will eventually be violated; a policy that
   relies on compile-time or deployment-time enforcement will not.
-- **D4. Testability.** The policy must be verifiable by automated
+- **D3. Testability.** The policy must be verifiable by automated
   checks (CI, deployment gates, runtime assertions), not just by code
   review.
-- **D5. Operational acceptability.** Debugging, crash investigation,
+- **D4. Operational acceptability.** Debugging, crash investigation,
   and performance profiling must remain possible without weakening
   the ephemeral guarantee.
 
@@ -62,60 +58,53 @@ trustworthy ephemeral policy must be mechanically enforced and testable.
 This ADR covers:
 
 - Audio PCM buffers throughout the Go Gateway and C++ engine processes.
-- Voiceprint embedding vectors within the C++ engine.
-- Any derived artifact of either (e.g., spectrograms, intermediate
-  whisper.cpp tensors, speaker diarization internal state).
+- Any derived artifact of audio that could reconstruct the original
+  signal in whole or in part (spectrograms, intermediate `whisper.cpp`
+  tensors, speaker diarization internal state, audio ring buffers,
+  resampling scratch space).
 
 This ADR **does not** cover:
 
-- Transcript text (handled by ADR-0004 — held only in fan-out buffer,
-  no server-side persistence, but not "biometric" in the regulatory
+- Transcript text (handled by ADR-0004 — held only in fan-out buffers,
+  no server-side persistence, and not biometric in the regulatory
   sense).
-- Consent ledger entries (separate store, covered in
-  `ARCHITECTURE.md` §9 Data Governance & Privacy).
+- Anonymous speaker diarization labels (`Speaker_0`, `Speaker_1`, …) —
+  these are pseudonymous session-local identifiers, not PII, and are
+  blessed by GDPR Art. 25 as privacy-by-design. See
+  `ARCHITECTURE.md` §9.2.
 - RAG knowledge base content (user-managed persistent corpus,
   orthogonal to meeting data).
+- **Voiceprint / biometric data** — Aegis does not process voiceprint
+  data at all. See ADR-0012.
 
 ## Policy
 
 ### Audio PCM
 
-- **Lifetime**: from `RTCPeerConnection` ingest to the last whisper.cpp
-  inference call that consumes it. Discarded immediately after.
+- **Lifetime**: from `RTCPeerConnection` ingest to the last
+  `whisper.cpp` inference call that consumes it. Discarded immediately
+  after.
 - **Location**: C++ engine process heap only. Never serialized to
   disk, never copied to another process, never sent over any network
-  except the already-authenticated gRPC stream from Go Gateway to
-  C++ engine.
-- **Session scope**: when the session ends (host disconnect, user
-  ends meeting, engine terminates), all audio buffers are freed before
+  except the already-authenticated gRPC stream from the Go Gateway to
+  the C++ engine.
+- **Session scope**: when the session ends (host disconnect, user ends
+  meeting, engine terminates), all audio buffers are freed **before**
   session cleanup returns.
-
-### Voiceprint Embeddings
-
-- **Creation**: generated during per-session enrollment (the user says
-  "test123" or an equivalent short phrase) at the start of each meeting.
-- **Lifetime**: session-scoped, C++ engine process heap only.
-- **Re-enrollment**: every new meeting requires a new enrollment.
-  There is **no persistent voiceprint store** in MVP — no cross-
-  meeting "remember this speaker" feature.
-- **Consent capture**: at enrollment, the UI captures explicit user
-  consent with a clear privacy notice. The consent **record** (user ID,
-  timestamp, consent version, client metadata) is persisted to a
-  **separate consent ledger** (covered in `ARCHITECTURE.md` §9). The
-  voiceprint embedding itself is not persisted — only the record that
-  consent was given.
-- **Deletion**: automatic when the C++ engine process terminates or
-  the session ends, whichever comes first.
 
 ### Exclusions
 
-- Aegis does **not** train models on user audio or voiceprints. The
-  whisper.cpp, diarization, and embedding models are pretrained and
+- Aegis does **not** train models on user audio. `whisper.cpp`,
+  diarization, and any optional generative models are pretrained and
   used only for inference.
-- Aegis does **not** sell, share, or otherwise disclose audio or
-  voiceprint data to third parties.
-- Aegis does **not** retain audio or voiceprints for product
-  improvement, analytics, QA, debugging, or any other purpose.
+- Aegis does **not** sell, share, or otherwise disclose audio to any
+  third party.
+- Aegis does **not** retain audio for product improvement, analytics,
+  QA, debugging, or any other purpose.
+- Aegis does **not** process voiceprint / biometric data. See
+  ADR-0012. This exclusion is structural — the engine does not
+  contain an embedder, a cosine matcher, or any per-session voiceprint
+  vault.
 
 ## The Seven Enforcement Requirements
 
@@ -299,21 +288,20 @@ All seven requirements apply to:
 
 ### Positive
 
-- Strong, mechanically-enforced ephemeral guarantee for audio and
-  voiceprints.
-- Compliance story for biometric data becomes defensible: RAM-only,
-  session-scoped, consent captured, non-trainable, non-resold.
-- Debugging remains possible via golden audio fixtures, WER
-  regression tests, and synthetic audio (R7 rationale).
+- Strong, mechanically-enforced ephemeral guarantee for audio PCM.
 - Ephemeral claims become testable in CI — they are engineering
   properties, not marketing claims.
+- Debugging remains possible via golden audio fixtures, WER regression
+  tests, and synthetic audio (per R7 rationale and ADR-0011).
+- Clean compliance posture: "we do not retain audio" is a checkable
+  engineering property, not a policy promise.
 
 ### Negative
 
 - **Cannot debug with real production audio.** If a customer reports a
   transcription bug, we can only reproduce it via (a) their
   description, (b) a synthetic audio with matching characteristics, or
-  (c) a customer-provided sample they explicitly opt-in to share for
+  (c) a customer-provided sample they explicitly opt in to share for
   debugging. This is an accepted trade-off.
 - **Crash investigation is stack-only.** No heap snapshots. Complex
   memory corruption bugs are harder to diagnose.
@@ -331,6 +319,9 @@ All seven requirements apply to:
 
 - ADR-0003 Host Audio Capture Strategy
 - ADR-0004 Stateless Broadcast Relay
+- ADR-0010 C++ Engine Runtime Architecture (`SensitiveBytes` usage in
+  R3)
+- ADR-0012 Remove Voiceprint Matching (scope change rationale)
 - `ARCHITECTURE.md` §6 AI Models & Hardware Resource Optimization
 - `ARCHITECTURE.md` §9 Data Governance & Privacy
 - `ARCHITECTURE.md` §11 Known Limitations

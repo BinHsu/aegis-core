@@ -90,10 +90,10 @@ vulnerability by our definition and we want to hear about it.
   in a database, not in logs, not in traces, not in backups. Audio
   exists only in the running C++ engine process's RAM and is freed
   when the session ends. See `ARCHITECTURE.md` §9.1 and ADR-0005.
-- **Voiceprint embeddings** are never persisted. They are generated
-  per-session from an enrollment phrase, live only in the C++ engine
-  process's RAM, and vanish when the session ends. Every meeting
-  requires fresh enrollment.
+- **Biometric data (voiceprints)** is not processed at all. There is
+  no enrollment, no cosine matching, no embedding storage — Aegis
+  does not contain the machinery for biometric identification. This
+  is a structural property, not a policy choice, per ADR-0012.
 - **Meeting transcripts** are never persisted on our servers. They
   flow through a bounded in-memory fan-out channel and are
   immediately discarded after delivery to connected viewers. The
@@ -102,17 +102,23 @@ vulnerability by our definition and we want to hear about it.
 
 ### What We Do Not Do With User Data
 
-- **We do not train models on user audio, voiceprints, or
-  transcripts.** The inference models (`whisper.cpp`, diarization,
-  embeddings, optional LLM) are pretrained and used only for
-  inference on your in-flight meeting.
-- **We do not sell, share, or otherwise disclose user audio,
-  voiceprints, or transcripts to any third party.**
-- **We do not retain user audio, voiceprints, or transcripts for
-  analytics, debugging, QA, product improvement, or any other
-  purpose.** When we need to debug transcription quality, we use
-  curated synthetic audio fixtures (the "golden audio" test suite),
-  never real user recordings.
+- **We do not train models on user audio or transcripts.** The
+  inference models (`whisper.cpp`, diarization, optional LLM) are
+  pretrained and used only for inference on your in-flight meeting.
+- **We do not sell, share, or otherwise disclose user audio or
+  transcripts to any third party.**
+- **We do not retain user audio or transcripts for analytics,
+  debugging, QA, product improvement, or any other purpose.** When
+  we need to debug transcription quality, we use curated synthetic
+  audio fixtures (the "golden audio" test suite), never real user
+  recordings.
+- **We do not process biometric data, ever.** Aegis contains no
+  voiceprint enrollment, no biometric matching, and no biometric
+  storage. See ADR-0012 for the architectural decision. As a
+  consequence, GDPR Art. 9 special-category rules, Illinois BIPA,
+  Texas CUBI, and CCPA biometric rules do not apply to Aegis — not
+  because we mitigate them but because we do not process the data
+  they regulate.
 
 ### What We Do Store (and How)
 
@@ -132,19 +138,23 @@ vulnerability by our definition and we want to hear about it.
 
 ### Regulatory Posture
 
-- **GDPR**: voiceprints are Art. 9 special-category data; handled
-  with explicit consent, data minimization, and structural storage
-  limitation (RAM-only, session-scoped).
-- **BIPA (Illinois)**: voiceprints qualify as biometric identifiers;
-  handled with written consent capture and non-retention.
-- **CCPA**: voice recordings qualify as sensitive personal
-  information; handled via the same mechanism.
+- **GDPR Art. 9 special-category data** (biometrics): **does not
+  apply**. Aegis does not process biometric data at all. See ADR-0012.
+- **Illinois BIPA** (Biometric Information Privacy Act): **does not
+  apply**. No biometric identifier collection, storage, use, or
+  transmission.
+- **Texas CUBI** (Capture or Use of Biometric Identifier): **does
+  not apply**.
+- **CCPA sensitive personal information** rules for biometrics:
+  **do not apply**.
+- **GDPR general PII rules**: apply to account data and consent
+  ledger entries, which are encrypted at rest with per-tenant KMS
+  keys and deletable on request.
 - **Subject Access Requests**: users may request the content Aegis
-  holds about them. In the MVP, our honest answer for meeting
-  content is: *"We do not hold your meeting audio, voiceprints, or
-  transcripts on our servers. That content lives only on your
-  device."* We do provide the account and consent ledger records
-  we hold.
+  holds about them. Our honest answer for meeting content is: *"We
+  do not hold your meeting audio or transcripts on our servers.
+  That content lives only on your device."* We do provide the
+  account and consent ledger records we hold.
 - **Right to Erasure**: see `ARCHITECTURE.md` §9.5.
 
 ## Security Controls Summary

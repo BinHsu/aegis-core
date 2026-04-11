@@ -162,8 +162,8 @@ aegis-core/
 │   ├── src/
 │   │   ├── audio/                  # PCM buffer management, SensitiveBytes
 │   │   ├── inference/              # whisper.cpp wrapper
-│   │   ├── diarization/            # speaker diarization
-│   │   ├── voiceprint/             # enrollment + cosine matcher
+│   │   ├── diarization/            # anonymous speaker clustering (ADR-0012 — no voiceprint matching)
+│   │   ├── question_detect/        # question detection (punctuation + heuristics; ADR-0012)
 │   │   ├── rag/                    # in-process hnswlib query
 │   │   ├── session/                # session manager + Pause/Resume state machine
 │   │   ├── grpc/                   # gRPC service implementation
