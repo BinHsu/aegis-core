@@ -1,0 +1,109 @@
+# Aegis Core pre-commit hooks
+#
+# Install once per clone:
+#   pipx install pre-commit    (or: pip install --user pre-commit)
+#   pre-commit install
+#   pre-commit install --hook-type commit-msg
+#
+# Run manually across the whole repo:
+#   pre-commit run --all-files
+#
+# NOTE: Revision tags below are pinned but should be bumped periodically
+# via `pre-commit autoupdate`. Always review autoupdate diffs before merging.
+
+default_language_version:
+  python: python3
+
+repos:
+  # ---------------------------------------------------------------------------
+  # Generic hygiene
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'   # preserve Markdown line-break trailing spaces
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ["--allow-multiple-documents"]
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning (belt and braces alongside GitHub push protection)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  # ---------------------------------------------------------------------------
+  # C / C++ formatting
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        types_or: [c, c++]
+        # A project-level .clang-format file lives at repo root.
+
+  # ---------------------------------------------------------------------------
+  # Go formatting and basic checks
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-vet
+      - id: go-imports
+      - id: go-mod-tidy
+
+  # ---------------------------------------------------------------------------
+  # Frontend / TypeScript / JSON / YAML formatting
+  # (Markdown is excluded — ADRs are hand-formatted for readability.)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        types_or: [javascript, jsx, ts, tsx, json, yaml, css, html]
+        exclude: |
+          (?x)^(
+            docs/adr/.*\.md|
+            ARCHITECTURE\.md|
+            ROADMAP\.md|
+            CONTRIBUTING\.md|
+            SECURITY\.md|
+            CLAUDE\.md|
+            README\.md
+          )$
+
+  # ---------------------------------------------------------------------------
+  # Protobuf lint and breaking-change detection
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/bufbuild/buf
+    rev: v1.34.0
+    hooks:
+      - id: buf-lint
+      - id: buf-format
+      - id: buf-breaking
+        args: ["--against", ".git#branch=main"]
+
+  # ---------------------------------------------------------------------------
+  # Conventional commit message lint (optional but encouraged)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [--strict, --force-scope, feat, fix, docs, refactor, test, chore, build, ci, perf, revert]

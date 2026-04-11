@@ -27,14 +27,14 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Write `ARCHITECTURE.md` §11 Known Limitations
 - [x] Write `docs/threat-model.md` STRIDE skeleton
 - [x] Write `SECURITY.md` with responsible disclosure and privacy commitments
-- [ ] Add `CODEOWNERS` file naming the architecture owner per subtree
-- [ ] Add `CONTRIBUTING.md` with development setup and PR conventions
-- [ ] Add `.pre-commit-config.yaml` with `gitleaks`, `clang-format`, `gofmt`, `prettier`, `buf lint`
-- [ ] Add `.gitignore` covering build artifacts, `.bazel_cache/`, `.venv/`, `node_modules/`, `/models/*.gguf`
-- [ ] Add minimal GitHub Actions CI: lint + secret scan + `buf lint` (no builds yet)
-- [ ] Enable GitHub branch protection on `main`: required reviewers, required CI, no force-push, signed commits
-- [ ] Enable GitHub **Private Vulnerability Reporting** (per SECURITY.md)
-- [ ] Enable GitHub **secret scanning with push protection**
+- [x] Add `CODEOWNERS` file naming the architecture owner per subtree
+- [x] Add `CONTRIBUTING.md` with development setup and PR conventions
+- [x] Add `.pre-commit-config.yaml` with `gitleaks`, `clang-format`, `gofmt`, `prettier`, `buf lint`
+- [x] Add `.gitignore` covering build artifacts, `.bazel_cache/`, `.venv/`, `node_modules/`, `/models/*.gguf`
+- [x] Add minimal GitHub Actions CI: lint + secret scan + `buf lint` (no builds yet)
+- [ ] Enable GitHub branch protection on `main`: required reviewers, required CI, no force-push, signed commits — see `docs/github-setup.md`
+- [ ] Enable GitHub **Private Vulnerability Reporting** (per SECURITY.md) — see `docs/github-setup.md`
+- [ ] Enable GitHub **secret scanning with push protection** — see `docs/github-setup.md`
 - [ ] Document `/models/manifest.json` schema for model provenance (ARCH §10.1)
 
 ---

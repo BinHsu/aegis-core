@@ -1,0 +1,63 @@
+# CODEOWNERS — per-subtree ownership
+#
+# Order matters: the LAST matching pattern takes precedence.
+# Each line specifies: <pattern> <owner1> [owner2 ...]
+#
+# At MVP stage there is a single maintainer (@BinHsu). As the team grows,
+# expand this file to reflect per-area ownership (e.g., @eng-cpp for
+# engine_cpp/, @eng-infra for deploy/).
+
+# -----------------------------------------------------------------------------
+# Default catch-all — every file not otherwise claimed
+# -----------------------------------------------------------------------------
+*                                           @BinHsu
+
+# -----------------------------------------------------------------------------
+# Architecture-critical files: changes here require maintainer review
+# -----------------------------------------------------------------------------
+/ARCHITECTURE.md                            @BinHsu
+/ROADMAP.md                                 @BinHsu
+/CLAUDE.md                                  @BinHsu
+/SECURITY.md                                @BinHsu
+/README.md                                  @BinHsu
+/CONTRIBUTING.md                            @BinHsu
+/LICENSE                                    @BinHsu
+
+# Architecture Decision Records — never modified in place, only superseded
+/docs/adr/                                  @BinHsu
+/docs/threat-model.md                       @BinHsu
+/docs/github-setup.md                       @BinHsu
+
+# -----------------------------------------------------------------------------
+# Build system — hermeticity is load-bearing for CLAUDE.md Rule 6
+# -----------------------------------------------------------------------------
+/MODULE.bazel                               @BinHsu
+/WORKSPACE*                                 @BinHsu
+/.bazelrc                                   @BinHsu
+/.bazelversion                              @BinHsu
+/BUILD.bazel                                @BinHsu
+
+# -----------------------------------------------------------------------------
+# Security-critical configuration
+# -----------------------------------------------------------------------------
+/.github/                                   @BinHsu
+/.pre-commit-config.yaml                    @BinHsu
+/.gitignore                                 @BinHsu
+
+# -----------------------------------------------------------------------------
+# Proto contracts — cross-language source of truth; any change affects all three
+# bindings (C++, Go, TypeScript). Requires extra scrutiny.
+# -----------------------------------------------------------------------------
+/proto/                                     @BinHsu
+
+# -----------------------------------------------------------------------------
+# Per-component code ownership (single-maintainer for MVP)
+# -----------------------------------------------------------------------------
+/engine_cpp/                                @BinHsu
+/gateway_go/                                @BinHsu
+/frontend_web/                              @BinHsu
+/shell_tauri/                               @BinHsu
+/models/                                    @BinHsu
+/deploy/                                    @BinHsu
+/tools/                                     @BinHsu
+/test/                                      @BinHsu

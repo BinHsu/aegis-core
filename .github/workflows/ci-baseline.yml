@@ -1,0 +1,111 @@
+name: CI Baseline
+
+# Minimal CI for Phase 0: lint, secret scan, and proto lint (when applicable).
+# Build / test workflows are added in Phase 1+ once Bazel targets exist.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Pre-commit: runs all hooks defined in .pre-commit-config.yaml
+  # This is the primary lint / format gate.
+  # ---------------------------------------------------------------------------
+  pre-commit:
+    name: Pre-commit hooks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for buf-breaking against main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning — redundant with GitHub push protection + pre-commit
+  # gitleaks, but runs in CI for pull requests from forks where push
+  # protection may not apply.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Proto lint — only runs when proto/ directory contains .proto files.
+  # In Phase 0 this job is a no-op until the contracts land in Phase 1.
+  # ---------------------------------------------------------------------------
+  buf-lint:
+    name: Proto lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for proto files
+        id: check_protos
+        run: |
+          if ls proto/**/*.proto >/dev/null 2>&1; then
+            echo "has_protos=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_protos=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up buf
+        if: steps.check_protos.outputs.has_protos == 'true'
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Run buf lint
+        if: steps.check_protos.outputs.has_protos == 'true'
+        run: buf lint
+
+      - name: Run buf breaking
+        if: steps.check_protos.outputs.has_protos == 'true' && github.event_name == 'pull_request'
+        run: buf breaking --against ".git#branch=${{ github.base_ref }}"
+
+  # ---------------------------------------------------------------------------
+  # Documentation link check — basic sanity for internal cross-references.
+  # Uses a lightweight action; does not fail the build on external link
+  # timeouts (those are noisy).
+  # ---------------------------------------------------------------------------
+  markdown-link-check:
+    name: Markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check links in markdown
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "no"
+          check-modified-files-only: "yes"
+          base-branch: main

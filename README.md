@@ -1,7 +1,6 @@
 # 🛡️ Aegis Core (V2)
 
 > **"Turn every remote meeting into a strategic advantage."**
-> *(一個設計給大型企業與公關團隊的「防社死提詞機」：第二代雲端原生架構)*
 
 Welcome to Aegis Core! If you are looking for the original lightweight Python/Mac-only setup, check out the [V1 Repository](https://github.com/BinHsu/Aegis-Prompter).
 
