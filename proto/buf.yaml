@@ -1,0 +1,48 @@
+# Buf module configuration for Aegis Core's proto contracts.
+#
+# This file declares the `proto/` directory as a single buf module and
+# enforces lint rules + breaking-change policy. See https://buf.build/docs
+# for configuration reference.
+#
+# Used by:
+#   - `.pre-commit-config.yaml` (`buf-lint`, `buf-format`, `buf-breaking`
+#     hooks) for local pre-commit enforcement.
+#   - `.github/workflows/ci-baseline.yml` (`buf-lint` job) for CI
+#     enforcement.
+#   - Future `buf generate` invocations that produce language bindings
+#     alongside or in place of the Bazel proto rules.
+
+version: v2
+
+modules:
+  - path: .
+
+lint:
+  use:
+    - STANDARD
+  except:
+    # Our package is intentionally versioned as `aegis.v1` to allow
+    # `aegis.v2` coexistence. STANDARD would otherwise complain about
+    # `PACKAGE_VERSION_SUFFIX` if we used a non-versioned name, but
+    # we are fine here. This `except` is a placeholder; remove if no
+    # rules actually need suppression.
+  enum_zero_value_suffix: _UNSPECIFIED
+  rpc_allow_same_request_response: false
+  rpc_allow_google_protobuf_empty_requests: true
+  rpc_allow_google_protobuf_empty_responses: true
+  service_suffix: ""
+  # The `Gateway` and `Engine` service names are short and intentional.
+  # We do not enforce `XxxService` suffix.
+
+breaking:
+  use:
+    - FILE
+  # FILE enforcement catches all semantic breaking changes (field
+  # deletion, tag renumbering, type changes) without requiring
+  # wire-format compatibility rules that are too loose.
+  except:
+    # Allow adding fields marked as "reserved for Phase 5+" to become
+    # active fields in the future without triggering breaking-change
+    # errors. This rule is intentionally commented because we have not
+    # hit it yet; uncomment if the Phase 5 implementation needs it.
+    # - FIELD_SAME_LABEL

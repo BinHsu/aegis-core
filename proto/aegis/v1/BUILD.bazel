@@ -1,0 +1,81 @@
+# Bazel build file for the aegis.v1 proto package.
+#
+# ⚠️ SKELETON — this file is a design-phase artifact targeting the
+# Bazel rules and macros specified in ADR-0009 Sub-decisions 1–2. It
+# has NOT been validated against a working Bazel workspace; the
+# `MODULE.bazel` scaffolding is a Phase 1 task.
+#
+# When Phase 1 Bazel setup begins:
+#   1. Verify the load paths match the `bazel_dep` names in
+#      `MODULE.bazel`. Likely candidates:
+#        - rules_proto
+#        - protobuf (@com_google_protobuf)
+#        - grpc (@com_github_grpc_grpc)
+#        - rules_go
+#        - rules_ts / aspect_rules_ts
+#   2. If the `cc_grpc_library` or `go_proto_library` macros differ
+#      from the names used here, adjust. grpc's Bazel rules have
+#      historically renamed macros across versions.
+#   3. Run `bazel build //proto/aegis/v1/...` to verify. Expect to
+#      iterate once or twice on the exact macro signatures.
+#   4. Remove this warning when verification passes.
+#
+# The intent this file captures is what matters; the exact load
+# statements are adjustable.
+
+load("@rules_proto//proto:defs.bzl", "proto_library")
+load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+load("@rules_go//proto:def.bzl", "go_proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# -----------------------------------------------------------------------------
+# Source proto library — the single source of truth. All language bindings
+# below are derived from this target.
+# -----------------------------------------------------------------------------
+proto_library(
+    name = "aegis_proto",
+    srcs = ["aegis.proto"],
+    deps = [
+        "@com_google_protobuf//:duration_proto",
+        "@com_google_protobuf//:timestamp_proto",
+    ],
+)
+
+# -----------------------------------------------------------------------------
+# C++ bindings — used by the C++ engine (engine_cpp/) per ADR-0009.
+# -----------------------------------------------------------------------------
+cc_proto_library(
+    name = "aegis_cc_proto",
+    deps = [":aegis_proto"],
+)
+
+cc_grpc_library(
+    name = "aegis_cc_grpc",
+    srcs = [":aegis_proto"],
+    grpc_only = True,
+    deps = [":aegis_cc_proto"],
+)
+
+# -----------------------------------------------------------------------------
+# Go bindings — used by the Go Gateway (gateway_go/).
+# -----------------------------------------------------------------------------
+go_proto_library(
+    name = "aegis_go_proto",
+    compilers = [
+        "@rules_go//proto:go_proto",
+        "@rules_go//proto:go_grpc_v2",
+    ],
+    importpath = "github.com/BinHsu/aegis-core/gen/go/aegis/v1",
+    proto = ":aegis_proto",
+)
+
+# -----------------------------------------------------------------------------
+# TypeScript bindings — used by the frontend (frontend_web/).
+#
+# Frontend codegen is intentionally NOT defined here because it typically
+# lives under `frontend_web/` where the TypeScript toolchain is wired up.
+# See `frontend_web/BUILD.bazel` (Phase 3) for the `ts_proto_library`
+# target that depends on `:aegis_proto`.
+# -----------------------------------------------------------------------------

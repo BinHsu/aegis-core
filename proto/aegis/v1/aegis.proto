@@ -1,0 +1,572 @@
+// =============================================================================
+// Aegis Core — v1 contracts
+//
+// This file is the SINGLE SOURCE OF TRUTH for every gRPC contract in Aegis
+// Core. It generates C++ bindings for the engine, Go bindings for the
+// gateway, and TypeScript bindings for the frontend. Breaking changes must
+// be accompanied by a new ADR and a major version bump (v1 -> v2) in a new
+// `proto/aegis/v2/` directory; see `docs/adr/` and `buf.yaml`.
+//
+// Two services are defined:
+//   (1) `aegis.v1.Gateway`  — client-facing, hosted by the Go BFF. End users
+//                             (host and viewers) call this service over
+//                             gRPC-Web (Cloud) or WebSocket + Protobuf
+//                             (Local mode, per ADR-0007). Cognito JWT auth
+//                             in Cloud mode; dummy local auth otherwise.
+//   (2) `aegis.v1.Engine`   — internal, hosted by the C++ engine. Called
+//                             ONLY by the Go Gateway over mTLS gRPC inside
+//                             the cluster (or loopback in Local mode).
+//                             End users never reach this service.
+//
+// Load-bearing design notes (DO NOT change without a new ADR):
+//   * Raw audio PCM lives ONLY in the Engine process RAM for the
+//     lifetime of a single StreamTranscribe stream. See ADR-0005
+//     (seven enforcement requirements). Aegis does NOT process
+//     voiceprint / biometric data at all — see ADR-0012.
+//   * Transcript segments are never persisted server-side. The Go Gateway
+//     is a stateless fan-out relay; see ADR-0004.
+//   * Speaker labels in transcripts may be anonymous (Speaker_0..N) or
+//     role-based (Host, Client, Colleague). Never real names; see
+//     ARCHITECTURE.md §9.2.
+//   * Viewer access control is invite-token-based for MVP. The
+//     `allowed_viewer_account_ids` field on CreateMeetingRequest is
+//     RESERVED for the Phase 5+ enterprise tier per ADR-0001 "Future
+//     Extension Path".
+//   * The `IngestMessage.pcm` field carries sensitive audio bytes. Any
+//     log formatter, trace exporter, or debug tool that touches this
+//     field must be type-guarded per ADR-0005 R3 and R4. Semgrep rules
+//     in `tools/ci/semgrep_rules/` enforce this.
+// =============================================================================
+
+syntax = "proto3";
+
+package aegis.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/BinHsu/aegis-core/gen/go/aegis/v1;aegisv1";
+option java_multiple_files = true;
+option java_package = "io.aegis.v1";
+
+// =============================================================================
+// Service: aegis.v1.Gateway  (client-facing)
+// =============================================================================
+
+service Gateway {
+  // Creates a new meeting. The authenticated caller becomes the host.
+  //
+  // Returns the session identifier, a short-lived JWT join token (per
+  // ADR-0001 Option B) that viewers present via the invite URL, and
+  // metadata about the engine backing this session.
+  //
+  // After this call, the host must:
+  //   (1) Call `NegotiateWebRTC` to establish the audio path.
+  //   (2) Call `JoinAsViewer` with the returned session_id to subscribe
+  //       to the live transcript and prompter stream. The host is also
+  //       a viewer of their own meeting.
+  //
+  // Errors:
+  //   UNAUTHENTICATED       — missing / invalid Cognito JWT (Cloud mode)
+  //   PERMISSION_DENIED     — caller cannot access the requested RAG
+  //   NOT_FOUND             — rag_id does not exist
+  //   RESOURCE_EXHAUSTED    — engine ResourceBudget full (see ADR-0010)
+  //   FAILED_PRECONDITION   — Gateway pod is draining (see ADR-0006)
+  rpc CreateMeeting(CreateMeetingRequest) returns (CreateMeetingResponse);
+
+  // Establishes the WebRTC audio path between the host and the Gateway
+  // via non-trickle SDP exchange. The request carries a complete offer
+  // (including all ICE candidates gathered after `iceGatheringState`
+  // reaches "complete"); the response carries the Gateway's complete
+  // answer.
+  //
+  // MVP does NOT support trickle ICE. The client MUST wait for ICE
+  // gathering to complete before calling. Trickle-ICE support may be
+  // added in Phase 2 as a separate bidi-streaming RPC without breaking
+  // this unary one.
+  //
+  // Errors:
+  //   NOT_FOUND             — unknown session_id
+  //   FAILED_PRECONDITION   — session is not in ACTIVE state
+  //   INVALID_ARGUMENT      — malformed SDP offer
+  //   RESOURCE_EXHAUSTED    — engine budget cannot accommodate this session
+  rpc NegotiateWebRTC(NegotiateWebRTCRequest) returns (NegotiateWebRTCResponse);
+
+  // Subscribes to the live event stream for a meeting. Used by both the
+  // host (on their own session) and any viewer (via invite token).
+  //
+  // The stream delivers transcript segments, prompter hints, and meeting
+  // state changes. The server closes the stream when the meeting ends
+  // (host disconnects per ADR-0006, crashes per L1/L2, or explicitly
+  // ends via EndMeeting).
+  //
+  // Late joiners see only events produced AFTER they join. This is an
+  // intentional privacy feature per ARCHITECTURE.md §9.6 / §11 L4; it
+  // must not be "fixed" to replay history.
+  //
+  // Errors:
+  //   UNAUTHENTICATED       — missing viewer_token
+  //   PERMISSION_DENIED     — token invalid, expired, or allowlist miss
+  //                           (Phase 5+ enterprise tier)
+  //   NOT_FOUND             — unknown session_id
+  //   FAILED_PRECONDITION   — session already ended
+  rpc JoinAsViewer(JoinAsViewerRequest) returns (stream ViewerEvent);
+
+  // Explicitly ends a meeting. Only the host may call this. Terminates
+  // the session on the engine, disconnects all viewers with a final
+  // MeetingStateChange event, and releases ResourceBudget.
+  //
+  // Errors:
+  //   PERMISSION_DENIED     — caller is not the host
+  //   NOT_FOUND             — unknown session_id
+  //   FAILED_PRECONDITION   — session already ended
+  rpc EndMeeting(EndMeetingRequest) returns (EndMeetingResponse);
+
+  // NOTE: an explicit query RPC (formerly "AskRAG") was considered
+  // and removed before MVP. Automatic prompter hints delivered via
+  // `ViewerEvent.hint` cover the target UX (host in live meeting,
+  // cannot type). See ADR-0012 "Future Outlook" for the constraint
+  // that, if AskRAG is re-added in Phase 5+, its implementation
+  // MUST run on a dedicated worker pool and MUST NOT contend with
+  // the session thread for inference cycles.
+}
+
+// -----------------------------------------------------------------------------
+// CreateMeeting
+// -----------------------------------------------------------------------------
+
+message CreateMeetingRequest {
+  // Identifier of the RAG corpus to bind to this meeting. In Cloud mode
+  // this is a DynamoDB partition key; in Local mode it is a path
+  // identifier resolved relative to `./models/` (per CLAUDE.md Rule 6).
+  // Must reference a corpus the authenticated caller can access.
+  string rag_id = 1;
+
+  // Optional human-readable meeting title (displayed in viewer UI and
+  // in the export metadata). Max 200 characters.
+  string title = 2;
+
+  // BCP-47 language hints to prime whisper's language detection. The
+  // engine uses these as priors but may still detect other languages
+  // in the audio. Common values: "en-US", "zh-TW", "en-US+zh-TW" for
+  // code-switching scenarios. Empty = no hint.
+  repeated string language_hints = 3;
+
+  // Reserved for Phase 5+ enterprise tier per ADR-0001 "Future Extension
+  // Path". When non-empty, only viewers whose authenticated account ID
+  // is in this list may redeem the join token. MVP ignores this field
+  // entirely and accepts any holder of the token.
+  //
+  // Phase 5 implementers: adding enforcement for this field is a purely
+  // additive change; no clients need to migrate.
+  repeated string allowed_viewer_account_ids = 4;
+}
+
+message CreateMeetingResponse {
+  // Opaque session identifier. 128-bit random, URL-safe base64, ~22
+  // characters. Used as the key for all subsequent calls.
+  string session_id = 1;
+
+  // Short-lived JWT bound to this session. Viewers present this via
+  // `?token=` on the invite URL. Expiry is set in `token_expires_at`.
+  // Per ADR-0001: `session_max_lifetime + 10min grace`.
+  string viewer_join_token = 2;
+
+  // Exact expiry time of the join token. Viewers who attempt to join
+  // after this time receive PERMISSION_DENIED.
+  google.protobuf.Timestamp token_expires_at = 3;
+
+  // Maximum session wall-clock lifetime. The session auto-terminates
+  // at this moment regardless of activity. Default 4 hours per
+  // ADR-0001 recommended defaults.
+  google.protobuf.Timestamp session_expires_at = 4;
+
+  // Metadata about the engine pod assigned to this session.
+  EngineInfo engine = 5;
+}
+
+message EngineInfo {
+  // Whisper model in use, e.g., "whisper-large-v3-turbo-q4".
+  string model = 1;
+
+  // Backend: "metal", "cuda", or "cpu". Selected at engine build time
+  // per ADR-0009 Sub-decision 4.
+  string backend = 2;
+
+  // Engine binary version (semver or commit sha).
+  string version = 3;
+}
+
+// -----------------------------------------------------------------------------
+// NegotiateWebRTC
+// -----------------------------------------------------------------------------
+
+message NegotiateWebRTCRequest {
+  string session_id = 1;
+
+  // Complete SDP offer from the host, including all ICE candidates
+  // gathered via `iceGatheringState === "complete"`. MVP uses
+  // non-trickle ICE only.
+  string offer_sdp = 2;
+}
+
+message NegotiateWebRTCResponse {
+  // Complete SDP answer from the Gateway, including all gathered ICE
+  // candidates. The host sets this as the remote description on its
+  // RTCPeerConnection.
+  string answer_sdp = 1;
+}
+
+// -----------------------------------------------------------------------------
+// JoinAsViewer
+// -----------------------------------------------------------------------------
+
+message JoinAsViewerRequest {
+  string session_id = 1;
+
+  // The JWT join token the caller was given (via `CreateMeetingResponse`
+  // for the host, or via the invite URL query parameter for a viewer).
+  // Required for every caller, including the host.
+  string viewer_token = 2;
+}
+
+// Server-streamed event. Exactly one payload field is set per message.
+message ViewerEvent {
+  // Monotonically increasing sequence number within a single subscription.
+  // Clients use this to detect gaps caused by retries or network loss
+  // and may resubscribe if a gap is unexpectedly large.
+  uint64 sequence = 1;
+
+  // Server-side wall-clock timestamp at which this event was emitted.
+  google.protobuf.Timestamp emitted_at = 2;
+
+  oneof payload {
+    TranscriptSegment transcript = 3;
+    PrompterHint hint = 4;
+    MeetingStateChange state_change = 5;
+  }
+}
+
+message TranscriptSegment {
+  // Monotonic segment identifier within this meeting. Starts at 1.
+  uint64 segment_id = 1;
+
+  // Speaker label. Either anonymous ("Speaker_0", "Speaker_1", ...) or
+  // a role label chosen by the host from a curated list ("Host",
+  // "Client", "Colleague", etc.). MUST NOT be a real name per
+  // ARCHITECTURE.md §9.2 Privacy by Design. The Gateway rejects
+  // CreateMeeting requests whose UI path allowed real-name entry.
+  string speaker_label = 2;
+
+  // Start and end offsets from the beginning of the meeting, in
+  // milliseconds. These are wall-clock offsets, not audio-sample
+  // offsets.
+  int64 start_ms = 3;
+  int64 end_ms = 4;
+
+  // Recognized transcript text in the detected language.
+  string text = 5;
+
+  // BCP-47 language tag of `text`. May differ from the request's
+  // `language_hints` if the detection chose a different language.
+  string language = 6;
+
+  // `true` when this is the final recognition for this time range.
+  // `false` for interim / partial results. Clients typically display
+  // interim results in a muted style until the final version replaces
+  // them. Interim segments with the same `start_ms` and `end_ms` range
+  // supersede previous interims.
+  bool is_final = 7;
+
+  // Optional confidence score for the text, in [0.0, 1.0]. 0 means
+  // unknown / unreported.
+  float confidence = 8;
+
+  // `true` when the engine has classified this segment as a question
+  // (via whisper-emitted `?` punctuation plus language-specific
+  // heuristics per ADR-0012). Used by the UI to highlight questions
+  // visually and by the hint generator as the trigger for RAG
+  // lookup. Not mutually exclusive with `is_final`; both can be
+  // true simultaneously on a finalized question segment.
+  bool is_question = 9;
+}
+
+message PrompterHint {
+  // Monotonic hint identifier within this meeting. Starts at 1.
+  uint64 hint_id = 1;
+
+  // Suggestion text to display to the host. Short, actionable.
+  string suggestion = 2;
+
+  // Optional brief reasoning ("because the client mentioned Q4 concerns
+  // and the brief says we're not committing to Q4 publicly"). Supports
+  // UI transparency.
+  string rationale = 3;
+
+  // Optional citations back to RAG sources that back this hint.
+  repeated RagCitation citations = 4;
+
+  // Urgency level. UI may present URGENT / HIGH hints with a different
+  // visual treatment.
+  HintUrgency urgency = 5;
+}
+
+message RagCitation {
+  // Identifier of the source document within the RAG corpus.
+  string doc_id = 1;
+
+  // Short quoted excerpt that supports the hint.
+  string quote = 2;
+
+  // Optional page / section reference.
+  string location = 3;
+}
+
+enum HintUrgency {
+  HINT_URGENCY_UNSPECIFIED = 0;
+  HINT_URGENCY_LOW = 1;
+  HINT_URGENCY_NORMAL = 2;
+  HINT_URGENCY_HIGH = 3;
+  HINT_URGENCY_URGENT = 4;
+}
+
+message MeetingStateChange {
+  MeetingState state = 1;
+
+  // Optional human-readable reason for the change.
+  string reason = 2;
+}
+
+enum MeetingState {
+  MEETING_STATE_UNSPECIFIED = 0;
+
+  // Normal operation: audio flowing, transcripts streaming.
+  MEETING_STATE_ACTIVE = 1;
+
+  // Host has entered WebRTC `Disconnected` state. Audio ingest is
+  // paused on the engine (see ADR-0006). Within the 30-second grace
+  // window, the host may reconnect and transition back to ACTIVE.
+  MEETING_STATE_HOST_RECONNECTING = 2;
+
+  // Session ended. This is the last event before the stream closes.
+  MEETING_STATE_ENDED = 3;
+
+  // The engine could not accept new work. This state is surfaced when
+  // the ResourceBudget rejects a pause/resume or similar operation.
+  // Rarely seen by viewers; usually only host sees it briefly before
+  // ENDED.
+  MEETING_STATE_ENGINE_BUSY = 4;
+}
+
+// -----------------------------------------------------------------------------
+// EndMeeting
+// -----------------------------------------------------------------------------
+
+message EndMeetingRequest {
+  string session_id = 1;
+}
+
+message EndMeetingResponse {
+  // Total wall-clock duration of the meeting.
+  google.protobuf.Duration duration = 1;
+
+  // Total number of final transcript segments produced. Interim
+  // segments are not counted.
+  uint64 final_segment_count = 2;
+
+  // Total number of prompter hints emitted.
+  uint64 hint_count = 3;
+}
+
+// =============================================================================
+// Service: aegis.v1.Engine  (internal, Go Gateway -> C++ engine)
+// =============================================================================
+
+service Engine {
+  // Bidirectional stream for audio ingest and transcript egress.
+  //
+  // Lifecycle (per ADR-0005 R1 and ADR-0010 threading model):
+  //   1. Gateway opens the stream.
+  //   2. Gateway sends exactly one `SessionStart` as the first
+  //      IngestMessage. The engine calls
+  //      `ResourceBudget::Reserve(estimated_bytes)`. On failure, the
+  //      engine returns RESOURCE_EXHAUSTED and closes the stream.
+  //   3. Gateway sends an arbitrary sequence of `PcmChunk` and
+  //      `ControlEvent` messages. The engine emits
+  //      `TranscriptSegment`, `PrompterHint`, and `EngineStatus`
+  //      messages as they become available.
+  //   4. Gateway sends `ControlEvent{END_STREAM}` or closes the stream.
+  //      The engine flushes any pending transcript and releases the
+  //      ResourceBudget reservation. All per-session RAM is freed
+  //      before the handler returns.
+  //
+  // Transient host disconnect (ADR-0006 WebRTC state transitions):
+  //   - Gateway sends `ControlEvent{PAUSE}` on host
+  //     `Disconnected`. The engine retains buffers, does NOT flush
+  //     final segments, and stops emitting until `RESUME`.
+  //   - Gateway sends `ControlEvent{RESUME}` when host returns to
+  //     `Connected` within the 30-second grace window.
+  //   - Gateway sends `ControlEvent{END_STREAM}` if the grace window
+  //     expires (host `Failed`).
+  //
+  // Errors (wire form: grpc::Status):
+  //   INVALID_ARGUMENT      — malformed SessionStart or PcmChunk
+  //   RESOURCE_EXHAUSTED    — ResourceBudget rejected the reservation
+  //   INTERNAL              — whisper.cpp or diarization failure
+  rpc StreamTranscribe(stream IngestMessage) returns (stream EgressMessage);
+
+  // Health / readiness probe. Called by the Gateway for routing
+  // decisions and by Kubernetes liveness / readiness probes.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// -----------------------------------------------------------------------------
+// StreamTranscribe — ingest side
+// -----------------------------------------------------------------------------
+
+message IngestMessage {
+  oneof payload {
+    // The first message on every stream. Sent exactly once.
+    SessionStart session_start = 1;
+
+    // Audio data. Sent zero or more times after SessionStart.
+    PcmChunk pcm = 2;
+
+    // Control event (pause / resume / end). Sent zero or more times.
+    ControlEvent control = 3;
+  }
+}
+
+message SessionStart {
+  // Matches the Gateway's session identifier.
+  string session_id = 1;
+
+  // Tenant / organization identifier. Empty in Local mode; populated
+  // in Cloud mode from the host's Cognito JWT.
+  string tenant_id = 2;
+
+  // RAG corpus identifier to bind to this session.
+  string rag_id = 3;
+
+  // Audio format of the PcmChunk stream that will follow.
+  AudioFormat audio_format = 4;
+
+  // Language hints (BCP-47).
+  repeated string language_hints = 5;
+
+  // Per-session memory budget estimate, in bytes. The engine calls
+  // `ResourceBudget::Reserve(estimated_bytes)` with this value on
+  // receipt. Default 200 MB per ADR-0010 Sub-decision 2.
+  uint64 estimated_bytes = 6;
+}
+
+message AudioFormat {
+  // Canonical MVP format per ADR-0011: 16000 Hz, 1 channel, 16-bit.
+  // Other values are rejected with INVALID_ARGUMENT for Phase 1.
+  uint32 sample_rate_hz = 1;
+  uint32 channels = 2;
+  uint32 bits_per_sample = 3;
+}
+
+message PcmChunk {
+  // Raw little-endian signed 16-bit PCM samples, matching the
+  // AudioFormat declared in SessionStart.
+  //
+  // WARNING: this field is SENSITIVE AUDIO DATA and must never appear
+  // in logs, traces, metrics labels, or any durable storage. See
+  // ADR-0005 R3 (log formatter type whitelist) and R4 (OpenTelemetry
+  // span attribute allowlist). Generated code MUST wrap this field
+  // in language-specific `SensitiveBytes` / `RedactedPCM` types
+  // enforced by Semgrep rules in `tools/ci/semgrep_rules/`.
+  bytes pcm = 1;
+
+  // Monotonic chunk sequence number. 0-based.
+  uint64 chunk_id = 2;
+
+  // Wall-clock offset from the beginning of the session, in
+  // milliseconds.
+  int64 offset_ms = 3;
+}
+
+message ControlEvent {
+  ControlKind kind = 1;
+}
+
+enum ControlKind {
+  CONTROL_KIND_UNSPECIFIED = 0;
+
+  // Host entered WebRTC `Disconnected` (ADR-0006). Engine retains
+  // buffers, does NOT flush final segments, stops emitting until
+  // RESUME.
+  CONTROL_KIND_PAUSE = 1;
+
+  // Host returned to `Connected`. Engine resumes normal ingest.
+  CONTROL_KIND_RESUME = 2;
+
+  // Host ended the session normally, OR grace window expired after
+  // PAUSE. Engine flushes any pending transcript and closes the
+  // stream.
+  CONTROL_KIND_END_STREAM = 3;
+}
+
+// -----------------------------------------------------------------------------
+// StreamTranscribe — egress side
+// -----------------------------------------------------------------------------
+
+message EgressMessage {
+  oneof payload {
+    // A transcript segment (partial or final). Same wire format as
+    // the TranscriptSegment carried in ViewerEvent.
+    TranscriptSegment transcript = 1;
+
+    // A prompter hint generated from RAG + transcript context.
+    PrompterHint hint = 2;
+
+    // Periodic engine status for Gateway observability.
+    EngineStatus status = 3;
+
+    // Stream-level error. After emitting this, the engine closes the
+    // stream.
+    EngineError error = 4;
+  }
+}
+
+message EngineStatus {
+  // Current `ResourceBudget::BytesUsed()`.
+  uint64 budget_bytes_used = 1;
+
+  // Configured total budget on this engine pod.
+  uint64 budget_bytes_total = 2;
+
+  // Number of active sessions on this engine pod.
+  uint32 active_sessions = 3;
+}
+
+message EngineError {
+  // Mirrors absl::StatusCode / grpc::StatusCode so the Gateway can
+  // translate without information loss.
+  int32 code = 1;
+
+  // Human-readable message. MUST NOT contain transcript text, audio
+  // data, or other sensitive content; per ADR-0005 R3.
+  string message = 2;
+}
+
+// -----------------------------------------------------------------------------
+// Health
+// -----------------------------------------------------------------------------
+
+message HealthRequest {}
+
+message HealthResponse {
+  // Kubernetes readiness indicator. `false` means the engine is
+  // starting up, shutting down, or unhealthy and should not receive
+  // new sessions.
+  bool ready = 1;
+
+  // Engine metadata (model, backend, version).
+  EngineInfo info = 2;
+
+  // Current resource budget state.
+  EngineStatus status = 3;
+}
