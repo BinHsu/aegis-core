@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Aegis Core — Bazelisk wrapper (./mvnw-style).
+#
+# Downloads bazelisk on first use into <repo>/.bazelisk/ and invokes it
+# with the repo's .bazelversion, ensuring NO global install is needed
+# (CLAUDE.md Rule 6 — strict directory confinement).
+#
+# Usage (from any directory):
+#   ./tools/bazelisk/bazelisk build //proto/...
+#   ./tools/bazelisk/bazelisk test //engine_cpp/...
+#
+# The wrapper also forces Bazel's --output_user_root to
+# <repo>/.bazel_cache so all of Bazel's internal state stays inside
+# the repo tree rather than leaking into ~/.cache/bazel.
+#
+# Env overrides:
+#   AEGIS_BAZELISK_VERSION  — pin a specific bazelisk release (default: v1.28.1)
+
+set -euo pipefail
+
+BAZELISK_VERSION="${AEGIS_BAZELISK_VERSION:-v1.28.1}"
+
+# Resolve repo root regardless of where the user invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BAZELISK_DIR="$REPO_ROOT/.bazelisk"
+BAZEL_CACHE="$REPO_ROOT/.bazel_cache"
+
+# --- Detect platform for the correct bazelisk binary ---
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64)   BIN_SUFFIX="darwin-arm64" ;;
+  Darwin-x86_64)  BIN_SUFFIX="darwin-amd64" ;;
+  Linux-x86_64)   BIN_SUFFIX="linux-amd64"  ;;
+  Linux-aarch64)  BIN_SUFFIX="linux-arm64"  ;;
+  *) echo "Unsupported platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+esac
+
+BAZELISK_BIN="$BAZELISK_DIR/bazelisk-$BAZELISK_VERSION-$BIN_SUFFIX"
+
+# --- Download bazelisk on first use (cached thereafter) ---
+if [[ ! -x "$BAZELISK_BIN" ]]; then
+  mkdir -p "$BAZELISK_DIR"
+  URL="https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-${BIN_SUFFIX}"
+  echo "Downloading bazelisk ${BAZELISK_VERSION} for ${BIN_SUFFIX}..." >&2
+  echo "  from: $URL" >&2
+  echo "  to:   $BAZELISK_BIN" >&2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$BAZELISK_BIN" "$URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$BAZELISK_BIN" "$URL"
+  else
+    echo "ERROR: neither curl nor wget is available." >&2
+    exit 1
+  fi
+  chmod +x "$BAZELISK_BIN"
+fi
+
+# --- Ensure cache directory exists (Bazel creates it, but early creation
+#     avoids a first-run race on parallel invocations).
+mkdir -p "$BAZEL_CACHE"
+
+# --- Invoke bazelisk with --output_user_root pinned to the repo tree.
+#     bazelisk will read .bazelversion and download the matching Bazel
+#     release (also into $BAZELISK_DIR by default via USE_BAZEL_VERSION).
+export USE_BAZEL_VERSION  # unchanged, set by .bazelversion discovery
+exec "$BAZELISK_BIN" --output_user_root="$BAZEL_CACHE" "$@"

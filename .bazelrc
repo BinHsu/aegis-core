@@ -1,0 +1,60 @@
+# Aegis Core .bazelrc
+# Per ADR-0009 (C++ Build and Toolchain). DO NOT add user-specific
+# overrides here — use .bazelrc.user (gitignored) for those.
+
+# --- CLAUDE.md Rule 6: strict directory confinement ---
+# Bazel's global output_user_root is overridden by the tools/bazelisk/bazelisk
+# wrapper, which resolves it to <repo>/.bazel_cache at startup so Bazel
+# never writes to ~/.cache/bazel or /private/var.
+
+# --- C++ language standard (ADR-0009 Sub-decision 1) ---
+build --cxxopt=-std=c++20
+build --host_cxxopt=-std=c++20
+build --cxxopt=-Wall
+build --cxxopt=-Wextra
+build --host_cxxopt=-Wall
+build --host_cxxopt=-Wextra
+# -Werror is intentionally NOT set at the top level because it makes
+# every third-party warning a hard failure. Re-enable per target via
+# cc_library(copts=["-Werror"]) in engine_cpp/.
+
+# --- Default backend: CPU (ADR-0009 Sub-decision 4) ---
+# This ensures `bazel build` works out of the box on ANY machine
+# (including AI agent clones and CI runners) without requiring
+# configure_backend.sh or a --config flag. Override with --config=metal
+# or --config=cuda for acceleration.
+build --define=whisper_backend=cpu
+
+# --- Backend selection — use `--config=metal|cuda|cpu` to override ---
+# Developers: run `./tools/scripts/configure_backend.sh` on first clone
+# to write your preferred backend to `.bazelrc.user` (gitignored).
+# CI: pass the flag directly on the command line.
+build:metal --define=whisper_backend=metal
+build:metal --copt=-DGGML_USE_METAL
+build:metal --linkopt=-framework
+build:metal --linkopt=Metal
+build:metal --linkopt=-framework
+build:metal --linkopt=MetalKit
+
+build:cuda --define=whisper_backend=cuda
+build:cuda --copt=-DGGML_USE_CUBLAS
+build:cuda --action_env=CUDA_PATH
+
+build:cpu --define=whisper_backend=cpu
+build:cpu --copt=-DGGML_USE_AVX2
+build:cpu --copt=-mavx2
+build:cpu --copt=-mfma
+
+# --- Debug vs release ---
+build:debug -c dbg
+build:debug --copt=-DAEGIS_DEV_AUDIO_DUMP          # ADR-0005 R7 — dev only
+build:release -c opt
+build:release --strip=always
+
+# --- Test defaults ---
+test --test_output=errors
+test --test_verbose_timeout_warnings
+
+# --- Per-developer overrides ---
+# Keep at the end so .bazelrc.user wins when both specify the same flag.
+try-import %workspace%/.bazelrc.user

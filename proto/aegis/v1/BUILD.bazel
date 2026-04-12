@@ -1,42 +1,32 @@
 # Bazel build file for the aegis.v1 proto package.
 #
-# ⚠️ SKELETON — this file is a design-phase artifact targeting the
-# Bazel rules and macros specified in ADR-0009 Sub-decisions 1–2. It
-# has NOT been validated against a working Bazel workspace; the
-# `MODULE.bazel` scaffolding is a Phase 1 task.
+# Session 1 scope (Phase 1 Task 1): proto_library target only. This
+# is the language-neutral source of truth for downstream codegen.
 #
-# When Phase 1 Bazel setup begins:
-#   1. Verify the load paths match the `bazel_dep` names in
-#      `MODULE.bazel`. Likely candidates:
-#        - rules_proto
-#        - protobuf (@com_google_protobuf)
-#        - grpc (@com_github_grpc_grpc)
-#        - rules_go
-#        - rules_ts / aspect_rules_ts
-#   2. If the `cc_grpc_library` or `go_proto_library` macros differ
-#      from the names used here, adjust. grpc's Bazel rules have
-#      historically renamed macros across versions.
-#   3. Run `bazel build //proto/aegis/v1/...` to verify. Expect to
-#      iterate once or twice on the exact macro signatures.
-#   4. Remove this warning when verification passes.
+# Session 2+ will add:
+#   - cc_proto_library / cc_grpc_library  (needs grpc + rules_cc)
+#   - go_proto_library                    (needs rules_go + gazelle)
+#   - TypeScript bindings                 (in frontend_web/, Phase 3)
 #
-# The intent this file captures is what matters; the exact load
-# statements are adjustable.
+# Each is deferred because cold-building grpc-cpp is 5-15 min (ADR-0009)
+# and we don't need those bindings until the engine / gateway / frontend
+# packages actually land.
 
 load("@rules_proto//proto:defs.bzl", "proto_library")
-load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
-load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
-load("@rules_go//proto:def.bzl", "go_proto_library")
 
 package(default_visibility = ["//visibility:public"])
 
 # -----------------------------------------------------------------------------
 # Source proto library — the single source of truth. All language bindings
-# below are derived from this target.
+# (cc_proto_library, go_proto_library, ts_proto_library, ...) will be derived
+# from this target in later sessions.
 # -----------------------------------------------------------------------------
 proto_library(
     name = "aegis_proto",
     srcs = ["aegis.proto"],
+    # buf.yaml at the repo root sets proto/ as the module root; this
+    # proto imports well-known types that come from the protobuf
+    # bazel_dep declared in MODULE.bazel (repo_name = com_google_protobuf).
     deps = [
         "@com_google_protobuf//:duration_proto",
         "@com_google_protobuf//:timestamp_proto",
@@ -44,38 +34,32 @@ proto_library(
 )
 
 # -----------------------------------------------------------------------------
-# C++ bindings — used by the C++ engine (engine_cpp/) per ADR-0009.
+# Language bindings — COMMENTED OUT until their dependencies land in
+# MODULE.bazel (see MODULE.bazel "Phase 1 Session 2+ dependencies" block).
 # -----------------------------------------------------------------------------
-cc_proto_library(
-    name = "aegis_cc_proto",
-    deps = [":aegis_proto"],
-)
 
-cc_grpc_library(
-    name = "aegis_cc_grpc",
-    srcs = [":aegis_proto"],
-    grpc_only = True,
-    deps = [":aegis_cc_proto"],
-)
-
-# -----------------------------------------------------------------------------
-# Go bindings — used by the Go Gateway (gateway_go/).
-# -----------------------------------------------------------------------------
-go_proto_library(
-    name = "aegis_go_proto",
-    compilers = [
-        "@rules_go//proto:go_proto",
-        "@rules_go//proto:go_grpc_v2",
-    ],
-    importpath = "github.com/BinHsu/aegis-core/gen/go/aegis/v1",
-    proto = ":aegis_proto",
-)
-
-# -----------------------------------------------------------------------------
-# TypeScript bindings — used by the frontend (frontend_web/).
+# load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+# load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+# load("@rules_go//proto:def.bzl", "go_proto_library")
 #
-# Frontend codegen is intentionally NOT defined here because it typically
-# lives under `frontend_web/` where the TypeScript toolchain is wired up.
-# See `frontend_web/BUILD.bazel` (Phase 3) for the `ts_proto_library`
-# target that depends on `:aegis_proto`.
-# -----------------------------------------------------------------------------
+# cc_proto_library(
+#     name = "aegis_cc_proto",
+#     deps = [":aegis_proto"],
+# )
+#
+# cc_grpc_library(
+#     name = "aegis_cc_grpc",
+#     srcs = [":aegis_proto"],
+#     grpc_only = True,
+#     deps = [":aegis_cc_proto"],
+# )
+#
+# go_proto_library(
+#     name = "aegis_go_proto",
+#     compilers = [
+#         "@rules_go//proto:go_proto",
+#         "@rules_go//proto:go_grpc_v2",
+#     ],
+#     importpath = "github.com/BinHsu/aegis-core/gen/go/aegis/v1",
+#     proto = ":aegis_proto",
+# )

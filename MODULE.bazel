@@ -1,0 +1,45 @@
+"""Aegis Core Bazel module (bzlmod).
+
+Per ADR-0008 (Monorepo Folder Structure) and ADR-0009 (C++ Build and
+Toolchain). This file is the source of truth for every external
+dependency; supports CLAUDE.md Rule 6 (strict directory confinement)
+since all deps download into ./.bazel_cache/ via --output_user_root.
+
+Version bumps MUST be accompanied by:
+  1. A review of the dependency's license (MIT/Apache-2.0/BSD OK,
+     GPL/AGPL blocked per ARCHITECTURE.md §10.1).
+  2. CI green on the corresponding PR.
+  3. If the dep is a model or runtime, a WER regression run per
+     ADR-0011.
+"""
+
+module(
+    name = "aegis_core",
+    version = "0.1.0",
+    compatibility_level = 1,
+)
+
+# -----------------------------------------------------------------------------
+# Proto & Protobuf — the backbone of proto/aegis/v1/.
+# -----------------------------------------------------------------------------
+bazel_dep(name = "rules_proto", version = "7.0.2")
+bazel_dep(name = "protobuf", version = "28.2", repo_name = "com_google_protobuf")
+
+# -----------------------------------------------------------------------------
+# Phase 1 Session 2+ dependencies (added as each language comes online):
+#
+#   bazel_dep(name = "grpc",           version = "1.66.0", repo_name = "com_github_grpc_grpc")  # ADR-0009
+#   bazel_dep(name = "rules_go",       version = "0.50.1")                                      # Phase 2
+#   bazel_dep(name = "gazelle",        version = "0.39.1")                                      # Phase 2
+#   bazel_dep(name = "rules_cc",       version = "0.0.17")                                      # Phase 1 engine
+#   bazel_dep(name = "rules_foreign_cc", version = "0.12.0")                                    # ADR-0009 whisper.cpp
+#   bazel_dep(name = "rules_nodejs",   version = "6.3.2")                                       # Phase 3 frontend
+#   bazel_dep(name = "rules_oci",      version = "2.0.1")                                       # Phase 4 packaging
+#   bazel_dep(name = "rules_rust",     version = "0.54.0")                                      # Phase 4 Tauri
+#
+# They are commented here, not added, because:
+#   (a) Cold-building grpc-cpp takes 5-15 min (ADR-0009) — not worth
+#       it until we're actually building C++ targets.
+#   (b) Each dep adds build graph surface and possible version conflicts.
+#   (c) Session 1 scope is just proto_library validation.
+# -----------------------------------------------------------------------------

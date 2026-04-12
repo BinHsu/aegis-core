@@ -52,6 +52,7 @@ tags
 # All Bazel caches MUST stay inside the repo per .bazelrc
 # (--output_user_root=./.bazel_cache).
 .bazel_cache/
+.bazelisk/
 bazel-*
 MODULE.bazel.lock
 !MODULE.bazel

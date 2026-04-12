@@ -44,20 +44,26 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 > *"One command, one build, one toolchain — no global pollution."*
 
 ### Build System
-- [ ] Initialize Bazel `WORKSPACE` with `rules_cc`, `rules_go`, `rules_rust`, `rules_nodejs`, `rules_proto`, `rules_oci`
-- [ ] Configure `.bazelrc` with `--output_user_root=./.bazel_cache` (CLAUDE.md Rule 6)
-- [ ] Add `tools/bazelisk` or `./mvnw`-style wrapper so users don't install Bazel globally
-- [ ] Configure hermetic C++ toolchain with Metal (macOS) / CUDA (Linux) detection
-- [ ] Configure hermetic Go toolchain
-- [ ] Configure hermetic Node.js toolchain for frontend
+- [x] Initialize Bazel `MODULE.bazel` (bzlmod) with `rules_proto`, `protobuf` — Session 1 baseline
+- [ ] Add `rules_cc`, `rules_foreign_cc`, `grpc` bazel_deps — Session 2+ (triggers cold grpc build)
+- [ ] Add `rules_go`, `gazelle` bazel_deps — Phase 2 (Go Gateway)
+- [ ] Add `rules_nodejs`, `rules_rust`, `rules_oci` bazel_deps — Phase 3/4
+- [x] Configure `.bazelrc` with CPU default, metal/cuda/cpu configs, `try-import %workspace%/.bazelrc.user` (ADR-0009)
+- [x] `.bazelversion` pinning Bazel 7.4.1
+- [x] Add `tools/bazelisk/bazelisk` wrapper — downloads bazelisk locally, forces `--output_user_root=./.bazel_cache` (CLAUDE.md Rule 6)
+- [ ] Configure hermetic C++ toolchain with Metal (macOS) / CUDA (Linux) detection — Session 2+
+- [ ] Configure hermetic Go toolchain — Phase 2
+- [ ] Configure hermetic Node.js toolchain for frontend — Phase 3
 
 ### Contracts
 - [x] Create `proto/aegis/v1/aegis.proto` (per ADR-0008 layout) and define: `CreateMeeting`, `StreamTranscribe`, `JoinAsViewer`, `EndMeeting` (AskRAG removed per ADR-0012)
 - [x] Define `IngestMessage` oneof (`PcmChunk` | `ControlEvent{PAUSE|RESUME|END_STREAM}`) per ADR-0006
 - [x] Define `CreateMeetingRequest` with reserved field for Phase 5 `allowed_viewer_account_ids` per ADR-0001
 - [x] Add `buf` configuration (`proto/buf.yaml`) and `buf breaking` check to CI
-- [ ] **Validate** `proto/aegis/v1/BUILD.bazel` skeleton (currently untested) — make `bazel build //proto/aegis/v1/...` pass
-- [ ] Generate C++, Go, TypeScript bindings under Bazel
+- [x] **Validate** `proto/aegis/v1/BUILD.bazel` — `proto_library` target builds (Session 1). `cc_proto_library`, `cc_grpc_library`, `go_proto_library` are commented out pending Session 2+ deps.
+- [ ] Generate C++ bindings under Bazel (`cc_proto_library` + `cc_grpc_library`) — Session 2
+- [ ] Generate Go bindings under Bazel (`go_proto_library`) — Phase 2
+- [ ] Generate TypeScript bindings under Bazel — Phase 3
 
 ### C++ Engine Skeleton
 - [ ] Establish `engine_cpp/` with `whisper.cpp` vendored via Bazel `http_archive` + SHA256
