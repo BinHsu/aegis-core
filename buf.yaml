@@ -1,0 +1,45 @@
+# Buf module configuration for Aegis Core's proto contracts.
+#
+# This file lives at the REPO ROOT so that `buf lint` / `buf format` /
+# `buf breaking` work correctly when invoked from the repo root (both
+# in pre-commit hooks and in CI). The `proto/` directory is declared
+# as the module root via `modules[0].path`.
+#
+# Used by:
+#   - `.pre-commit-config.yaml` (`buf-lint`, `buf-format`, `buf-breaking`
+#     hooks) for local pre-commit enforcement.
+#   - `.github/workflows/ci-baseline.yml` (`buf-lint` job) for CI
+#     enforcement.
+#   - Future `buf generate` invocations that produce language bindings
+#     alongside or in place of the Bazel proto rules.
+
+version: v2
+
+modules:
+  - path: proto
+
+lint:
+  use:
+    - STANDARD
+  except:
+    # Our service names (`Gateway`, `Engine`) are short and intentional.
+    # The STANDARD rule wants `GatewayService` / `EngineService`.
+    - SERVICE_SUFFIX
+    # Our RPC request/response types are named for domain clarity, not
+    # the `<RpcName>Request` / `<RpcName>Response` convention:
+    #   - `IngestMessage` (not `StreamTranscribeRequest`)
+    #   - `EgressMessage` (not `StreamTranscribeResponse`)
+    #   - `ViewerEvent` (not `JoinAsViewerResponse`)
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+  enum_zero_value_suffix: _UNSPECIFIED
+  rpc_allow_same_request_response: false
+  rpc_allow_google_protobuf_empty_requests: true
+  rpc_allow_google_protobuf_empty_responses: true
+
+breaking:
+  use:
+    - FILE
+  # FILE enforcement catches all semantic breaking changes (field
+  # deletion, tag renumbering, type changes) without requiring
+  # wire-format compatibility rules that are too loose.
