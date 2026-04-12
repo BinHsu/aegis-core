@@ -1,162 +1,359 @@
 # GitHub Repository Setup (Admin-only)
 
-This document lists GitHub-side configurations that **cannot be applied
-from the repository filesystem** and must be clicked into the GitHub
-web UI by a repository administrator. It complements `.github/CODEOWNERS`,
-`.github/workflows/`, and `.pre-commit-config.yaml` — those files cover
-the repo-side enforcement; this document covers the rest.
+This document lists GitHub-side configurations that must be applied by
+a repository administrator. Most steps have a **`gh` CLI command**
+(faster, scriptable, reproducible) and a **UI fallback** (when `gh`
+doesn't support the operation, or for visual confirmation).
+
+**Prerequisites for `gh` commands**:
+
+```bash
+gh auth status                    # verify you're logged in
+gh auth refresh -s admin:repo_hook,write:repo_hook,delete_repo  # if needed
+```
+
+The commands below assume the repo is `BinHsu/aegis-core`. Replace as
+needed. Run them from any directory; `gh` works repo-agnostic.
 
 **Apply these during Phase 0 setup**, before the first external
 contributor joins.
 
 ---
 
-## 1. Branch Protection on `main`
+## 0. Repository Visibility
 
-Navigate to **Settings → Branches → Add branch protection rule** for
-`main` and set:
+If the repo is currently private and you want to use rulesets /
+advanced security features on a personal (non-org) GitHub account:
 
-### Required
+```bash
+# Make the repo public (required for rulesets on free personal accounts)
+gh repo edit BinHsu/aegis-core --visibility public
+```
 
-- [ ] **Require a pull request before merging**
-  - [ ] Require approvals: **1** (minimum for MVP; raise to 2 when team
-    grows)
-  - [ ] Dismiss stale pull request approvals when new commits are
-    pushed
-  - [ ] Require review from Code Owners
-- [ ] **Require status checks to pass before merging**
-  - [ ] Require branches to be up to date before merging
-  - [ ] Required checks (add once they have run at least once on
-    `main`):
-    - [ ] `Pre-commit hooks`
-    - [ ] `Gitleaks secret scan`
-    - [ ] `Proto lint` (once proto files exist)
-    - [ ] `Markdown link check`
-- [ ] **Require conversation resolution before merging**
-- [ ] **Require signed commits** (GPG or SSH)
-- [ ] **Require linear history** — no merge commits on `main`; use
-  squash or rebase
-- [ ] **Do not allow bypassing the above settings**
+**Note**: visibility change is irreversible via `gh` without
+confirmation. If you change your mind, you can flip back via UI.
 
-### Optional but recommended
+---
 
-- [ ] Require deployments to succeed before merging (enable when
-  staging environment exists, Phase 4+)
-- [ ] Lock branch (only used for release branches post-v1.0)
+## 1. Branch Protection (Ruleset) on `main`
 
-### Disallowed
+The legacy "Branch Protection Rules" have been superseded by
+**Rulesets** in 2024+. Use rulesets for new repos.
 
-- [ ] **Allow force pushes**: OFF
-- [ ] **Allow deletions**: OFF
+### `gh` CLI
 
-**Rationale**: enforces CLAUDE.md Rule 1 (honesty via signed commits),
-CLAUDE.md Rule 2 (test integrity via required status checks), and
-protects the architecture-critical files from unreviewed changes.
+```bash
+# Create a ruleset that requires PR, linear history, and blocks
+# deletes/force-pushes on main.
+gh api --method POST repos/BinHsu/aegis-core/rulesets \
+  -f name="main" \
+  -f target="branch" \
+  -f enforcement="active" \
+  -f "conditions[ref_name][include][]=refs/heads/main" \
+  -f "rules[][type]=deletion" \
+  -f "rules[][type]=non_fast_forward" \
+  -f "rules[][type]=required_linear_history" \
+  -f "rules[][type]=pull_request" \
+  -F "rules[-1][parameters][required_approving_review_count]=1" \
+  -F "rules[-1][parameters][dismiss_stale_reviews_on_push]=true" \
+  -F "rules[-1][parameters][require_code_owner_review]=true" \
+  -F "rules[-1][parameters][required_review_thread_resolution]=true"
+
+# Add the repo admin (yourself) to the bypass list so you can push
+# directly to main during bootstrap and hotfixes.
+# Replace <USER_ID> with your numeric GitHub user ID
+# (get it via: gh api user --jq .id).
+YOUR_ID=$(gh api user --jq .id)
+RULESET_ID=$(gh api repos/BinHsu/aegis-core/rulesets --jq '.[] | select(.name=="main") | .id')
+
+gh api --method PUT "repos/BinHsu/aegis-core/rulesets/$RULESET_ID" \
+  -f "bypass_actors[][actor_id]=5"            `# 5 = Repository admin role` \
+  -f "bypass_actors[-1][actor_type]=RepositoryRole" \
+  -f "bypass_actors[-1][bypass_mode]=always"
+```
+
+### UI fallback
+
+Navigate to **Settings → Rules → New branch ruleset**:
+
+- **Ruleset Name**: `main`
+- **Enforcement status**: Active
+- **Target branches**: add target, `Include by pattern` = `main`
+- **Rules** (check each):
+  - ✅ Restrict deletions
+  - ✅ Require linear history
+  - ✅ Require a pull request before merging
+    - Required approvals: 1
+    - ✅ Dismiss stale pull request approvals when new commits are pushed
+    - ✅ Require review from Code Owners
+    - ✅ Require conversation resolution before merging
+  - ✅ Block force pushes
+  - ⬜ Require signed commits — **only if you have GPG/SSH commit signing configured**
+  - ⬜ Require status checks to pass — add **after** CI has run at least once
+  - ⬜ (everything else stays unchecked)
+- **Bypass list**: add `Repository admin` role (so owner can push during bootstrap)
+- Save
+
+### Later: add required status checks
+
+After the first `git push origin main` succeeds and CI runs:
+
+```bash
+RULESET_ID=$(gh api repos/BinHsu/aegis-core/rulesets --jq '.[] | select(.name=="main") | .id')
+
+# Add required_status_checks rule; values must match CI job names.
+gh api --method PUT "repos/BinHsu/aegis-core/rulesets/$RULESET_ID" \
+  -f "rules[][type]=required_status_checks" \
+  -F "rules[-1][parameters][strict_required_status_checks_policy]=true" \
+  -f "rules[-1][parameters][required_status_checks][][context]=Pre-commit hooks" \
+  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368" \
+  -f "rules[-1][parameters][required_status_checks][][context]=Gitleaks secret scan" \
+  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368" \
+  -f "rules[-1][parameters][required_status_checks][][context]=Proto lint" \
+  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368" \
+  -f "rules[-1][parameters][required_status_checks][][context]=Markdown link check" \
+  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368"
+# integration_id 15368 = GitHub Actions
+```
+
+**UI fallback**: edit the ruleset → check "Require status checks to
+pass" → in the search box, type each check name and add it.
+
+### Verify
+
+```bash
+gh api repos/BinHsu/aegis-core/rulesets --jq '.[] | {id, name, enforcement}'
+gh api repos/BinHsu/aegis-core/rulesets/$RULESET_ID --jq '.rules'
+```
+
+### Caveat: Account type
+
+> "Your rulesets won't be enforced on this private repository until
+> you move to GitHub Team organization account."
+
+On free personal accounts, rulesets enforce only on **public** repos.
+If the repo is private, either make it public (§0 above), upgrade to
+GitHub Pro, or move to a GitHub Team org.
 
 ---
 
 ## 2. Private Vulnerability Reporting
 
-Navigate to **Settings → Code security and analysis** and enable:
+### `gh` CLI
 
-- [ ] **Private vulnerability reporting** — allows security researchers
-  to privately report vulnerabilities per the process documented in
-  `SECURITY.md`.
+```bash
+gh api --method PUT repos/BinHsu/aegis-core/private-vulnerability-reporting
+```
 
-Once enabled, the "Security" tab on the repository will show a "Report
-a vulnerability" button.
+### UI fallback
+
+**Settings → Code security and analysis → Private vulnerability
+reporting → Enable**.
+
+### Verify
+
+```bash
+gh api repos/BinHsu/aegis-core/private-vulnerability-reporting --jq .enabled
+# expected: true
+```
 
 ---
 
 ## 3. GitHub Secret Scanning
 
-Navigate to **Settings → Code security and analysis**:
+### `gh` CLI
 
-- [ ] **Secret scanning** — enabled for the repository.
-- [ ] **Push protection** — enabled. Blocks commits containing detected
-  secrets before they reach the remote.
+```bash
+gh api --method PATCH repos/BinHsu/aegis-core \
+  -F "security_and_analysis[secret_scanning][status]=enabled" \
+  -F "security_and_analysis[secret_scanning_push_protection][status]=enabled"
+```
 
-**Rationale**: belt-and-braces with `gitleaks` in pre-commit hooks (see
-`.pre-commit-config.yaml`) and in CI (`.github/workflows/ci-baseline.yml`).
-Push protection catches anything that gets past the local hook.
+### UI fallback
+
+**Settings → Code security and analysis**:
+
+- ✅ Secret scanning → Enable
+- ✅ Push protection → Enable (appears after secret scanning is on)
+
+### Verify
+
+```bash
+gh api repos/BinHsu/aegis-core --jq '.security_and_analysis'
+```
 
 ---
 
-## 4. Dependabot and Dependency Review
+## 4. Dependabot
 
-- [ ] **Dependency graph**: enabled (should be on by default for public
-  repos).
-- [ ] **Dependabot alerts**: enabled.
-- [ ] **Dependabot security updates**: enabled — auto-PR for known
-  vulnerable dependencies.
-- [ ] **Dependabot version updates**: configured via `.github/dependabot.yml`
-  (TODO Phase 1 once dependencies exist).
+### `gh` CLI
+
+```bash
+# Dependabot alerts
+gh api --method PUT repos/BinHsu/aegis-core/vulnerability-alerts
+
+# Dependabot security updates (auto-PR for vulnerable deps)
+gh api --method PUT repos/BinHsu/aegis-core/automated-security-fixes
+```
+
+### UI fallback
+
+**Settings → Code security and analysis**:
+
+- ✅ Dependency graph (usually on by default for public repos)
+- ✅ Dependabot alerts → Enable
+- ✅ Dependabot security updates → Enable
+- ⬜ Dependabot version updates — configured via
+  `.github/dependabot.yml` (TODO Phase 1 when dependencies exist)
+
+### Verify
+
+```bash
+gh api repos/BinHsu/aegis-core/vulnerability-alerts
+# HTTP 204 if enabled
+```
 
 ---
 
 ## 5. Code Scanning (CodeQL)
 
-CodeQL runs on schedule and is language-aware. Enable when Phase 1
-components ship:
+**Defer to Phase 1+** — CodeQL needs a non-trivial code baseline to
+scan. Enable when Bazel targets ship.
 
-- Navigate to **Settings → Code security and analysis → Code scanning**
-- [ ] Set up CodeQL analysis
-- [ ] Languages to scan: `c-cpp`, `go`, `javascript-typescript`
-- [ ] Schedule: weekly, and on every PR touching the relevant language
+### `gh` CLI (Phase 1+)
 
-**Note**: CodeQL requires a non-trivial baseline of code to scan. Enable
-after Phase 1 Bazel targets exist.
+```bash
+gh api --method PUT repos/BinHsu/aegis-core/code-scanning/default-setup \
+  -F state=configured \
+  -f "languages[]=c-cpp" \
+  -f "languages[]=go" \
+  -f "languages[]=javascript-typescript" \
+  -f "query_suite=default"
+```
+
+### UI fallback
+
+**Settings → Code security and analysis → Code scanning → Set up
+CodeQL analysis**.
 
 ---
 
 ## 6. Actions Permissions
 
-Navigate to **Settings → Actions → General**:
+### `gh` CLI
 
-- [ ] **Actions permissions**: Allow enterprise, and select non-enterprise,
-  actions and reusable workflows.
-- [ ] **Allow actions created by GitHub**: ON
-- [ ] **Allow actions from verified creators**: ON
-- [ ] **Allow specified actions**: pin any third-party actions to a
-  specific SHA rather than a tag. The workflows in
-  `.github/workflows/ci-baseline.yml` already do this implicitly via
-  major-version tags; pin to SHAs before enabling third-party PRs.
-- [ ] **Fork pull request workflows from outside collaborators**:
-  *Require approval for all outside collaborators* — prevents drive-by
-  PRs from exfiltrating secrets via modified workflows.
-- [ ] **Workflow permissions**: *Read repository contents and packages
-  permissions*. Grant write only to workflows that explicitly need it.
+```bash
+# Limit Actions to GitHub-verified and selected actions only.
+gh api --method PUT repos/BinHsu/aegis-core/actions/permissions \
+  -F enabled=true \
+  -f "allowed_actions=selected"
+
+gh api --method PUT repos/BinHsu/aegis-core/actions/permissions/selected-actions \
+  -F "github_owned_allowed=true" \
+  -F "verified_allowed=true"
+
+# Require approval for PRs from outside collaborators.
+gh api --method PUT repos/BinHsu/aegis-core/actions/permissions/access \
+  -f "access_level=none"
+
+# Default workflow permissions: read-only.
+gh api --method PUT repos/BinHsu/aegis-core/actions/permissions/workflow \
+  -F "default_workflow_permissions=read" \
+  -F "can_approve_pull_request_reviews=false"
+```
+
+### UI fallback
+
+**Settings → Actions → General**:
+
+- Actions permissions: "Allow enterprise, and select non-enterprise"
+- ✅ Allow actions created by GitHub
+- ✅ Allow actions from verified creators
+- Fork pull request workflows: "Require approval for all outside collaborators"
+- Workflow permissions: "Read repository contents and packages permissions"
 
 ---
 
 ## 7. Discussions
 
-Enable **Discussions** for community Q&A:
+### `gh` CLI
 
-- [ ] Navigate to **Settings → General → Features → Discussions**: ON
-- [ ] Create categories: `Announcements`, `Q&A`, `Ideas`, `Show and
-  Tell`, `Security` (linked to SECURITY.md).
+```bash
+gh api --method PATCH repos/BinHsu/aegis-core \
+  -F "has_discussions=true"
+```
+
+Categories must be created via UI or GraphQL (REST API does not
+support category creation).
+
+### UI fallback
+
+**Settings → General → Features → Discussions**: ON. Then navigate to
+**Discussions tab → Categories** and create:
+
+- `Announcements`, `Q&A`, `Ideas`, `Show and Tell`, `Security` (linked
+  to SECURITY.md)
 
 ---
 
 ## 8. Issue Templates and PR Template
 
-These live in `.github/ISSUE_TEMPLATE/` and `.github/PULL_REQUEST_TEMPLATE.md`
-(TODO Phase 0+ — not blocking Phase 0 completion).
+File-based, not UI. Create `.github/ISSUE_TEMPLATE/*.yml` and
+`.github/PULL_REQUEST_TEMPLATE.md`. TODO Phase 0+ — not blocking
+Phase 0 completion.
 
 ---
 
-## Verification Checklist
+## One-shot bootstrap script
 
-After applying all of the above, verify with:
+For fresh repo setup, the Phase 0 maintainer can run:
 
-```
-gh api repos/<owner>/aegis-core/branches/main/protection
-gh api repos/<owner>/aegis-core/private-vulnerability-reporting
-gh api repos/<owner>/aegis-core/vulnerability-alerts
+```bash
+./tools/scripts/gh_bootstrap.sh BinHsu/aegis-core
 ```
 
-Expected responses confirm the settings above are active.
+(Script TODO Phase 0+ — lives at `tools/scripts/gh_bootstrap.sh`
+when created. Until then, run the `gh` commands above in order.)
+
+---
+
+## Full Verification
+
+After applying all of the above:
+
+```bash
+REPO=BinHsu/aegis-core
+echo "=== Ruleset ==="
+gh api repos/$REPO/rulesets --jq '.[] | {name, enforcement, target}'
+echo "=== Private vuln reporting ==="
+gh api repos/$REPO/private-vulnerability-reporting --jq .enabled
+echo "=== Secret scanning ==="
+gh api repos/$REPO --jq '.security_and_analysis.secret_scanning.status, .security_and_analysis.secret_scanning_push_protection.status'
+echo "=== Vulnerability alerts ==="
+gh api repos/$REPO/vulnerability-alerts --include 2>&1 | head -1
+echo "=== Visibility ==="
+gh api repos/$REPO --jq .visibility
+echo "=== Discussions ==="
+gh api repos/$REPO --jq .has_discussions
+```
+
+Expected output:
+
+```
+=== Ruleset ===
+{"name":"main","enforcement":"active","target":"branch"}
+=== Private vuln reporting ===
+true
+=== Secret scanning ===
+enabled
+enabled
+=== Vulnerability alerts ===
+HTTP/2.0 204 No Content
+=== Visibility ===
+public
+=== Discussions ===
+true
+```
 
 ---
 
@@ -165,7 +362,7 @@ Expected responses confirm the settings above are active.
 - `CLAUDE.md` — ironclad rules enforced by the above controls
 - `SECURITY.md` — the vulnerability disclosure process these settings
   support
-- `.github/CODEOWNERS` — review requirements enforced via branch
-  protection's "Require review from Code Owners" setting
+- `.github/CODEOWNERS` — review requirements enforced via ruleset's
+  "Require review from Code Owners"
 - `.github/workflows/ci-baseline.yml` — required status checks
 - `.pre-commit-config.yaml` — local enforcement counterpart
