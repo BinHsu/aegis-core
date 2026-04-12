@@ -1,0 +1,17 @@
+# Model binary files — downloaded via tools/scripts/download_models.sh,
+# NOT checked into git. Integrity verified against manifest.json SHA-256.
+*.gguf
+*.bin
+*.onnx
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Download staging area
+cache/
+downloads/
+tmp/
+
+# PGP signature (Phase 4+ — tracked separately when signing is enabled)
+# manifest.json.sig

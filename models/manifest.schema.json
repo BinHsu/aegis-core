@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BinHsu/aegis-core/models/manifest.schema.json",
+  "title": "Aegis Core Model Manifest",
+  "description": "Schema for /models/manifest.json — model provenance, integrity, and licensing. See ARCHITECTURE.md §10.1.",
+  "type": "object",
+  "required": ["schema_version", "models"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Bump when adding required fields or changing semantics."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of this manifest."
+    },
+    "models": {
+      "type": "array",
+      "description": "List of model artifacts managed by this manifest.",
+      "items": {
+        "$ref": "#/$defs/ModelEntry"
+      }
+    }
+  },
+  "$defs": {
+    "ModelEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "filename",
+        "type",
+        "description",
+        "sha256",
+        "size_bytes",
+        "estimated_ram_bytes",
+        "origin_url",
+        "license",
+        "required",
+        "phase"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Unique model identifier. Lowercase alphanumeric + hyphens. Used as a key in code (e.g., ResourceBudget per-model estimates)."
+        },
+        "filename": {
+          "type": "string",
+          "description": "Filename relative to /models/. The C++ engine model loader resolves this path at startup."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["transcription", "diarization", "embedding", "llm"],
+          "description": "Model role in the Aegis pipeline."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the model's purpose and provenance."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^(PLACEHOLDER|[a-f0-9]{64})$",
+          "description": "SHA-256 hex digest of the model file. The engine model loader computes the hash at load time and refuses to mmap if it does not match. 'PLACEHOLDER' is allowed only before the model is downloaded for the first time."
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Expected file size in bytes. Used by the download script to verify transfer integrity."
+        },
+        "estimated_ram_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimated RAM footprint when the model is fully loaded / mmap'd. Used by ResourceBudget (ADR-0010) to compute the fixed overhead at engine startup."
+        },
+        "origin_url": {
+          "type": "string",
+          "description": "URL from which the model file can be downloaded. Used by tools/scripts/download_models.sh."
+        },
+        "origin_project": {
+          "type": "string",
+          "description": "URL of the upstream project that produced the model weights."
+        },
+        "origin_version": {
+          "type": "string",
+          "description": "Upstream release tag, commit hash, or version string that this model was built from."
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX license identifier for the model weights (e.g., 'MIT', 'Apache-2.0'). GPL/AGPL are blocked per ARCHITECTURE.md §10.1 license scanning."
+        },
+        "license_url": {
+          "type": "string",
+          "description": "URL to the full license text for the inference library / quantization toolchain."
+        },
+        "upstream_model_license": {
+          "type": "string",
+          "description": "SPDX license identifier for the original (pre-quantization) model weights."
+        },
+        "upstream_model_license_url": {
+          "type": "string",
+          "description": "URL to the full license text for the original model."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "true if the model is required for MVP / Phase 1-4 operation. false for optional / Phase 5+ models."
+        },
+        "phase": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The earliest roadmap phase in which this model is used."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form notes about this model entry (RAM estimates, version bump procedures, etc.)."
+        }
+      }
+    }
+  }
+}
