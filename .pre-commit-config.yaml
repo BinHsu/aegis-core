@@ -22,7 +22,7 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
-        exclude: '\.md$'   # preserve Markdown line-break trailing spaces
+        exclude: '\.md$' # preserve Markdown line-break trailing spaces
       - id: end-of-file-fixer
       - id: check-yaml
         args: ["--allow-multiple-documents"]
@@ -106,4 +106,18 @@ repos:
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
-        args: [--strict, --force-scope, feat, fix, docs, refactor, test, chore, build, ci, perf, revert]
+        args:
+          [
+            --strict,
+            --force-scope,
+            feat,
+            fix,
+            docs,
+            refactor,
+            test,
+            chore,
+            build,
+            ci,
+            perf,
+            revert,
+          ]

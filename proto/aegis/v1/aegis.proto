@@ -42,8 +42,8 @@ syntax = "proto3";
 
 package aegis.v1;
 
-import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/BinHsu/aegis-core/gen/go/aegis/v1;aegisv1";
 option java_multiple_files = true;
