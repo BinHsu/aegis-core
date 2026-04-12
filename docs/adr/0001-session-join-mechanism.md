@@ -99,15 +99,12 @@ Implementation requirements:
 4. Tokens are short-lived JWTs signed by a rotating server-side key.
    Recommended defaults: `exp = session_max_lifetime + 10min grace`,
    `session_max_lifetime = 4h` (tunable per tenant).
-5. In Local mode, the token is still issued and validated. The Go Gateway
-   binds to LAN interfaces so that viewer devices on the same Wi-Fi network
-   (phones, tablets, secondary laptops) can connect to a host laptop running
-   the full backend stack — this preserves the V1 Aegis-Prompter product
-   behavior where the boss views the prompter on a separate device while the
-   staff runs the engine on the host machine. The signing key is a
-   process-scoped random key generated at startup, consistent with
-   `ARCHITECTURE.md` §5 "Local Mode Interface Fallback"; there is no
-   persistent identity store in Local mode.
+5. In Local mode, the token is still issued and validated. The
+   signing key is a process-scoped random key generated at startup,
+   consistent with `ARCHITECTURE.md` §5 "Local Mode Interface
+   Fallback"; there is no persistent identity store in Local mode.
+   For LAN binding, viewer transport, and QR code discovery
+   details, see **ADR-0007 Local Mode LAN Topology**.
 
 ### Why Option B
 
@@ -196,5 +193,5 @@ Option C can later be layered on top of a matured Option A by persisting a
 - `ARCHITECTURE.md` §5 Dual-Mode Parity
 - `ARCHITECTURE.md` §8 Enterprise Standards (Identity First)
 - ADR-0004 Stateless Broadcast Relay
-- ADR-0005 Audio and Voiceprint Ephemeral Policy
+- ADR-0005 Audio Ephemeral Policy
 - ADR-0006 Liveness and Disconnect Handling

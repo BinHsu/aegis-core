@@ -131,8 +131,14 @@ often the first question enterprise legal teams ask.
 | Per-session budget | ~200 MB | ~150 MB | **−50 MB** |
 | Phase 1 sessions per 8 GB engine pod | ~25 | ~36 | **+44%** |
 
-Concrete: same hardware, 44% more concurrent sessions. This is not
-a trivial win for unit economics.
+Concrete: same hardware, materially more concurrent sessions. This
+is not a trivial win for unit economics.
+
+*Note*: the numbers above use median per-session estimates to
+illustrate the **relative improvement** from dropping voiceprint.
+For authoritative capacity numbers, see ADR-0010 which uses the
+conservative 200 MB reservation value, yielding ~27 sessions per
+8 GB engine budget (Local mode) instead of the 36 shown here.
 
 #### UX wins (D2)
 

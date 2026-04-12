@@ -26,8 +26,9 @@ For the full data flow, see `ARCHITECTURE.md` §4. Briefly:
   `getDisplayMedia`) and streams over WebRTC to the Go Gateway.
 - **Go Gateway** is a stateless fan-out relay that forwards PCM to the
   C++ engine and fans transcript segments to viewers.
-- **C++ Engine** runs whisper.cpp, speaker diarization, and voiceprint
-  matching. Holds audio and voiceprints only in process RAM.
+- **C++ Engine** runs whisper.cpp and anonymous speaker diarization.
+  Holds audio only in process RAM; performs no voiceprint matching
+  and no biometric processing of any kind (ADR-0012).
 - **Viewers** (the boss and other observers) join via short-lived JWT
   invite links and receive live transcript in a rolling window.
 - **Durable stores** hold only tenant metadata, auth records, consent
@@ -66,7 +67,7 @@ public endpoints, spray credentials, scan for known CVEs.
 
 A legitimate Aegis user who actively tries to exceed their authorized
 access — cross-tenant data access, privilege escalation, extracting
-other users' voiceprints or transcripts.
+other users' transcripts, RAG corpora, or account data.
 
 ### A3 — Compromised Session Viewer (Leaked Invite Link)
 
@@ -124,7 +125,7 @@ to reach the host's LAN-bound Go Gateway port.
 
 | # | Threat | Affected | Mitigation | Residual Risk |
 |---|---|---|---|---|
-| R1 | User denies consenting to voiceprint enrollment | Legal / regulatory (BIPA, GDPR) | Consent ledger with `user_id`, `timestamp`, `consent_version`, `client_metadata` (§9.3) | Low |
+| R1 | User denies consenting to real-time audio processing | Legal / regulatory (GDPR general PII rules) | Append-only consent ledger with `user_id`, `policy_version`, `timestamp`, `client_metadata` (§9.3); DynamoDB Streams → S3 WORM in Cloud mode for tamper-evident backup | Low |
 | R2 | User denies creating a meeting or performing an action | Go Gateway audit log | Structured audit log with request ID + tenant ID + user ID + action; retained per §10 | Low |
 | R3 | Aegis operator denies accessing customer data | Infrastructure logs | EKS Pod Identity audit trail via AWS CloudTrail; Pod-level access logged by landing-zone | Medium — depends on landing-zone controls |
 
@@ -159,7 +160,7 @@ mitigations are designed specifically to minimize it.
 | D3 | Viewer (A3) establishes many join streams to exhaust fan-out capacity | Go GW fan-out | Per-session viewer limit; per-tenant concurrent session limit | Medium |
 | D4 | Large `getDisplayMedia` tab selection loads giant video track | Host browser | Frontend explicitly discards video track immediately; does not send to GW | Low |
 | D5 | Malicious dependency introduces infinite loop / OOM in inference | C++ engine | Inference timeout guard; pod resource limits; liveness probe | Low |
-| D6 | Rolling deployment drains pod for longer than expected, occupying scheduler slot | K8s scheduler | `terminationGracePeriodSeconds: 1800` hard cap (ADR-0006) | Low |
+| D6 | Rolling deployment drains pod for longer than expected, occupying scheduler slot | K8s scheduler | `terminationGracePeriodSeconds: 14400` (matching `session_max_lifetime`); PDB `maxUnavailable: 1`; HPA slow scale-down policy (ADR-0006) | Low |
 
 ### Elevation of Privilege
 
@@ -215,4 +216,4 @@ introducing one should be rejected regardless of its other merits.
 - `ARCHITECTURE.md` §10 Secure SDLC & Supply Chain
 - `ARCHITECTURE.md` §11 Known Limitations
 - `SECURITY.md`
-- ADR-0001 through ADR-0008
+- ADR-0001 through ADR-0012

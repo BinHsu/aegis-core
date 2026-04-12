@@ -66,6 +66,22 @@ by the Pion Go WebRTC library.
 - This is **RFC default behavior**, already implemented in Pion. We
   do not add custom timers or heartbeats.
 
+**ICE gathering mode: non-trickle (MVP)**. The host gathers all ICE
+candidates locally until `iceGatheringState === "complete"`, then
+sends the complete SDP offer to the Gateway via the unary
+`NegotiateWebRTC` RPC (see `proto/aegis/v1/aegis.proto`). The
+Gateway gathers its candidates and returns a complete SDP answer.
+This is simpler than trickle ICE (no streaming RPC, no candidate
+drip-feed) but adds a few seconds of latency at meeting start while
+candidates are gathered. On corporate NATs, candidate gathering may
+take 5–15 seconds; the `NegotiateWebRTC` RPC timeout should be set
+to **60 seconds** to accommodate slow STUN/TURN responses.
+
+**Phase 2+ trickle upgrade path**: add a separate **bidi-streaming**
+`NegotiateWebRTCStream` RPC alongside the existing unary one. The
+unary RPC remains as a fallback. This is a purely additive proto
+change (no breaking changes to existing clients).
+
 **State machine** (from the WebRTC connection state spec):
 
 ```
@@ -208,23 +224,25 @@ Kubernetes rolling updates are a daily operational event. They must
 
 **Mechanism**:
 
-1. Pod manifest sets `terminationGracePeriodSeconds: 1800` (30
-   minutes). This is the maximum acceptable drain time — longer than
-   a typical meeting, shorter than truly abusive use cases.
+1. Pod manifest sets `terminationGracePeriodSeconds: 14400` (4
+   hours). This matches `session_max_lifetime` (default 4h per
+   ADR-0001), ensuring that **no normally-running session is
+   killed by a deploy**. If `session_max_lifetime` is tuned
+   upward per tenant, this value must be raised accordingly.
 2. Go Gateway installs a `SIGTERM` handler that:
    a. **Stops accepting new sessions** — `CreateMeeting` returns
       `UNAVAILABLE` and the load balancer drains the pod.
    b. **Keeps existing sessions running** until they end naturally
-      (host disconnects, user ends meeting, or 30-minute cap is hit).
-   c. When the last session ends **or** the 30-minute cap is
+      (host disconnects, user ends meeting, or session expiry).
+   c. When the last session ends **or** the 4-hour cap is
       reached, calls `http.Server.Shutdown(ctx)` and exits.
 3. Kubernetes load balancer (ALB / NGINX ingress) marks the pod
    `NotReady` during termination, so new traffic lands on other
    replicas.
-4. On hard 30-minute expiration, the kubelet sends SIGKILL. Any
-   sessions still active at that moment are terminated — they were
-   already abnormally long and the operational signal (need to
-   deploy) is more important than the edge case.
+4. On hard 4-hour expiration, the kubelet sends SIGKILL. Any
+   sessions still active at that moment are terminated — they
+   exceeded `session_max_lifetime` and were already expected to
+   self-terminate.
 
 **Session-affinity consideration**: because a session is owned by
 exactly one Go Gateway replica (ADR-0004), a draining replica means
@@ -244,9 +262,9 @@ replicas" property.
   `keepalive.ServerParameters`.
 - **Pause/Resume**: `ControlEvent` proto oneof on the Go↔C++ ingest
   stream, pausing C++ during host transient loss.
-- **Graceful shutdown**: `terminationGracePeriodSeconds: 1800` with
-  SIGTERM handler that stops new sessions and lets existing ones
-  drain.
+- **Graceful shutdown**: `terminationGracePeriodSeconds: 14400`
+  (matching `session_max_lifetime`) with SIGTERM handler that stops
+  new sessions and lets existing ones drain.
 
 ### Why These Values
 
@@ -257,9 +275,12 @@ replicas" property.
   balances quick failure detection against false positives under
   brief GC pauses. Defaults of 2 hours would be dangerously slow for
   the meeting use case; values below 15s risk false positives.
-- **30-minute drain cap** comfortably covers the 95th-percentile
-  meeting length without allowing a stuck session to block a deploy
-  indefinitely.
+- **4-hour drain cap** matches `session_max_lifetime` (ADR-0001
+  default 4h, tunable per tenant). This ensures no normally-running
+  session is killed by a deploy. The trade-off is a pod stuck in
+  "Terminating" state for up to 4 hours — acceptable for a meeting
+  server (Zoom, Discord, and other real-time platforms use similar
+  drain periods) and visible in dashboards.
 
 ### Why Not Stricter
 
@@ -276,6 +297,43 @@ replicas" property.
   and GPU (if applicable) for longer than necessary. The 30-second
   window is already generous enough for common transient events.
 
+## HPA Scale-Down Interaction
+
+The graceful shutdown mechanism interacts with **HPA scale-down**
+events (not just rolling updates). When HPA decides to remove a
+replica, the same SIGTERM → drain → SIGKILL lifecycle applies.
+Because `terminationGracePeriodSeconds` now matches
+`session_max_lifetime` (4 hours), a pod with active sessions will
+sit in "Terminating" state until those sessions complete.
+
+**Deployment safeguards** (Phase 4 K8s manifests):
+
+1. **PodDisruptionBudget (PDB)**: `maxUnavailable: 1` on both Go
+   Gateway and C++ engine Deployments. This prevents more than one
+   pod from draining simultaneously during voluntary disruptions
+   (rolling updates, node drains, HPA scale-down).
+2. **HPA scale-down policy**: slow rate to avoid thrashing —
+   ```yaml
+   behavior:
+     scaleDown:
+       stabilizationWindowSeconds: 3600  # 1h cool-down
+       policies:
+         - type: Pods
+           value: 1
+           periodSeconds: 600  # at most 1 pod per 10 min
+   ```
+3. **Custom metric guard**: HPA uses
+   `aegis_engine_sessions_active` as a scale-down signal. Pods
+   with active sessions receive lower scale-down priority (handled
+   by the K8s scheduler's pod selection algorithm, which
+   preferentially terminates pods with fewer connections when PDB
+   is in effect).
+
+**Operational visibility**: a Go Gateway pod stuck in
+"Terminating" for >3 hours should surface as an alert (PagerDuty
+or equivalent), since it likely indicates a zombie session that
+failed to self-terminate.
+
 ## Consequences
 
 ### Positive
@@ -287,15 +345,16 @@ replicas" property.
 - Protocol-native mechanisms mean no custom timer code to maintain.
 - Pause/Resume semantics keep whisper.cpp's internal state clean
   across transient loss.
-- Rolling updates can happen any time without killing active
-  meetings.
+- Rolling updates and HPA scale-down events do not kill active
+  meetings — existing sessions drain naturally within
+  `session_max_lifetime`.
 
 ### Negative
 
-- A stuck session can block a Go Gateway pod from terminating for
-  up to 30 minutes. Operationally acceptable but must be visible in
-  dashboards (a pod stuck in "Terminating" state for 25+ minutes
-  should page the on-call).
+- A draining pod can remain in "Terminating" state for up to 4
+  hours (matching `session_max_lifetime`). This is acceptable for
+  a meeting server but must be visible in dashboards and must not
+  page the on-call unless it exceeds the expected drain window.
 - The Pause/Resume protocol adds modest complexity to the C++
   engine's state machine. This is a one-time cost and is well worth
   the UX benefit.

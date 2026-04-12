@@ -55,6 +55,7 @@ tags
 bazel-*
 MODULE.bazel.lock
 !MODULE.bazel
+.bazelrc.user
 
 # --- Python (CLAUDE.md Rule 6) -------------------------------------------
 .venv/

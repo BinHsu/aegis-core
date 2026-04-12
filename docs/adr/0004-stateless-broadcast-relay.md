@@ -83,9 +83,10 @@ render window.**
 
 The server is a **pure relay**:
 
-1. **C++ engine**: keeps audio and voiceprint embeddings only in process
-   RAM, scoped to the session. On session end (or process exit), all
-   state vanishes.
+1. **C++ engine**: keeps audio only in process RAM, scoped to the
+   session. On session end (or process exit), all state vanishes.
+   Per ADR-0012, the engine does **not** hold voiceprint embeddings of
+   any kind.
 2. **Go Gateway**: holds a session registry — `session_id → { host
    connection, viewer connection list, created_at, last_host_ping }` —
    and fan-out channels for live transcript segments. No transcript
@@ -97,8 +98,9 @@ The server is a **pure relay**:
    client-side persistence in MVP.
 5. **Durable stores** (DynamoDB, S3): hold only **tenant metadata**
    (accounts, tenant settings, RAG index pointers). They **never** hold
-   meeting transcripts, audio, voiceprints, prompter output, or any
-   derivative of real-time meeting content.
+   meeting transcripts, audio, prompter output, or any derivative of
+   real-time meeting content. (Voiceprint data does not appear in this
+   list because Aegis does not process it at all — ADR-0012.)
 
 ### Why Option A
 
@@ -178,9 +180,12 @@ type Session struct {
 }
 ```
 
-**None of these fields carry transcript content.** `TranscriptChan` is
-a bounded channel (capacity ~32) used for fan-out only; segments are
-written by the ingest side and read by each viewer goroutine, never
+**None of these fields carry transcript content.** `TenantID` is
+populated from the host's Cognito JWT in Cloud mode and is empty in
+Local mode (per ADR-0007 L7, Local mode has no tenant concept).
+`TranscriptChan` is a bounded channel (capacity ~32) used for
+fan-out only; segments are written by the ingest side and read by
+each viewer goroutine, never
 retained.
 
 ### Session-Affinity Routing
@@ -230,8 +235,8 @@ preserves the stateless property.
   persistence in a Phase 5+ "recovery" feature, explicitly user-
   controlled.
 - **C++ engine crash terminates the meeting** (documented as L2).
-  Acceptable because the engine holds audio / voiceprint state that
-  cannot be recovered from a restart anyway.
+  Acceptable because the engine holds audio state that cannot be
+  recovered from a restart anyway.
 - **No "meeting history" feature.** Users who want to review a meeting
   from last week must have exported it at the time. Phase 3 UX must
   make export prominent and the "unsaved meeting" state clearly visible
@@ -249,7 +254,7 @@ preserves the stateless property.
 
 - ADR-0001 Session Join Mechanism for Meeting Viewers
 - ADR-0003 Host Audio Capture Strategy (Pure Web for MVP)
-- ADR-0005 Audio and Voiceprint Ephemeral Policy
+- ADR-0005 Audio Ephemeral Policy
 - ADR-0006 Liveness and Disconnect Handling
 - `ARCHITECTURE.md` §4 Data Flow
 - `ARCHITECTURE.md` §5 Dual-Mode Parity

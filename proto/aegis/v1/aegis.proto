@@ -63,8 +63,8 @@ service Gateway {
   // After this call, the host must:
   //   (1) Call `NegotiateWebRTC` to establish the audio path.
   //   (2) Call `JoinAsViewer` with the returned session_id to subscribe
-  //       to the live transcript and prompter stream. The host is also
-  //       a viewer of their own meeting.
+  //       to the live transcript and prompter stream. The host
+  //       subscribes via the same RPC as viewers.
   //
   // Errors:
   //   UNAUTHENTICATED       — missing / invalid Cognito JWT (Cloud mode)

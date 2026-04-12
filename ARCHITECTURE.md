@@ -17,7 +17,7 @@ The architecture is designed as a **Microservice + BFF (Backend For Frontend)** 
     - Handles external WebRTC (via `Pion`) and terminates network logic.
     - Translates gRPC-Web from frontend into native gRPC for C++. 
 *   **Web Client / App (React + Tauri)**:
-    - Frontend built with React/Svelte.
+    - Frontend built with React.
     - Uses `gRPC-Web` to communicate with the Go GW strong-typed APIs.
     - Deployed as static assets (CloudFront/S3) OR packaged as a lightweight Mac/Win desktop app via **Tauri (Rust)** to access native OS microphones/audio out.
 *   **Build System (Bazel Monorepo)**:
@@ -25,7 +25,7 @@ The architecture is designed as a **Microservice + BFF (Backend For Frontend)** 
     - `.proto` files are stored at the root, generating strong-typed SDKs for C++, Go, and TS simultaneously.
 
 ### 2. Microservice Boundaries (EKS Deployment)
-*   **Compute Pods (Node Affinities)**: C++ engine runs on hardware-accelerated nodes (e.g., AWS g4dn for Nvidia, or Apple Silicon local equivalence).
+*   **Compute Pods (Node Affinities)**: C++ engine runs on hardware-accelerated nodes (e.g., AWS g4dn for NVIDIA CUDA). Local mode uses the host machine's accelerator (Apple Silicon Metal, or CPU fallback).
 *   **Gateway Pods**: Lightweight Go pods handling I/O multiplexing.
 *   **Multi-Tenancy**: Data separation via DynamoDB; physical compute separation for VIP clients via Fargate/Dedicated Instances.
 
@@ -77,7 +77,7 @@ The system targets an absolute physical ceiling of **16GB Unified Memory** (e.g.
     - **Transcription**: `whisper.cpp` using `large-v3-turbo` (4-bit Q4 quantization). Cost: ~1.5GB
     - **Diarization**: Anonymous speaker clustering only (no voiceprint matching per ADR-0012). Cost: ~1.0GB
     - **Inference (Optional LLM)**: `llama.cpp` using Llama-3-8B-Instruct (4-bit Q4_K_M). Cost: ~4.8GB
-    - **Fixed model overhead total**: ~2.5GB without LLM, ~7.3GB with LLM. Per-session working budget (~150 MB) gates concurrent session count via `ResourceBudget` per ADR-0010; Phase 1 baseline is ~36 concurrent sessions on an 8 GB engine pod without Llama.
+    - **Fixed model overhead total**: ~2.5GB without LLM, ~7.3GB with LLM. Per-session working budget (~150 MB actual, 200 MB conservative reservation) gates concurrent session count via `ResourceBudget` per ADR-0010; **Local mode** Phase 1 baseline is ~27 concurrent sessions on the 8 GB engine budget (from the 16 GB Local ceiling) without Llama. Cloud mode scales with pod size — see ADR-0010 for the formula and a capacity table.
 *   **Dual-Mode RAG Mounting Strategy**:
     - `LOCAL` Mode: Uses **In-Process Vector Database**. C++ engine mmaps a precompiled `.bin` vector index locally and searches via `hnswlib` in-memory (< 5ms latency, 0 external networking).
     - `CLOUD` Mode: Uses **External Enterprise Vector DB** (e.g., Qdrant, Milvus, AWS OpenSearch). The C++ pod converts text to embedding vector, then shoots a gRPC request to the Vector DB clustered backend allowing dynamic hot-reloads of knowledge bases across multiple active Pods.
@@ -113,7 +113,7 @@ Aegis Core processes audio and derived artifacts that, if mishandled, carry seri
 
 #### 9.1 Layered Privacy Model
 
-The system enforces **three distinct data-handling layers**, each with its own guarantees:
+The system enforces **two distinct data-handling layers**, each with its own guarantees:
 
 | Layer | Data | Storage | Lifetime | Enforcement |
 |---|---|---|---|---|
@@ -178,7 +178,7 @@ Product implication: if a participant joins a meeting 20 minutes late, they cann
 
 #### 9.7 Enforcement via ADR-0005
 
-All guarantees above depend on the seven mechanical enforcement requirements in `docs/adr/0005-audio-voiceprint-ephemeral-policy.md`:
+All guarantees above depend on the seven mechanical enforcement requirements in `docs/adr/0005-audio-ephemeral-policy.md`:
 
 - **R1** Core dumps disabled on audio-processing processes
 - **R2** Swap disabled on audio-processing nodes
@@ -269,7 +269,7 @@ Per CLAUDE.md Rule 2, all tests must have legitimate inputs producing verifiable
 #### 10.6 Observability
 
 - **Tracing**: OpenTelemetry spans propagate from WebRTC ingress through Go Gateway and C++ Engine (per §8). Span attributes follow the ADR-0005 R4 allowlist; transcript and audio never appear as span attributes.
-- **Metrics**: RED (Rate / Errors / Duration) metrics on every gRPC method; USE (Utilization / Saturation / Errors) metrics on every pod; domain metrics include `aegis_host_transient_loss_total`, `aegis_voiceprint_enrollments_total`, and others.
+- **Metrics**: RED (Rate / Errors / Duration) metrics on every gRPC method; USE (Utilization / Saturation / Errors) metrics on every pod; domain metrics include `aegis_host_transient_loss_total`, `aegis_questions_detected_total`, `aegis_hints_emitted_total`, `aegis_engine_budget_bytes_used`, `aegis_engine_sessions_active`, and others.
 - **Logging**: structured JSON logs with compile-time PII redaction (ADR-0005 R3). In Cloud mode, logs route to CloudWatch via FluentBit; in Local mode, logs go to stdout.
 - **Dashboards and alerts**: landing-zone repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
 
@@ -296,7 +296,7 @@ If the host device crashes (browser kill, OS crash, power loss) during an active
 
 If the C++ engine process crashes (segfault, OOM kill, pod eviction), the meeting is terminated. There is no mid-meeting engine failover.
 
-- *Rationale*: preserving in-flight audio, voiceprint, and whisper.cpp internal state across engine restarts would require shared state (Redis / etcd), which breaks the ADR-0005 "nothing persists outside process memory" guarantee.
+- *Rationale*: preserving in-flight audio and whisper.cpp internal state across engine restarts would require shared state (Redis / etcd), which breaks the ADR-0005 "nothing persists outside process memory" guarantee.
 - *Mitigation path*: not planned. This is an architectural property, not a bug.
 
 **L3 — Viewer cannot export**
@@ -334,9 +334,7 @@ Local mode supports exactly one active meeting at a time on a host machine. Ther
 - *Rationale*: Local mode's positioning is "portable, air-gapped, single-user-ish." Multi-tenancy adds complexity that conflicts with that positioning.
 - *Mitigation path*: not planned. Users needing concurrent sessions should use Cloud mode.
 
-**L8 — Consent ledger entry is the only audit trail for voiceprint processing**
-
-Because voiceprints themselves are never persisted (§9.1), the only evidentiary artifact that a voice-biometric processing event occurred is the consent ledger entry. If the ledger is lost (operational failure, misconfigured retention), Aegis loses the ability to demonstrate compliance retrospectively.
-
-- *Rationale*: this is the trade-off for the strong ephemeral guarantee.
-- *Mitigation*: consent ledger must have independent backup and replication to S3 WORM bucket (covered by §10.1 supply chain integrity and landing-zone repository's backup strategy).
+*(L8 was removed in the ADR-0012 refactor. It previously described the
+consent ledger as the only audit trail for voiceprint processing; with
+voiceprint processing gone, the limitation no longer exists. The consent
+ledger's integrity concerns are now covered by §9.3 and §10.1.)*

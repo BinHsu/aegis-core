@@ -35,7 +35,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] Enable GitHub branch protection on `main`: required reviewers, required CI, no force-push, signed commits — see `docs/github-setup.md`
 - [ ] Enable GitHub **Private Vulnerability Reporting** (per SECURITY.md) — see `docs/github-setup.md`
 - [ ] Enable GitHub **secret scanning with push protection** — see `docs/github-setup.md`
-- [ ] Document `/models/manifest.json` schema for model provenance (ARCH §10.1)
+- [x] Document `/models/manifest.json` schema for model provenance (ARCH §10.1)
 
 ---
 
@@ -52,11 +52,12 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] Configure hermetic Node.js toolchain for frontend
 
 ### Contracts
-- [ ] Create `proto/aegis/v1/aegis.proto` (per ADR-0008 layout) and define: `CreateMeeting`, `StreamTranscribe`, `JoinAsViewer`, `EndMeeting`, `AskRAG`
-- [ ] Define `IngestMessage` oneof (`PcmChunk` | `ControlEvent{PAUSE|RESUME|END_STREAM}`) per ADR-0006
-- [ ] Define `CreateMeetingRequest` with reserved field for Phase 5 `allowed_viewer_account_ids` per ADR-0001
+- [x] Create `proto/aegis/v1/aegis.proto` (per ADR-0008 layout) and define: `CreateMeeting`, `StreamTranscribe`, `JoinAsViewer`, `EndMeeting` (AskRAG removed per ADR-0012)
+- [x] Define `IngestMessage` oneof (`PcmChunk` | `ControlEvent{PAUSE|RESUME|END_STREAM}`) per ADR-0006
+- [x] Define `CreateMeetingRequest` with reserved field for Phase 5 `allowed_viewer_account_ids` per ADR-0001
+- [x] Add `buf` configuration (`proto/buf.yaml`) and `buf breaking` check to CI
+- [ ] **Validate** `proto/aegis/v1/BUILD.bazel` skeleton (currently untested) — make `bazel build //proto/aegis/v1/...` pass
 - [ ] Generate C++, Go, TypeScript bindings under Bazel
-- [ ] Add `buf` configuration and `buf breaking` check to CI
 
 ### C++ Engine Skeleton
 - [ ] Establish `engine_cpp/` with `whisper.cpp` vendored via Bazel `http_archive` + SHA256
@@ -89,7 +90,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] Go GW: implement `ControlEvent{PAUSE|RESUME|END_STREAM}` generation on WebRTC state transitions (ADR-0006)
 - [ ] Go GW: configure keepalive — 30s Time / 10s Timeout for both gRPC to C++ and gRPC-Web to viewers (ADR-0006)
 - [ ] Go GW: implement JWT session-token issuance and verification (ADR-0001)
-- [ ] Go GW: implement graceful shutdown with `terminationGracePeriodSeconds: 1800` (ADR-0006)
+- [ ] Go GW: implement graceful shutdown with `terminationGracePeriodSeconds: 14400` matching `session_max_lifetime` (ADR-0006)
 
 ### Dual-Mode Wiring
 - [ ] Local mode: implement `bazel run //:app_local` that starts Go GW and spawns C++ engine as child (ARCH §5)

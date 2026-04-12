@@ -182,21 +182,55 @@ embedding storage removed):
 | RAG query scratch space | ~10 MB |
 | **Per-session total** | **~80–180 MB** (budget estimate 150 MB) |
 
+**Two numbers, two purposes**: the per-session estimate (~150 MB)
+is the expected median usage based on the component table above.
+The per-session **reservation** (200 MB) is the conservative value
+that `ResourceBudget::Reserve()` actually uses (see Design below).
+Capacity math must use the **reservation** value, not the estimate,
+because the budget is a hard ceiling and over-commit is forbidden.
+
+#### Local Mode Capacity (16 GB ceiling)
+
 With ~5.5 GB remaining after fixed costs, the arithmetic is:
 
 ```
-Phase 1 max sessions per engine pod
-= (budget - fixed) / per_session
-= (8000 - 2500) / 150
-≈ 36 sessions
+Local mode max sessions
+= (engine_budget - fixed) / reservation
+= (8000 - 2500) / 200
+≈ 27 sessions
 ```
 
-This is **Phase 1 only** and assumes no Llama-3. Compared to the
-pre-ADR-0012 estimate of ~25 sessions, removing voiceprint matching
-buys approximately **+44% concurrent session capacity** on the same
-hardware. With Llama, subtract ~4.8 GB and the cap drops to ~4
-sessions per pod (Llama is an optional Phase 5+ feature and the cap
-recovers when deployed on larger pod sizes in cloud).
+This is the **hard cap for a 16 GB Apple Silicon machine** (ARCH §6).
+It assumes no Llama-3. With Llama, subtract ~4.8 GB and the cap drops
+to ~3 sessions (Llama is a Phase 5+ option, not MVP).
+
+Compared to the pre-ADR-0012 design with voiceprint matching (~25
+sessions on 250 MB reservation), removing voiceprint matching still
+provides a material capacity improvement on the same hardware.
+
+#### Cloud Mode Capacity (scaled by pod size)
+
+In Cloud mode, the engine pod's memory is configurable via K8s
+resource requests/limits. The formula is the same:
+
+```
+Cloud mode max sessions
+= (pod_memory_limit - fixed_overhead) / reservation
+```
+
+Examples:
+
+| Pod memory limit | Fixed (no Llama) | Available | Max sessions |
+|---|---|---|---|
+| 8 GB | 2.5 GB | 5.5 GB | 27 |
+| 16 GB | 2.5 GB | 13.5 GB | 67 |
+| 32 GB | 2.5 GB | 29.5 GB | 147 |
+| 8 GB (with Llama) | 7.3 GB | 0.7 GB | 3 |
+| 16 GB (with Llama) | 7.3 GB | 8.7 GB | 43 |
+
+The `ResourceBudget` total is set at engine startup from the pod's
+declared memory limit (or from a CLI flag in Local mode). This is
+a Phase 1 startup-time constant, not a runtime-tunable value.
 
 #### Design — `ResourceBudget`
 
@@ -419,8 +453,8 @@ rediscover them:
 - **Graceful shutdown at process level**: what happens when the
   engine pod receives SIGTERM? Current plan: reject new streams,
   let existing streams run to completion within
-  `terminationGracePeriodSeconds` (matched to ADR-0006's 1800 s
-  for Go Gateway).
+  `terminationGracePeriodSeconds` (matched to ADR-0006's 14400 s
+  for Go Gateway, aligning with `session_max_lifetime`).
 - **Metrics naming**: align
   `aegis_engine_budget_bytes_used`,
   `aegis_engine_sessions_active`,
@@ -429,6 +463,16 @@ rediscover them:
 - **Per-model `estimated_bytes` source of truth**: hardcoded
   constant for Phase 1; move to the `manifest.json` in `/models/`
   in Phase 2 so adding a new model does not require a code change.
+  The `estimated_ram_bytes` field in `manifest.json` is already
+  defined for this purpose.
+- **AskRAG threading constraint** (forward reference from
+  ADR-0012 "Future Outlook"): if an explicit query RPC is re-added
+  in Phase 5+, its implementation **MUST run on a dedicated worker
+  pool**, not on the session thread. Injecting RAG+LLM work into
+  the session thread would contend with whisper inference for
+  CPU/GPU cycles, causing audible latency spikes. The upgrade path
+  to model (iii) MPSC queue + worker pool (Sub-decision 1 above)
+  is the natural home for this. See ADR-0012 for full rationale.
 - **`rlimit` vs cgroups for Phase 2 mid-session cap**: pod-level
   cgroups are simpler in K8s; explore once we have CI load-test
   data.
@@ -437,8 +481,7 @@ rediscover them:
 
 - ADR-0004 Stateless Broadcast Relay (fail-fast session loss
   semantics)
-- ADR-0005 Audio & Voiceprint Ephemeral Policy (R1 lifetime;
-  `SensitiveBytes` type)
+- ADR-0005 Audio Ephemeral Policy (R1 lifetime; `SensitiveBytes` type)
 - ADR-0006 Liveness and Disconnect Handling (Pause/Resume on
   transient host loss)
 - ADR-0008 Monorepo Folder Structure (`engine_cpp/src/session/`,

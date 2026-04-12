@@ -285,7 +285,16 @@ build --cxxopt=-Wextra
 build --cxxopt=-Werror
 build --host_cxxopt=-std=c++20
 
-# Backend selection — one of these should be chosen explicitly
+# Default backend: CPU. This ensures `bazel build` works out of the
+# box on ANY machine (including AI agent clones and CI runners)
+# without requiring `configure_backend.sh` or a --config flag.
+# Override with --config=metal or --config=cuda for acceleration.
+build --define=whisper_backend=cpu
+
+# Backend selection — use `--config=metal|cuda|cpu` to override the
+# default. Developers: run `./tools/scripts/configure_backend.sh` on
+# first clone to write your preferred backend to `.bazelrc.user`
+# (gitignored). CI: pass the flag directly on the command line.
 build:metal --define=whisper_backend=metal
 build:metal --copt=-DGGML_USE_METAL
 build:metal --linkopt=-framework
@@ -302,16 +311,108 @@ build:cpu --copt=-DGGML_USE_AVX2
 build:cpu --copt=-mavx2
 build:cpu --copt=-mfma
 
-# Developer convenience: host-appropriate defaults (opt-in)
-build:auto_macos --config=metal
-build:auto_linux --config=cuda
-
 # Debug vs release
 build:debug -c dbg
 build:debug --copt=-DAEGIS_DEV_AUDIO_DUMP      # ADR-0005 R7 — dev only
 build:release -c opt
 build:release --strip=always
 ```
+
+**Important**: the `.bazelrc` intentionally does NOT include
+`auto_macos` or `auto_linux` convenience aliases. An earlier draft
+had `build:auto_linux --config=cuda`, but this is a landmine for
+the 99% of Linux developers without an NVIDIA GPU. Cross-compilation
+scenarios (macOS developer targeting Linux CUDA) make automatic
+detection even more fragile. Instead:
+
+### `tools/scripts/configure_backend.sh`
+
+An interactive first-clone setup script that replaces the removed
+`auto_*` aliases:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage:
+#   Interactive:      ./tools/scripts/configure_backend.sh
+#   Non-interactive:  ./tools/scripts/configure_backend.sh --backend=cpu
+#                     ./tools/scripts/configure_backend.sh --backend=metal
+#                     ./tools/scripts/configure_backend.sh --backend=cuda
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# --- Parse CLI args (non-interactive path for agents / automation) ---
+for arg in "$@"; do
+  case "$arg" in
+    --backend=metal) CONFIG="metal" ;;
+    --backend=cuda)  CONFIG="cuda" ;;
+    --backend=cpu)   CONFIG="cpu" ;;
+    --help|-h)
+      echo "Usage: $0 [--backend=metal|cuda|cpu]"
+      echo "Without --backend, runs interactively."
+      exit 0 ;;
+    *) echo "Unknown argument: $arg"; exit 1 ;;
+  esac
+done
+
+# --- If --backend was given, skip interactive and write immediately ---
+if [[ -n "${CONFIG:-}" ]]; then
+  echo "build --config=$CONFIG" > "$REPO_ROOT/.bazelrc.user"
+  echo "Wrote 'build --config=$CONFIG' to .bazelrc.user"
+  exit 0
+fi
+
+# --- Interactive mode ---
+echo "=== Aegis Core — Backend Configuration ==="
+echo ""
+
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+HAS_METAL=false
+HAS_CUDA=false
+if [[ "$OS" == "Darwin" ]]; then
+  if system_profiler SPDisplaysDataType 2>/dev/null | grep -q Metal; then
+    HAS_METAL=true
+  fi
+elif [[ "$OS" == "Linux" ]]; then
+  if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+    HAS_CUDA=true
+  fi
+fi
+
+echo "Detected: $OS ($ARCH)"
+echo ""
+echo "Available backends:"
+echo "  1) metal  $(if $HAS_METAL; then echo '(detected — recommended)'; else echo '(not detected)'; fi)"
+echo "  2) cuda   $(if $HAS_CUDA; then echo '(detected — recommended)'; else echo '(not detected)'; fi)"
+echo "  3) cpu    (always available, slower)"
+echo ""
+read -rp "Select backend [1/2/3]: " choice
+
+case "$choice" in
+  1) CONFIG="metal" ;;
+  2) CONFIG="cuda" ;;
+  3) CONFIG="cpu" ;;
+  *) echo "Invalid choice"; exit 1 ;;
+esac
+
+echo "build --config=$CONFIG" > "$REPO_ROOT/.bazelrc.user"
+echo ""
+echo "Wrote 'build --config=$CONFIG' to .bazelrc.user"
+echo "You can override per-invocation: bazel build --config=cpu //..."
+```
+
+- **`.bazelrc.user`** is gitignored (per-developer override).
+  Bazel reads it automatically after `.bazelrc`.
+- **Cross-compilation**: if a macOS developer wants to target
+  Linux CUDA, they pass `--config=cuda` on the CLI, which
+  overrides `.bazelrc.user`. The script's choice is just a
+  default, not a lock.
+- **CI**: does not run the script. CI workflows pass
+  `--config=metal|cuda|cpu` directly. See CI matrix table below.
 
 ### `engine_cpp/third_party/whisper_cpp/BUILD.bazel` sketch
 
@@ -426,9 +527,10 @@ All three configs must pass before merge to `main`.
 - `rules_foreign_cc` cold builds are slower than pure Bazel `cc_library`.
   Mitigated by remote cache in Phase 4 and by the fact that local
   development runs incremental builds.
-- Developers must remember `--config=metal` etc. Mitigated by
-  `.bazelrc` `--config=auto_macos` / `--config=auto_linux` convenience
-  shortcuts.
+- Developers must remember `--config=metal` etc. Mitigated by CPU
+  default in `.bazelrc` (builds work out of the box) and
+  `tools/scripts/configure_backend.sh` which writes the preferred
+  backend to `.bazelrc.user`.
 - grpc-cpp pulls a heavy dependency tree (BoringSSL, Abseil, upb,
   c-ares, protobuf). Mitigated by incremental builds and cache.
 - C++20 subtle differences between Apple Clang 15, GCC 10+, and any
@@ -453,8 +555,8 @@ All three configs must pass before merge to `main`.
 
 ## Related
 
-- ADR-0005 Audio & Voiceprint Ephemeral Policy (R3 `SensitiveBytes`
-  requires `std::span` → C++20)
+- ADR-0005 Audio Ephemeral Policy (R3 `SensitiveBytes` requires
+  `std::span` → C++20)
 - ADR-0008 Monorepo Folder Structure (`engine_cpp/`,
   `engine_cpp/third_party/`)
 - ADR-0010 C++ Engine Runtime Architecture (uses `absl::Status`

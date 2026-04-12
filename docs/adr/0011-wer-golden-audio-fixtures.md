@@ -394,8 +394,10 @@ Key points:
 - Uses `path` filter to avoid re-running on pure-doc PRs.
 - Nightly cron catches drifts unrelated to PR changes (e.g., an
   upstream model manifest bump via Dependabot).
-- Timeout at 20 minutes provides headroom over the ~2 minute
-  expected runtime.
+- Timeout at 20 minutes provides headroom. The ~2 minute estimate
+  is based on whisper CPU inference at ~3.5x real-time; actual
+  GitHub Actions runner performance may be slower — tune after
+  Phase 2 brings the first real CI run.
 
 ---
 
@@ -470,8 +472,8 @@ Not blocking this ADR; noted for the Phase 2 engineer:
 
 ## Related
 
-- ADR-0005 Audio & Voiceprint Ephemeral Policy (R7 no debug dump
-  → cannot use real user audio for testing)
+- ADR-0005 Audio Ephemeral Policy (R7 no debug dump → cannot use
+  real user audio for testing)
 - ADR-0008 Monorepo Folder Structure (`test/golden_audio/`
   location)
 - ADR-0009 C++ Build and Toolchain (CI runs `--config=cpu`)
