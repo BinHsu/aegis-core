@@ -35,6 +35,151 @@ confirmation. If you change your mind, you can flip back via UI.
 
 ---
 
+## 0.5. SSH Commit Signing Setup (macOS)
+
+Required before enabling `required_signatures` in the ruleset (§1).
+GitHub supports both GPG and SSH commit signing; SSH is simpler
+(no keyring, no expiration management, same key can be used for auth).
+
+These steps were tested on macOS with the system ssh-agent +
+Keychain integration. For Linux, replace `--apple-use-keychain` with
+`ssh-agent` + optional `keychain(1)`.
+
+### Step 1 — Create `~/.ssh/` and set git identity
+
+Fully automatable via `gh`:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+
+# Use the GitHub-provided no-reply email for privacy (doesn't leak
+# your real email into public git history). Format:
+#   <user_id>+<login>@users.noreply.github.com
+USER_ID=$(gh api user --jq .id)
+LOGIN=$(gh api user --jq .login)
+NOREPLY="${USER_ID}+${LOGIN}@users.noreply.github.com"
+
+git config --global user.name  "$LOGIN"
+git config --global user.email "$NOREPLY"
+```
+
+### Step 2 — Generate the signing key (interactive)
+
+Run in your shell. You'll be prompted twice for a passphrase:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -C "<login> signing key (YYYY-MM)"
+```
+
+- Use a real passphrase — macOS Keychain will cache it so you don't
+  have to retype it per commit.
+- ed25519 is the GitHub-recommended algorithm.
+
+### Step 3 — Configure ssh-agent with Keychain (macOS only)
+
+Automatable:
+
+```bash
+cat > ~/.ssh/config <<'EOF'
+Host *
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentityFile ~/.ssh/id_ed25519
+EOF
+chmod 600 ~/.ssh/config
+```
+
+Then **interactively** (shell) add the key to the agent/Keychain:
+
+```bash
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+```
+
+- Prompts for passphrase once; stored in Keychain thereafter.
+- Verify: `ssh-add -l` should list the key fingerprint.
+
+### Step 4 — Configure git for SSH signing
+
+Fully automatable:
+
+```bash
+# Create the allowed_signers file (needed for local verify-commit)
+PUBKEY=$(cat ~/.ssh/id_ed25519.pub)
+EMAIL=$(git config --global user.email)
+echo "$EMAIL $PUBKEY" > ~/.ssh/allowed_signers
+chmod 644 ~/.ssh/allowed_signers
+
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global commit.gpgsign true
+git config --global tag.gpgsign true
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+```
+
+### Step 5 — Upload the public key to GitHub as a signing key
+
+The default `gh auth` token does not have the `write:ssh_signing_key`
+scope. Refresh it first **interactively** (shell):
+
+```bash
+gh auth refresh -s write:ssh_signing_key
+```
+
+- Displays a one-time code; opens the browser to
+  `https://github.com/login/device` where you paste the code.
+- After success, verify: `gh auth status` should list
+  `write:ssh_signing_key` among token scopes.
+
+Then upload the public key (automatable):
+
+```bash
+gh api --method POST user/ssh_signing_keys \
+  -f title="$(whoami)@$(hostname -s) ($(date +%Y-%m))" \
+  -f key="$(cat ~/.ssh/id_ed25519.pub)" \
+  --jq '{id, title, created_at}'
+```
+
+### Step 6 — Verify
+
+Create an empty signed commit and check GitHub accepts it:
+
+```bash
+cd <your-repo>
+git commit --allow-empty -m "chore: verify SSH commit signing"
+git log -1 --show-signature   # expect: Good "git" signature ...
+
+git push origin main          # or your branch
+sleep 3
+gh api repos/<owner>/<repo>/commits/HEAD --jq \
+  '{sha, verified: .commit.verification.verified, reason: .commit.verification.reason}'
+# expected: {"sha":"...", "verified": true, "reason": "valid"}
+```
+
+If `verified: false`, common reasons:
+
+- `bad_email` — `user.email` in git does not match the email
+  associated with the signing key on GitHub. The no-reply email
+  from Step 1 is auto-verified and works.
+- `unsigned` — `commit.gpgsign true` not set, or ssh-agent doesn't
+  have the key loaded (re-run `ssh-add --apple-use-keychain ...`).
+- `no_user` — the signing key isn't uploaded to GitHub yet, or the
+  wrong key fingerprint.
+
+### Step 7 — Enable `required_signatures` in the ruleset
+
+Once signing works locally, flip the ruleset's
+`required_signatures` rule on. See §1 "Ruleset with signing
+requirement" below for the full PUT payload.
+
+### UI fallback
+
+For Steps 1–6, there is no meaningful UI path — SSH signing setup is
+inherently shell-based. For Step 5 public key upload specifically,
+the UI alternative is **Settings → SSH and GPG keys → New SSH key**
+with **Key type = Signing Key** (not Authentication Key).
+
+---
+
 ## 1. Branch Protection (Ruleset) on `main`
 
 The legacy "Branch Protection Rules" have been superseded by
@@ -159,6 +304,26 @@ JSON
 gh api --method PUT "repos/$REPO/rulesets/$RULESET_ID" --input /tmp/ruleset_update.json \
   --jq '{name, enforcement, rules: [.rules[] | .type]}'
 ```
+
+### Ruleset with signing requirement (after §0.5 SSH signing is set up)
+
+Once SSH signing is confirmed working (see §0.5), add
+`{"type": "required_signatures"}` to the `rules` array:
+
+```bash
+# Same payload as above, but with required_signatures rule added.
+# Edit /tmp/ruleset_update.json to insert:
+#   {"type": "required_signatures"}
+# anywhere in the "rules" array, then:
+gh api --method PUT "repos/$REPO/rulesets/$RULESET_ID" --input /tmp/ruleset_update.json \
+  --jq '{enforcement, rules: [.rules[] | .type]}'
+# expected: {..., "required_signatures", ...} present
+```
+
+**Do NOT enable `required_signatures` before every contributor has
+set up signing** — unsigned pushes will be rejected. For
+bootstrap/solo development, the repo-admin bypass in the ruleset
+allows pushing unsigned commits from the admin account.
 
 **Note**: `integration_id: 15368` is GitHub Actions. If you add
 checks from a different provider, its integration_id differs —
@@ -374,8 +539,10 @@ After applying all of the above:
 
 ```bash
 REPO=BinHsu/aegis-core
-echo "=== Ruleset ==="
+echo "=== Ruleset rules ==="
 gh api repos/$REPO/rulesets --jq '.[] | {name, enforcement, target}'
+gh api repos/$REPO/rulesets/$(gh api repos/$REPO/rulesets --jq '.[] | select(.name=="main") | .id') \
+  --jq '[.rules[] | .type]'
 echo "=== Private vuln reporting ==="
 gh api repos/$REPO/private-vulnerability-reporting --jq .enabled
 echo "=== Secret scanning ==="
@@ -386,13 +553,18 @@ echo "=== Visibility ==="
 gh api repos/$REPO --jq .visibility
 echo "=== Discussions ==="
 gh api repos/$REPO --jq .has_discussions
+echo "=== HEAD commit signature ==="
+gh api repos/$REPO/commits/HEAD --jq '.commit.verification | {verified, reason}'
+echo "=== My SSH signing keys on GitHub ==="
+gh api user/ssh_signing_keys --jq '.[] | {id, title, created_at}'
 ```
 
 Expected output:
 
 ```
-=== Ruleset ===
+=== Ruleset rules ===
 {"name":"main","enforcement":"active","target":"branch"}
+["deletion","non_fast_forward","pull_request","required_linear_history","required_status_checks","required_signatures"]
 === Private vuln reporting ===
 true
 === Secret scanning ===
@@ -404,6 +576,10 @@ HTTP/2.0 204 No Content
 public
 === Discussions ===
 true
+=== HEAD commit signature ===
+{"verified":true,"reason":"valid"}
+=== My SSH signing keys on GitHub ===
+{"id":896375,"title":"BinHsu MacBook Air (2026-04)",...}
 ```
 
 ---
