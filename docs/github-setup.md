@@ -96,28 +96,79 @@ Navigate to **Settings → Rules → New branch ruleset**:
 
 ### Later: add required status checks
 
-After the first `git push origin main` succeeds and CI runs:
+After the first `git push origin main` succeeds and CI runs at least
+once, the check names are registered with GitHub. Only then can they
+be added to the ruleset.
+
+**`gh` PUT replaces the entire ruleset**, so prepare a JSON payload
+with the existing rules PLUS the new `required_status_checks` rule:
 
 ```bash
-RULESET_ID=$(gh api repos/BinHsu/aegis-core/rulesets --jq '.[] | select(.name=="main") | .id')
+REPO=BinHsu/aegis-core
+RULESET_ID=$(gh api repos/$REPO/rulesets --jq '.[] | select(.name=="main") | .id')
 
-# Add required_status_checks rule; values must match CI job names.
-gh api --method PUT "repos/BinHsu/aegis-core/rulesets/$RULESET_ID" \
-  -f "rules[][type]=required_status_checks" \
-  -F "rules[-1][parameters][strict_required_status_checks_policy]=true" \
-  -f "rules[-1][parameters][required_status_checks][][context]=Pre-commit hooks" \
-  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368" \
-  -f "rules[-1][parameters][required_status_checks][][context]=Gitleaks secret scan" \
-  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368" \
-  -f "rules[-1][parameters][required_status_checks][][context]=Proto lint" \
-  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368" \
-  -f "rules[-1][parameters][required_status_checks][][context]=Markdown link check" \
-  -f "rules[-1][parameters][required_status_checks][-1][integration_id]=15368"
-# integration_id 15368 = GitHub Actions
+# Fetch current config for reference
+gh api repos/$REPO/rulesets/$RULESET_ID --jq '{name, target, enforcement, bypass_actors, conditions, rules}'
+
+# Build update payload — keep all existing rules, append required_status_checks
+cat > /tmp/ruleset_update.json <<'JSON'
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [
+    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+  ],
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"},
+    {"type": "required_linear_history"},
+    {
+      "type": "pull_request",
+      "parameters": {
+        "allowed_merge_methods": ["squash"],
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": true,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 1,
+        "required_review_thread_resolution": true
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [
+          {"context": "Pre-commit hooks",      "integration_id": 15368},
+          {"context": "Gitleaks secret scan",  "integration_id": 15368},
+          {"context": "Proto lint",            "integration_id": 15368},
+          {"context": "Markdown link check",   "integration_id": 15368}
+        ]
+      }
+    }
+  ]
+}
+JSON
+
+gh api --method PUT "repos/$REPO/rulesets/$RULESET_ID" --input /tmp/ruleset_update.json \
+  --jq '{name, enforcement, rules: [.rules[] | .type]}'
 ```
 
-**UI fallback**: edit the ruleset → check "Require status checks to
-pass" → in the search box, type each check name and add it.
+**Note**: `integration_id: 15368` is GitHub Actions. If you add
+checks from a different provider, its integration_id differs —
+find it via `gh api /users/<app>/apps` or the Status Checks API.
+
+### UI fallback
+
+Edit the ruleset → check "Require status checks to pass to merge"
+→ in the search box, type each check name (CI must have run at
+least once for names to be searchable).
 
 ### Verify
 

@@ -32,9 +32,9 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Add `.pre-commit-config.yaml` with `gitleaks`, `clang-format`, `gofmt`, `prettier`, `buf lint`
 - [x] Add `.gitignore` covering build artifacts, `.bazel_cache/`, `.venv/`, `node_modules/`, `/models/*.gguf`
 - [x] Add minimal GitHub Actions CI: lint + secret scan + `buf lint` (no builds yet)
-- [ ] Enable GitHub branch protection on `main`: required reviewers, required CI, no force-push, signed commits — see `docs/github-setup.md`
-- [ ] Enable GitHub **Private Vulnerability Reporting** (per SECURITY.md) — see `docs/github-setup.md`
-- [ ] Enable GitHub **secret scanning with push protection** — see `docs/github-setup.md`
+- [x] Enable GitHub branch protection on `main`: required reviewers, required CI, no force-push (signed commits deferred — no GPG/SSH signing set up yet) — see `docs/github-setup.md`
+- [x] Enable GitHub **Private Vulnerability Reporting** (per SECURITY.md) — see `docs/github-setup.md`
+- [x] Enable GitHub **secret scanning with push protection** — see `docs/github-setup.md`
 - [x] Document `/models/manifest.json` schema for model provenance (ARCH §10.1)
 
 ---
