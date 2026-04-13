@@ -96,6 +96,8 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 > *"Raw audio in, transcript out, no UI yet."*
 
 ### Gateway Functionality
+- [x] Go GW: gRPC client to engine; `/healthz` aggregates gateway + engine status (Phase 2 A1)
+- [x] Proto codegen distribution strategy (ADR-0013): checked-in `.pb.go` under `gateway_go/gen/go/` via `buf generate`; Bazel still authoritative; CI drift check via `proto_gen.sh + git diff --exit-code`
 - [ ] Go GW: implement Pion WebRTC to accept browser UDP frames
 - [ ] Go GW: implement `gRPC-Web` multiplexing for cloud-mode viewer transport
 - [ ] Go GW: implement **WebSocket + Protobuf** transport for local-mode viewer (ADR-0007)

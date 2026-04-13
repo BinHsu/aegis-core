@@ -1,0 +1,8 @@
+# gateway_go/BUILD.bazel
+#
+# Top-level Go module root. The only target here exports go.mod so that
+# MODULE.bazel's go_deps extension (via gazelle) can pick it up as
+# //gateway_go:go.mod. Per-package Go targets live under cmd/ and
+# internal/ (Phase 2+).
+
+exports_files(["go.mod"])

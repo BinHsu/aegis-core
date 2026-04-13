@@ -83,6 +83,18 @@ go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 # external repo setup). Bump gazelle to go along.
 go_sdk.download(version = "1.24.12")
 
+# go_deps extension resolves gateway_go/go.mod into Bazel repositories
+# so rules_go targets can depend on Go module deps like grpc-go and
+# protobuf-go via their normal import paths. Run `bazel mod tidy` after
+# editing go.mod to keep the use_repo list below in sync.
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//gateway_go:go.mod")
+use_repo(
+    go_deps,
+    "org_golang_google_grpc",
+    "org_golang_google_protobuf",
+)
+
 # -----------------------------------------------------------------------------
 # Phase 2+ dependencies (added as each component comes online):
 #

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# tools/buf/buf — bazelisk-style wrapper for the buf CLI.
+#
+# Downloads buf on first use into ./.bufsk/ and execs it. No global
+# install per CLAUDE.md Rule 6. The pinned version MUST stay in sync
+# with .pre-commit-config.yaml's buf hook `rev:` so lint/format
+# behavior is identical across local, pre-commit, and CI.
+
+set -euo pipefail
+
+BUF_VERSION="${AEGIS_BUF_VERSION:-v1.67.0}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BUF_DIR="$REPO_ROOT/.bufsk"
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64)    BIN_SUFFIX="Darwin-arm64" ;;
+  Darwin-x86_64)   BIN_SUFFIX="Darwin-x86_64" ;;
+  Linux-x86_64)    BIN_SUFFIX="Linux-x86_64" ;;
+  Linux-aarch64)   BIN_SUFFIX="Linux-aarch64" ;;
+  *) echo "tools/buf/buf: unsupported platform $(uname -s)-$(uname -m)" >&2
+     exit 1 ;;
+esac
+
+BUF_BIN="$BUF_DIR/buf-$BUF_VERSION-$BIN_SUFFIX"
+
+if [[ ! -x "$BUF_BIN" ]]; then
+  mkdir -p "$BUF_DIR"
+  URL="https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-${BIN_SUFFIX}"
+  echo "Downloading buf ${BUF_VERSION} for ${BIN_SUFFIX}..." >&2
+  echo "  from: $URL" >&2
+  echo "  to:   $BUF_BIN" >&2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$BUF_BIN" "$URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$BUF_BIN" "$URL"
+  else
+    echo "ERROR: neither curl nor wget is available." >&2
+    exit 1
+  fi
+  chmod +x "$BUF_BIN"
+fi
+
+exec "$BUF_BIN" "$@"

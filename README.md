@@ -82,7 +82,16 @@ What runs today:
   engine, session registry, and JWT middleware.
 - **Polyglot proto codegen verified** — `//proto/aegis/v1:aegis_go_proto`
   produces Go message types + gRPC stubs alongside the C++ counterparts
-  from Session 2.
+  from Session 2. Per [ADR-0013](docs/adr/0013-proto-codegen-distribution.md),
+  `.pb.go` files are also checked-in under `gateway_go/gen/go/` for IDE
+  / `gopls` consumption; Bazel remains the authoritative producer and CI
+  enforces the two stay in sync.
+- **Gateway → Engine gRPC client (Phase 2 A1)** — `gateway_go` is now a
+  real gRPC client of `engine_cpp`. `/healthz` calls
+  `aegis.v1.Engine.Health` over gRPC and returns aggregated JSON with
+  both layers' status (model path, backend, version), or
+  `engine.reachable=false` if the engine is down — gateway stays `ready:true`
+  so monitors distinguish the two failure modes.
 - **frontend_web/ scaffold + provider abstractions** — Vite 6 + React 19 +
   TypeScript 5.7. `WebAudioCaptureProvider` (getUserMedia +
   getDisplayMedia + Web Audio mixing per ADR-0003), and

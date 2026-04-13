@@ -1,0 +1,27 @@
+# buf codegen config — see ADR-0013 for rationale.
+#
+# Run via `./tools/scripts/proto_gen.sh` (which shells out to
+# `./tools/buf/buf generate`). Outputs go to:
+#   gateway_go/gen/go/<proto-package-path>/*.pb.go
+#
+# Remote plugins (buf.build/...) run server-side on the Buf Schema
+# Registry; no local protoc-gen-* install required. Pinned versions
+# MUST be bumped deliberately, with a re-run of proto_gen.sh and a
+# review of the generated diff.
+
+version: v2
+
+plugins:
+  # Go message types.
+  - remote: buf.build/protocolbuffers/go:v1.36.5
+    out: gateway_go/gen/go
+    opt:
+      - paths=source_relative
+
+  # Go gRPC service stubs (the modern "v2" generator aligned with
+  # rules_go's go_grpc_v2 compiler used in //proto/aegis/v1:aegis_go_proto).
+  - remote: buf.build/grpc/go:v1.5.1
+    out: gateway_go/gen/go
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=false

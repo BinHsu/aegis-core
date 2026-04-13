@@ -7,4 +7,13 @@ go_binary(
     # cmd/gateway is a main package under it.
     importpath = "github.com/BinHsu/aegis-core/gateway_go/cmd/gateway",
     visibility = ["//visibility:public"],
+    deps = [
+        # Bazel is authoritative for proto codegen per ADR-0013 — the
+        # binary picks up the Bazel-produced Go bindings here, NOT the
+        # checked-in gateway_go/gen/go/ files (those exist only for IDE
+        # / go-tooling consumption).
+        "//proto/aegis/v1:aegis_go_proto",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
 )

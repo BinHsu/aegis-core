@@ -57,5 +57,12 @@ fi
 # commands like `go fmt ./...` and `go mod tidy` require the caller to
 # cd into the module root first — see tools/scripts/go_check.sh for a
 # helper that loops over every Go module for common checks.
+#
+# BUILD_WORKSPACE_DIRECTORY is set by `bazel run`; rules_go's
+# go_bin_runner uses it to locate go.mod. When invoked outside
+# bazel run (i.e. directly via this wrapper) it must be set
+# manually or the binary errors with "open gateway_go/go.mod: no
+# such file or directory" regardless of cwd.
 cd "$CALLER_PWD"
+export BUILD_WORKSPACE_DIRECTORY="$REPO_ROOT"
 exec "$GO_BIN" "$@"

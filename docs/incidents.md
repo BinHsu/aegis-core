@@ -451,6 +451,86 @@ came online.
 
 ---
 
+## Incident 06 — rules_go go_bin_runner needs BUILD_WORKSPACE_DIRECTORY
+
+**Date**: 2026-04-13  **Severity**: S3  **Duration**: ~30 min
+**Related commit**: A1 wrapper-fix commit (this session)
+
+### Symptom
+
+Running our `tools/scripts/go.sh` wrapper from inside `gateway_go/`
+errored with:
+
+```
+$ cd gateway_go && ../tools/scripts/go.sh fmt ./...
+2026/04/13 14:13:36 open gateway_go/go.mod: no such file or directory
+```
+
+Even basic queries failed:
+
+```
+$ ../tools/scripts/go.sh env GOMOD
+2026/04/13 14:21:22 open gateway_go/go.mod: no such file or directory
+```
+
+The error path is suspicious — `gateway_go/go.mod` is the path
+**from the repo root**, not from cwd, so the binary clearly was
+not honouring the current working directory.
+
+### Root cause
+
+`rules_go`'s `@rules_go//go` target builds a small Go program
+(`go_bin_runner`) that wraps the SDK's `go` binary and looks up
+the workspace via the `BUILD_WORKSPACE_DIRECTORY` environment
+variable. That env var is **set by `bazel run`** when invoking the
+binary, but our wrapper invokes the produced binary directly from
+`bazel-bin/...`, so the var was unset and `go_bin_runner` fell
+back to a workspace path that did not match where we actually
+ran from.
+
+### Detection
+
+Setting `BUILD_WORKSPACE_DIRECTORY` explicitly fixed it
+immediately:
+
+```
+$ BUILD_WORKSPACE_DIRECTORY="$(pwd)/.." ../tools/scripts/go.sh env GOMOD
+/Volumes/.../aegis-core/gateway_go/go.mod
+```
+
+### Resolution
+
+`tools/scripts/go.sh` now exports
+`BUILD_WORKSPACE_DIRECTORY="$REPO_ROOT"` before exec'ing the
+binary. Caller cwd determines module resolution; the env var
+satisfies `go_bin_runner`'s workspace lookup.
+
+### Prevention
+
+- Inline comment in `tools/scripts/go.sh` explaining why the env
+  var is set, with the exact error string a future reader might
+  search for.
+- The wrapper already exports a few helpful niceties; the env
+  var is the only one that's load-bearing for correctness.
+
+### Lessons
+
+1. **Bazel-rule-provided binaries often expect Bazel-set
+   environment.** When you bypass `bazel run` you also bypass
+   the env contract that the rule's binary depends on. Read the
+   rule's source (or runfiles wrapper) to learn what it needs.
+2. **"no such file or directory" on a path you can `ls` is rarely
+   a permission or filesystem issue.** It's almost always a
+   subprocess being given the wrong cwd or a base-path env var.
+   Test by hard-coding the env var to confirm the hypothesis
+   before pursuing other directions (workspace mode, GOWORK,
+   etc., none of which were the problem here).
+3. **Wrapper scripts that proxy external binaries should explicitly
+   set every env var the binary depends on**, not rely on the
+   user's environment leaking through.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a
