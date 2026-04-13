@@ -14,6 +14,16 @@ build --cxxopt=-Wall
 build --cxxopt=-Wextra
 build --host_cxxopt=-Wall
 build --host_cxxopt=-Wextra
+# -Werror is NOT set at the top level because third-party deps
+# (boringssl in particular) have their own BUILD copts=["-Werror"]
+# that trip newer Apple Clang. Global --copt is overridden by
+# target-level copts; --per_file_copt is applied AFTER target copts
+# so it wins. Targeting external/ paths suppresses warnings only
+# for third-party code; our engine_cpp/ targets keep strict defaults.
+build --per_file_copt=external/.*@-Wno-error
+build --per_file_copt=external/.*@-Wno-unused-parameter
+build --host_per_file_copt=external/.*@-Wno-error
+build --host_per_file_copt=external/.*@-Wno-unused-parameter
 
 # --- macOS without full Xcode (Command Line Tools only) ---
 # Bazel's XcodeLocalEnvProvider (invoked by BOTH sandbox and local spawn

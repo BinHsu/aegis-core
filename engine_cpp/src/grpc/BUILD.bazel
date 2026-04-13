@@ -1,0 +1,13 @@
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+cc_library(
+    name = "aegis_engine_service",
+    srcs = ["aegis_engine_service.cc"],
+    hdrs = ["aegis_engine_service.h"],
+    deps = [
+        "//engine_cpp/src/session:resource_budget",
+        "//proto/aegis/v1:aegis_cc_grpc",
+        "//proto/aegis/v1:aegis_cc_proto",
+        "@com_github_grpc_grpc//:grpc++",
+    ],
+)

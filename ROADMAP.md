@@ -67,11 +67,14 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] Generate TypeScript bindings under Bazel — Phase 3
 
 ### C++ Engine Skeleton
-- [ ] Establish `engine_cpp/` with `whisper.cpp` vendored via Bazel `http_archive` + SHA256
-- [ ] Wrap `whisper.cpp` in a native gRPC server consuming the `IngestMessage` stream
-- [ ] Implement session lifetime management (audio buffer in RAM, discarded on session end — ADR-0005)
-- [ ] Implement `SensitiveBytes` type and logging whitelist (ADR-0005 R3)
-- [ ] Add `#ifdef AEGIS_DEV_AUDIO_DUMP` gating for any future debug dump code (ADR-0005 R7)
+- [x] `engine_cpp/` directory + BUILD.bazel per ADR-0008 layout — Session 3
+- [x] Minimal gRPC server in `engine_cpp/cmd/engine/` that starts and serves Health (Session 3)
+- [x] Implement `SensitiveBytes` type with redacting `operator<<` (ADR-0005 R3) — Session 3
+- [x] Implement `ResourceBudget` with atomic Reserve/Release, fail-fast RESOURCE_EXHAUSTED (ADR-0010) — Session 3
+- [x] `#ifdef AEGIS_DEV_AUDIO_DUMP` gating for debug dump code (ADR-0005 R7) — Session 3 (verified compiled out of release)
+- [ ] Vendor `whisper.cpp` via Bazel `http_archive` + SHA256 and rules_foreign_cc — Session 4
+- [ ] Wire `whisper.cpp` inference into StreamTranscribe consuming `IngestMessage` — Session 4
+- [ ] Session lifetime management (audio ring buffer, Pause/Resume state machine) — Session 4-5
 
 ### Go Gateway Skeleton
 - [ ] Establish `gateway_go/` with Go module and Bazel build

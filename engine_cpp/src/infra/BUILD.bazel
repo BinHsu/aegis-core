@@ -1,0 +1,6 @@
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+cc_library(
+    name = "sensitive_bytes",
+    hdrs = ["sensitive_bytes.h"],
+)

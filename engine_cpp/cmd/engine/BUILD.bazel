@@ -1,0 +1,11 @@
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "engine",
+    srcs = ["main.cc"],
+    deps = [
+        "//engine_cpp/src/grpc:aegis_engine_service",
+        "//engine_cpp/src/session:resource_budget",
+        "@com_github_grpc_grpc//:grpc++",
+    ],
+)

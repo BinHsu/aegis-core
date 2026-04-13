@@ -1,0 +1,11 @@
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+cc_library(
+    name = "resource_budget",
+    srcs = ["resource_budget.cc"],
+    hdrs = ["resource_budget.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+    ],
+)
