@@ -67,10 +67,25 @@ http_archive(
 )
 
 # -----------------------------------------------------------------------------
-# Phase 1 Session 5+ / Phase 2+ dependencies (added as each component comes online):
+# Go toolchain — Phase 1 Session 5. rules_go pulls in a hermetic Go SDK
+# (download extension below) and the go_proto_library codegen rules that
+# let //proto/aegis/v1:aegis_go_proto produce Go gRPC bindings. Gazelle
+# is the build-file generator — gateway_go/ is small enough to hand-
+# maintain BUILD.bazel files, but gazelle becomes load-bearing in Phase 2
+# when we add more Go packages.
+# -----------------------------------------------------------------------------
+bazel_dep(name = "rules_go", version = "0.52.0")
+bazel_dep(name = "gazelle", version = "0.50.0")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+# Pinned >= 1.24.12 because gazelle 0.50.0's go_repository_tools has a
+# go.work requiring go >= 1.24.12 (running lower errors out during
+# external repo setup). Bump gazelle to go along.
+go_sdk.download(version = "1.24.12")
+
+# -----------------------------------------------------------------------------
+# Phase 2+ dependencies (added as each component comes online):
 #
-#   bazel_dep(name = "rules_go",         version = "0.50.1")   # Phase 2
-#   bazel_dep(name = "gazelle",          version = "0.39.1")   # Phase 2
 #   bazel_dep(name = "rules_nodejs",     version = "6.3.2")    # Phase 3 frontend
 #   bazel_dep(name = "rules_oci",        version = "2.0.1")    # Phase 4 packaging
 #   bazel_dep(name = "rules_rust",       version = "0.54.0")   # Phase 4 Tauri

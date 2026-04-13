@@ -47,7 +47,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Initialize Bazel `MODULE.bazel` (bzlmod) with `rules_proto`, `protobuf` — Session 1 baseline
 - [x] Add `rules_cc`, `grpc`, `apple_support` bazel_deps — Session 2 (cold grpc build 5m14s)
 - [x] Add `rules_foreign_cc` 0.15.1 + whisper.cpp v1.8.4 via http_archive+SHA256, CMake build — Session 4a (cold +7m38s)
-- [ ] Add `rules_go`, `gazelle` bazel_deps — Phase 2 (Go Gateway)
+- [x] Add `rules_go` 0.52.0 + `gazelle` 0.50.0 bazel_deps + Go 1.24.12 hermetic SDK — Session 5
 - [ ] Add `rules_nodejs`, `rules_rust`, `rules_oci` bazel_deps — Phase 3/4
 - [x] Configure `.bazelrc` with CPU default, metal/cuda/cpu configs, `try-import %workspace%/.bazelrc.user` (ADR-0009)
 - [x] `.bazelversion` pinning Bazel 7.4.1
@@ -63,7 +63,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Add `buf` configuration (`proto/buf.yaml`) and `buf breaking` check to CI
 - [x] **Validate** `proto/aegis/v1/BUILD.bazel` — `proto_library` target builds (Session 1)
 - [x] Generate C++ bindings under Bazel (`cc_proto_library` + `cc_grpc_library`) — Session 2 complete
-- [ ] Generate Go bindings under Bazel (`go_proto_library`) — Phase 2
+- [x] Generate Go bindings under Bazel (`go_proto_library` with `go_proto` + `go_grpc_v2` compilers) — Session 5 complete
 - [ ] Generate TypeScript bindings under Bazel — Phase 3
 
 ### C++ Engine Skeleton

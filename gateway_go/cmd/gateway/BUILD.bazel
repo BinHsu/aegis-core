@@ -1,0 +1,10 @@
+load("@rules_go//go:def.bzl", "go_binary")
+
+go_binary(
+    name = "gateway",
+    srcs = ["main.go"],
+    # The Go module root (//gateway_go/go.mod) names this import path;
+    # cmd/gateway is a main package under it.
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/cmd/gateway",
+    visibility = ["//visibility:public"],
+)

@@ -49,7 +49,7 @@ implementation in progress.
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
-| **Phase 1** | Bazel monorepo, proto contracts, C++ engine skeleton, whisper.cpp inference, StreamTranscribe bidi stream, Go Gateway skeleton | 🚧 4 / 5 sessions shipped — real gRPC transcription end-to-end |
+| **Phase 1** | Bazel monorepo, proto contracts, C++ engine skeleton, whisper.cpp inference, StreamTranscribe bidi stream, Go Gateway skeleton | ✅ 5 / 5 sessions shipped — real gRPC transcription end-to-end, Go GW listening |
 | **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 📋 Designed |
 | **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
@@ -75,6 +75,14 @@ What runs today:
   is paired with session lifetime — the second test case confirms
   the budget returns to zero even when the first message is malformed
   and the session is rejected with `INVALID_ARGUMENT`.
+- **Go Gateway skeleton** — `//gateway_go/cmd/gateway:gateway` builds
+  via rules_go + a hermetic Go 1.24.12 SDK and starts a net/http
+  server on `:8080` with a `/healthz` endpoint and SIGINT/SIGTERM
+  drain. Phase 2 layers in Pion WebRTC, gRPC client to the C++
+  engine, session registry, and JWT middleware.
+- **Polyglot proto codegen verified** — `//proto/aegis/v1:aegis_go_proto`
+  produces Go message types + gRPC stubs alongside the C++ counterparts
+  from Session 2.
 - **Hermetic Bazel build** — `./tools/bazelisk/bazelisk` downloads a
   local Bazel 7.4.1, all external deps fetched via `MODULE.bazel`
   bzlmod, nothing leaks into `~/.cache` or `/opt`.
@@ -159,14 +167,24 @@ cd aegis-core
 #   model_path=models/ggml-tiny.en.bin
 #   version=0.1.0-phase1-s4d
 #   whisper: WHISPER : COREML = 0 | ... | CPU : NEON = 1 | ... | ACCELERATE = 1 | ...
+
+# Run the Go Gateway (in another terminal)
+./tools/bazelisk/bazelisk build //gateway_go/cmd/gateway:gateway
+./bazel-bin/gateway_go/cmd/gateway/gateway_/gateway
+# aegis-gateway: listening on :8080
+#   version=0.1.0-phase1-s5
+$ curl -s http://localhost:8080/healthz
+# {"ready":true,"version":"0.1.0-phase1-s5"}
 ```
 
 The engine responds to `aegis.v1.Engine.Health` with ready=true and
 service metadata, and `aegis.v1.Engine.StreamTranscribe` runs the
 full state machine per ADR-0006 / ADR-0010. Override the model path
-with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`.
+with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`. The gateway's Phase 2
+wiring will have it act as a client to the engine over gRPC and
+terminate WebRTC from the host browser.
 
-> *Last verified against `main`: 2026-04-13 (Phase 1 Session 4d).*
+> *Last verified against `main`: 2026-04-13 (Phase 1 Session 5).*
 
 ---
 

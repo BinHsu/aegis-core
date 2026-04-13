@@ -7,6 +7,7 @@
 
 load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 
 package(default_visibility = ["//visibility:public"])
@@ -45,18 +46,18 @@ cc_grpc_library(
 )
 
 # -----------------------------------------------------------------------------
-# Language bindings pending in later sessions — COMMENTED OUT until their
-# dependencies land in MODULE.bazel.
+# Go bindings — used by the Go Gateway (gateway_go/) starting Phase 2.
+# Session 5 wires the codegen but the gateway itself does not yet import
+# the bindings; building :aegis_go_proto validates that rules_go +
+# protoc-gen-go resolve cleanly against our //proto/aegis/v1:aegis_proto
+# source of truth.
 # -----------------------------------------------------------------------------
-
-# load("@rules_go//proto:def.bzl", "go_proto_library")
-#
-# go_proto_library(
-#     name = "aegis_go_proto",
-#     compilers = [
-#         "@rules_go//proto:go_proto",
-#         "@rules_go//proto:go_grpc_v2",
-#     ],
-#     importpath = "github.com/BinHsu/aegis-core/gen/go/aegis/v1",
-#     proto = ":aegis_proto",
-# )
+go_proto_library(
+    name = "aegis_go_proto",
+    compilers = [
+        "@rules_go//proto:go_proto",     # message types
+        "@rules_go//proto:go_grpc_v2",   # gRPC service stubs
+    ],
+    importpath = "github.com/BinHsu/aegis-core/gen/go/aegis/v1",
+    proto = ":aegis_proto",
+)
