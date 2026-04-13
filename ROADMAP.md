@@ -192,7 +192,9 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] Audio-namespace Kyverno / Gatekeeper policies (ADR-0005 R6): reject PVC, reject hostPath
 - [ ] Velero backup schedule explicitly excludes `aegis-audio` namespace (ADR-0005 R6)
 
-### Phase 4d: Observability Wiring
+### Phase 4d: Observability Wiring + Build Cache Decision
+
+- [ ] Pick a Bazel remote cache strategy per ADR-0014 (Option α `actions/cache` only / β BuildBuddy SaaS / γ self-hosted bazel-remote). Decision deferred to whichever of T1–T6 trigger conditions fires first; this checklist item flips to checked once the chosen ADR-0014 option is wired and the ADR is updated with the resolving commit.
 - [ ] OTLP exporter to X-Ray / Tempo in Cloud, stdout in Local (ARCH §8)
 - [ ] Custom `SpanProcessor` enforcing attribute allowlist (ADR-0005 R4)
 - [ ] Structured JSON logs via FluentBit in Cloud
