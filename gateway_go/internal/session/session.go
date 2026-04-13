@@ -20,14 +20,22 @@
 //     Session's own RWMutex; callers that need a consistent snapshot
 //     across multiple fields must use Session.WithLock.
 //
-// Phase 2 A2 scope (what this file currently implements):
+// Phase 2 A2 scope:
 //   - Registry with Create / Get / Delete.
 //   - Session struct with the subset of ADR-0004's sketch needed by
 //     CreateMeeting + EndMeeting.
 //
+// Phase 2 A5 scope (this file additionally):
+//   - Subscribe / Broadcast: per-session fan-out of *aegisv1.ViewerEvent
+//     to N subscribers. Non-blocking send: a slow subscriber is dropped-
+//     to (gap shows up as a missed sequence on the wire) rather than
+//     back-pressuring the producer. Producer is the engine StreamTranscribe
+//     consumer (lands in A4); for A5 the WebSocket and gRPC viewer
+//     handlers are the only consumers, and tests inject events via
+//     Broadcast directly.
+//
 // Deferred to A3 / A4:
 //   - HostConnection / ViewerConnection types (need Pion WebRTC).
-//   - TranscriptChan fan-out goroutine.
 //   - LastHostPing enforcement + 30s grace window (ADR-0006).
 package session
 
@@ -37,6 +45,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
 )
 
 // ErrSessionNotFound is returned by Registry.Get and Registry.Delete
@@ -75,6 +85,16 @@ type Session struct {
 	viewers      map[string]struct{}
 	lastHostPing time.Time
 	ended        bool
+	subscribers  map[*subscriber]struct{}
+}
+
+// subscriber owns one fan-out channel and a counter of dropped events
+// (events the channel was too full to accept). Tests inspect the
+// counter to confirm slow-consumer behavior; the WS / gRPC handlers
+// surface the gap implicitly via the proto's `sequence` field gap.
+type subscriber struct {
+	ch      chan *aegisv1.ViewerEvent
+	dropped uint64
 }
 
 // NewID returns a URL-safe base64 encoding of 16 crypto-random bytes
@@ -145,14 +165,24 @@ func (s *Session) LastHostPing() time.Time {
 	return s.lastHostPing
 }
 
-// MarkEnded flips the session into the terminal state. Subsequent
-// Gateway RPCs against this session return FAILED_PRECONDITION.
+// MarkEnded flips the session into the terminal state and closes
+// every subscriber channel so blocked recv loops wake up and emit
+// their terminal ENDED frame. Subsequent Gateway RPCs against this
+// session return FAILED_PRECONDITION.
+//
 // Called by Registry.Delete before removal, and by the grace-window
 // watchdog (A4) when the host grace window expires.
 func (s *Session) MarkEnded() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
 	s.ended = true
+	for sub := range s.subscribers {
+		close(sub.ch)
+	}
+	s.subscribers = nil
 }
 
 // Ended reports whether the session has been terminated.
@@ -160,6 +190,89 @@ func (s *Session) Ended() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.ended
+}
+
+// Subscribe registers a fan-out channel for the lifetime of the
+// returned unsubscribe func. The channel is buffered to `buffer`
+// events; if the consumer is too slow Broadcast drops events for
+// this subscriber rather than back-pressuring the producer
+// (a slow viewer must not stall the engine ingest goroutine — see
+// ADR-0010 ResourceBudget rationale).
+//
+// If the session has already ended, Subscribe returns a closed
+// channel and a no-op unsubscribe. The caller's recv loop will
+// observe the close on the next iteration.
+//
+// Unsubscribe is idempotent. Callers MUST call it (typically via
+// `defer`) so the subscriber map does not leak across long-running
+// sessions.
+func (s *Session) Subscribe(buffer int) (<-chan *aegisv1.ViewerEvent, func()) {
+	if buffer <= 0 {
+		buffer = 32 // ADR-0004 sketch: "bounded channel (capacity ~32)"
+	}
+	sub := &subscriber{ch: make(chan *aegisv1.ViewerEvent, buffer)}
+
+	s.mu.Lock()
+	if s.ended {
+		s.mu.Unlock()
+		close(sub.ch)
+		return sub.ch, func() {}
+	}
+	s.subscribers[sub] = struct{}{}
+	s.mu.Unlock()
+
+	var once sync.Once
+	unsub := func() {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.subscribers == nil {
+				// MarkEnded already closed this channel.
+				return
+			}
+			if _, ok := s.subscribers[sub]; !ok {
+				return
+			}
+			delete(s.subscribers, sub)
+			close(sub.ch)
+		})
+	}
+	return sub.ch, unsub
+}
+
+// Broadcast non-blocking sends ev to every current subscriber. A
+// subscriber whose buffer is full has the event dropped (its `dropped`
+// counter is incremented). On a session that has already ended,
+// Broadcast is a no-op.
+//
+// Returns the number of subscribers that received the event and the
+// number that dropped it. Useful for tests and operational metrics.
+func (s *Session) Broadcast(ev *aegisv1.ViewerEvent) (delivered, dropped int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ended {
+		return 0, 0
+	}
+	for sub := range s.subscribers {
+		select {
+		case sub.ch <- ev:
+			delivered++
+		default:
+			sub.dropped++
+			dropped++
+		}
+	}
+	return delivered, dropped
+}
+
+// SubscriberCount reports how many fan-out subscribers are currently
+// registered. Distinct from ViewerCount, which counts authenticated
+// connection ids — Subscribe is the underlying primitive that the
+// gRPC handler and the WebSocket handler both use.
+func (s *Session) SubscriberCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.subscribers)
 }
 
 // Config captures the create-time inputs for a new session — a direct
@@ -236,6 +349,7 @@ func (r *Registry) createWithID(id string, cfg Config) (*Session, error) {
 		AllowedViewerAccountIDs: append([]string(nil), cfg.AllowedViewerAccountIDs...),
 		viewers:                 make(map[string]struct{}),
 		lastHostPing:            now,
+		subscribers:             make(map[*subscriber]struct{}),
 	}
 
 	r.mu.Lock()

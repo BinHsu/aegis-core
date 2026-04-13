@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ws",
+    srcs = ["ws.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/ws",
+    visibility = ["//gateway_go:__subpackages__"],
+    deps = [
+        "//proto/aegis/v1:aegis_go_proto",
+        "//gateway_go/internal/session",
+        "//gateway_go/internal/token",
+        "@com_github_coder_websocket//:websocket",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "ws_test",
+    size = "small",
+    srcs = ["ws_test.go"],
+    embed = [":ws"],
+    deps = [
+        "//proto/aegis/v1:aegis_go_proto",
+        "//gateway_go/internal/session",
+        "//gateway_go/internal/token",
+        "@com_github_coder_websocket//:websocket",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

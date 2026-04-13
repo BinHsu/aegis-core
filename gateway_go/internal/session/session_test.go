@@ -3,7 +3,24 @@ package session
 import (
 	"testing"
 	"time"
+
+	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
 )
+
+// makeStateEvent crafts a minimal ViewerEvent for fan-out tests.
+// Production code uses real transcript / hint payloads; for unit
+// tests the type of payload doesn't matter — only the routing does.
+func makeStateEvent(seq uint64, reason string) *aegisv1.ViewerEvent {
+	return &aegisv1.ViewerEvent{
+		Sequence: seq,
+		Payload: &aegisv1.ViewerEvent_StateChange{
+			StateChange: &aegisv1.MeetingStateChange{
+				State:  aegisv1.MeetingState_MEETING_STATE_ACTIVE,
+				Reason: reason,
+			},
+		},
+	}
+}
 
 func TestNewIDIsUnique(t *testing.T) {
 	seen := make(map[string]struct{}, 1000)
@@ -133,6 +150,132 @@ func TestSessionHostTracking(t *testing.T) {
 	sess.TouchHost(t0)
 	if got := sess.LastHostPing(); !got.Equal(t0) {
 		t.Fatalf("LastHostPing: got %v, want %v", got, t0)
+	}
+}
+
+func TestSessionBroadcastReachesAllSubscribers(t *testing.T) {
+	reg := NewRegistry()
+	sess, err := reg.Create(Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	chA, unsubA := sess.Subscribe(8)
+	defer unsubA()
+	chB, unsubB := sess.Subscribe(8)
+	defer unsubB()
+
+	if got := sess.SubscriberCount(); got != 2 {
+		t.Fatalf("SubscriberCount: got %d, want 2", got)
+	}
+
+	delivered, dropped := sess.Broadcast(makeStateEvent(1, "hello"))
+	if delivered != 2 || dropped != 0 {
+		t.Fatalf("Broadcast: delivered=%d dropped=%d, want 2/0", delivered, dropped)
+	}
+
+	for name, ch := range map[string]<-chan *aegisv1.ViewerEvent{"A": chA, "B": chB} {
+		select {
+		case ev := <-ch:
+			if ev.GetSequence() != 1 {
+				t.Errorf("%s: sequence=%d, want 1", name, ev.GetSequence())
+			}
+			if ev.GetStateChange().GetReason() != "hello" {
+				t.Errorf("%s: reason=%q, want hello", name, ev.GetStateChange().GetReason())
+			}
+		case <-time.After(time.Second):
+			t.Errorf("%s: timed out waiting for fan-out event", name)
+		}
+	}
+}
+
+func TestSessionBroadcastDropsOnSlowSubscriber(t *testing.T) {
+	reg := NewRegistry()
+	sess, err := reg.Create(Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Buffer of 1 — second Broadcast must drop because nobody read.
+	_, unsub := sess.Subscribe(1)
+	defer unsub()
+
+	if d, dr := sess.Broadcast(makeStateEvent(1, "first")); d != 1 || dr != 0 {
+		t.Fatalf("first Broadcast: %d/%d, want 1/0", d, dr)
+	}
+	if d, dr := sess.Broadcast(makeStateEvent(2, "second")); d != 0 || dr != 1 {
+		t.Fatalf("second Broadcast: %d/%d, want 0/1 (slow consumer drop)", d, dr)
+	}
+}
+
+func TestSessionUnsubscribeIsIdempotent(t *testing.T) {
+	reg := NewRegistry()
+	sess, err := reg.Create(Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	ch, unsub := sess.Subscribe(4)
+	if got := sess.SubscriberCount(); got != 1 {
+		t.Fatalf("after Subscribe: %d, want 1", got)
+	}
+	unsub()
+	unsub() // second call must not panic on close-of-closed-channel
+	if got := sess.SubscriberCount(); got != 0 {
+		t.Fatalf("after unsub: %d, want 0", got)
+	}
+	if _, ok := <-ch; ok {
+		t.Fatalf("channel should be closed after unsubscribe")
+	}
+}
+
+func TestSessionMarkEndedClosesAllSubscribers(t *testing.T) {
+	reg := NewRegistry()
+	sess, err := reg.Create(Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	chA, unsubA := sess.Subscribe(4)
+	defer unsubA()
+	chB, unsubB := sess.Subscribe(4)
+	defer unsubB()
+
+	sess.MarkEnded()
+
+	for name, ch := range map[string]<-chan *aegisv1.ViewerEvent{"A": chA, "B": chB} {
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Errorf("%s: expected closed channel, got open recv", name)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("%s: channel not closed by MarkEnded", name)
+		}
+	}
+
+	// Broadcast on ended session is a no-op.
+	if d, dr := sess.Broadcast(makeStateEvent(1, "after-end")); d != 0 || dr != 0 {
+		t.Fatalf("post-end Broadcast: %d/%d, want 0/0", d, dr)
+	}
+
+	// Second MarkEnded must be safe.
+	sess.MarkEnded()
+}
+
+func TestSubscribeOnEndedSessionReturnsClosedChannel(t *testing.T) {
+	reg := NewRegistry()
+	sess, err := reg.Create(Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sess.MarkEnded()
+
+	ch, unsub := sess.Subscribe(4)
+	defer unsub()
+
+	if _, ok := <-ch; ok {
+		t.Fatalf("expected closed channel for Subscribe on ended session")
 	}
 }
 

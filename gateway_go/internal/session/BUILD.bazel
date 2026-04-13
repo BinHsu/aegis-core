@@ -5,6 +5,9 @@ go_library(
     srcs = ["session.go"],
     importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/session",
     visibility = ["//gateway_go:__subpackages__"],
+    deps = [
+        "//proto/aegis/v1:aegis_go_proto",
+    ],
 )
 
 go_test(
@@ -12,4 +15,7 @@ go_test(
     size = "small",
     srcs = ["session_test.go"],
     embed = [":session"],
+    deps = [
+        "//proto/aegis/v1:aegis_go_proto",
+    ],
 )

@@ -100,12 +100,12 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Proto codegen distribution strategy (ADR-0013): checked-in `.pb.go` under `gateway_go/gen/go/` via `buf generate`; Bazel still authoritative; CI drift check via `proto_gen.sh + git diff --exit-code`
 - [ ] Go GW: implement Pion WebRTC to accept browser UDP frames
 - [ ] Go GW: implement `gRPC-Web` multiplexing for cloud-mode viewer transport
-- [ ] Go GW: implement **WebSocket + Protobuf** transport for local-mode viewer (ADR-0007)
-- [x] Go GW: implement session registry (ADR-0004 `Session` struct) — in-memory, per-replica (Phase 2 A2)
+- [x] Go GW: implement **WebSocket + Protobuf** transport for local-mode viewer (ADR-0007) — Phase 2 A5 (`/ws/viewer?session_id=&token=`, binary `aegis.v1.ViewerEvent` frames, `Sec-WebSocket-Protocol: aegis.v1.transcript`, shares Registry+Issuer with the gRPC Gateway)
+- [x] Go GW: implement session registry (ADR-0004 `Session` struct) — in-memory, per-replica (Phase 2 A2). Subscribe/Broadcast fan-out added in Phase 2 A5 (per-subscription sequence, slow-consumer drop policy).
 - [ ] Go GW: implement `ControlEvent{PAUSE|RESUME|END_STREAM}` generation on WebRTC state transitions (ADR-0006)
 - [ ] Go GW: configure keepalive — 30s Time / 10s Timeout for both gRPC to C++ and gRPC-Web to viewers (ADR-0006)
 - [x] Go GW: implement JWT session-token issuance and verification (ADR-0001) — Phase 2 A2 (HS256, process-scoped key, alg=none rejected, cross-session replay rejected)
-- [x] Go GW: implement `aegis.v1.Gateway` server: CreateMeeting + EndMeeting full; JoinAsViewer stub-stream (kickoff/ENDED only, fan-out in A4); NegotiateWebRTC UNIMPLEMENTED until A3 (Phase 2 A2)
+- [x] Go GW: implement `aegis.v1.Gateway` server: CreateMeeting + EndMeeting full; JoinAsViewer real fan-out via `Session.Subscribe` (Phase 2 A5, replacing A2 stub); NegotiateWebRTC UNIMPLEMENTED until A3
 - [ ] Go GW: implement graceful shutdown with `terminationGracePeriodSeconds: 14400` matching `session_max_lifetime` (ADR-0006)
 
 ### Dual-Mode Wiring

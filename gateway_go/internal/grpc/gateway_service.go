@@ -220,13 +220,20 @@ func (s *GatewayService) NegotiateWebRTC(
 }
 
 // JoinAsViewer validates the token, registers the viewer in the
-// session's viewer set, and streams events until the peer disconnects
-// or the session ends.
+// session's viewer set, subscribes to the session fan-out, and
+// streams every ViewerEvent the producer broadcasts until the peer
+// disconnects or the session ends.
 //
-// A2 only emits the initial ACTIVE state_change + a terminal ENDED
-// state_change. Transcript/hint fan-out is A4 — wiring it requires
-// the engine StreamTranscribe pipe, which needs the Pion audio source
-// from A3.
+// Sequence numbers are per-subscription (proto comment on
+// ViewerEvent.sequence): the kickoff ACTIVE event is seq=1, then
+// each forwarded broadcast event is renumbered seq=2, 3, ... A
+// dropped event on the fan-out channel surfaces as a gap in
+// per-subscription sequence numbers.
+//
+// A4 wires the actual producer (engine StreamTranscribe consumer).
+// For A5 the producer is the session.Broadcast call site — tests
+// drive it directly; the WebSocket handler in internal/ws/ uses
+// the same Subscribe primitive.
 func (s *GatewayService) JoinAsViewer(
 	req *aegisv1.JoinAsViewerRequest,
 	stream aegisv1.Gateway_JoinAsViewerServer,
@@ -263,10 +270,14 @@ func (s *GatewayService) JoinAsViewer(
 	sess.AddViewer(connID)
 	defer sess.RemoveViewer(connID)
 
-	// Kickoff event so clients know the stream is live. Sequence
-	// numbers start at 1 per proto comment.
+	// Subscribe BEFORE sending the kickoff so we don't miss events
+	// produced concurrently with our join handshake.
+	events, unsubscribe := sess.Subscribe(0) // 0 = ADR-0004 default capacity
+	defer unsubscribe()
+
+	var seq uint64 = 1
 	kickoff := &aegisv1.ViewerEvent{
-		Sequence:  1,
+		Sequence:  seq,
 		EmittedAt: timestamppb.New(time.Now()),
 		Payload: &aegisv1.ViewerEvent_StateChange{
 			StateChange: &aegisv1.MeetingStateChange{
@@ -279,27 +290,44 @@ func (s *GatewayService) JoinAsViewer(
 		return err
 	}
 
-	// Block until either the client disconnects or the session ends.
-	// A4 replaces this with a real fan-out select over the session's
-	// transcript channel.
-	<-stream.Context().Done()
-
-	// Emit a final ENDED event only if the session ended while we
-	// were attached; otherwise the client hung up and there's nobody
-	// to send to.
-	if sess.Ended() {
-		final := &aegisv1.ViewerEvent{
-			Sequence:  2,
-			EmittedAt: timestamppb.New(time.Now()),
-			Payload: &aegisv1.ViewerEvent_StateChange{
-				StateChange: &aegisv1.MeetingStateChange{
-					State:  aegisv1.MeetingState_MEETING_STATE_ENDED,
-					Reason: "session terminated",
-				},
-			},
+	// Forward broadcast events until the channel closes (session
+	// ended) or the client context cancels (client disconnected).
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				// Channel closed by MarkEnded — emit terminal ENDED.
+				seq++
+				final := &aegisv1.ViewerEvent{
+					Sequence:  seq,
+					EmittedAt: timestamppb.New(time.Now()),
+					Payload: &aegisv1.ViewerEvent_StateChange{
+						StateChange: &aegisv1.MeetingStateChange{
+							State:  aegisv1.MeetingState_MEETING_STATE_ENDED,
+							Reason: "session terminated",
+						},
+					},
+				}
+				_ = stream.Send(final) // best-effort
+				return nil
+			}
+			seq++
+			// Renumber per-subscription (proto comment on
+			// ViewerEvent.sequence: "within a single subscription").
+			// We build a fresh wrapper so we don't mutate the
+			// shared *ViewerEvent that other subscribers also see;
+			// the inner payload pointer is reused (read-only at
+			// this point in the lifecycle).
+			out := &aegisv1.ViewerEvent{
+				Sequence:  seq,
+				EmittedAt: ev.GetEmittedAt(),
+				Payload:   ev.Payload,
+			}
+			if err := stream.Send(out); err != nil {
+				return err
+			}
+		case <-stream.Context().Done():
+			return nil
 		}
-		_ = stream.Send(final) // best-effort; peer may already be gone.
 	}
-
-	return nil
 }

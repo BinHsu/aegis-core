@@ -275,6 +275,106 @@ func TestJoinAsViewerRejectsMissingToken(t *testing.T) {
 	}
 }
 
+func TestJoinAsViewerDeliversBroadcastThenEnd(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	client, cleanup := setupServer(t, svc)
+	defer cleanup()
+
+	created, err := client.CreateMeeting(context.Background(), &aegisv1.CreateMeetingRequest{
+		RagId: "corpus-42",
+	})
+	if err != nil {
+		t.Fatalf("CreateMeeting: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := client.JoinAsViewer(ctx, &aegisv1.JoinAsViewerRequest{
+		SessionId:   created.GetSessionId(),
+		ViewerToken: created.GetViewerJoinToken(),
+	})
+	if err != nil {
+		t.Fatalf("JoinAsViewer dial: %v", err)
+	}
+
+	// Kickoff event: MEETING_STATE_ACTIVE seq=1.
+	ev, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv kickoff: %v", err)
+	}
+	if got := ev.GetSequence(); got != 1 {
+		t.Fatalf("kickoff sequence: got %d, want 1", got)
+	}
+	if got := ev.GetStateChange().GetState(); got != aegisv1.MeetingState_MEETING_STATE_ACTIVE {
+		t.Fatalf("kickoff state: got %v, want ACTIVE", got)
+	}
+
+	// Wait for the server-side Subscribe to have registered. We can
+	// either poll SubscriberCount or just give it a moment.
+	sess, err := svc.registry.Get(created.GetSessionId())
+	if err != nil {
+		t.Fatalf("registry.Get: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for sess.SubscriberCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := sess.SubscriberCount(); got != 1 {
+		t.Fatalf("SubscriberCount after Subscribe: got %d, want 1", got)
+	}
+
+	// Broadcast a transcript event — the gRPC handler must forward it.
+	delivered, dropped := sess.Broadcast(&aegisv1.ViewerEvent{
+		Payload: &aegisv1.ViewerEvent_Transcript{
+			Transcript: &aegisv1.TranscriptSegment{
+				SegmentId:    1,
+				SpeakerLabel: "Speaker_0",
+				Text:         "hello world",
+				IsFinal:      true,
+			},
+		},
+	})
+	if delivered != 1 || dropped != 0 {
+		t.Fatalf("Broadcast: %d/%d, want 1/0", delivered, dropped)
+	}
+
+	ev, err = stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv broadcast: %v", err)
+	}
+	if got := ev.GetSequence(); got != 2 {
+		t.Fatalf("broadcast sequence: got %d, want 2 (per-subscription numbering)", got)
+	}
+	tx := ev.GetTranscript()
+	if tx == nil {
+		t.Fatalf("expected transcript payload, got %+v", ev)
+	}
+	if tx.GetText() != "hello world" {
+		t.Fatalf("transcript text: got %q", tx.GetText())
+	}
+
+	// End the meeting → handler must emit terminal ENDED then close.
+	if _, err := client.EndMeeting(ctx, &aegisv1.EndMeetingRequest{
+		SessionId: created.GetSessionId(),
+	}); err != nil {
+		t.Fatalf("EndMeeting: %v", err)
+	}
+
+	ev, err = stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv ENDED: %v", err)
+	}
+	if got := ev.GetStateChange().GetState(); got != aegisv1.MeetingState_MEETING_STATE_ENDED {
+		t.Fatalf("terminal state: got %v, want ENDED", got)
+	}
+
+	// After ENDED, the stream closes (io.EOF or other close error).
+	if _, err := stream.Recv(); err == nil {
+		t.Fatalf("expected stream close after ENDED, got more events")
+	}
+}
+
 func TestJoinAsViewerDeliversKickoffThenEnd(t *testing.T) {
 	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
 	client, cleanup := setupServer(t, svc)

@@ -1,18 +1,25 @@
 // Package main is the entrypoint for the Aegis Core Go Gateway.
 //
-// Phase 2 A2 turns this process into a dual-server: a gRPC Gateway
-// on :9090 implementing aegis.v1.Gateway, plus the pre-existing
-// HTTP /healthz probe on :8080. Both use the same engine client so
-// CreateMeeting and /healthz see a consistent Health readout.
+// As of Phase 2 A5, this binary runs three concurrent servers:
+//
+//   - HTTP on :8080 — /healthz probe (HTTP/1.1, no TLS) and the
+//     /ws/viewer Local-mode WebSocket transport for viewer events
+//     (ADR-0007).
+//   - gRPC on :9090 — aegis.v1.Gateway service for Cloud-mode
+//     viewers (gRPC-Web in front of this) plus the host's
+//     CreateMeeting / EndMeeting / NegotiateWebRTC RPCs.
+//
+// All three share one Engine client (the C++ engine on :50051), one
+// Session registry, and one JWT issuer — so a token issued by
+// CreateMeeting is accepted by JoinAsViewer (gRPC) and /ws/viewer
+// (WebSocket) interchangeably.
 //
 // Future phases:
 //
 //	Phase 2 A3 : Pion WebRTC ingest — NegotiateWebRTC flips from
 //	             UNIMPLEMENTED to a real SDP exchange.
 //	Phase 2 A4 : Full pipeline — host audio → WebRTC → PCM → engine
-//	             StreamTranscribe → fan-out to viewers.
-//	Phase 2 A5 : Cognito JWT middleware + WebSocket viewer transport
-//	             for Local mode (ADR-0007).
+//	             StreamTranscribe → session.Broadcast() to viewers.
 //
 // The binary is built via Bazel:
 //
@@ -38,13 +45,14 @@ import (
 	gatewaygrpc "github.com/BinHsu/aegis-core/gateway_go/internal/grpc"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/ws"
 )
 
 const (
 	defaultListenAddr = ":8080"
 	defaultGRPCAddr   = ":9090"
 	defaultEngineAddr = "localhost:50051"
-	version           = "0.1.0-phase2-a2"
+	version           = "0.1.0-phase2-a5"
 	engineRPCTimeout  = 2 * time.Second
 )
 
@@ -95,11 +103,17 @@ func main() {
 		log.Fatalf("aegis-gateway: gatewaygrpc.New: %v", err)
 	}
 
-	// HTTP server for /healthz. Kept alongside the gRPC server so
-	// Kubernetes liveness probes (which want HTTP today) don't have
-	// to speak gRPC.
+	// HTTP server for /healthz and the Local-mode /ws/viewer
+	// transport (ADR-0007). The WebSocket endpoint shares the
+	// registry + issuer with the gRPC Gateway so a single token
+	// works on either transport.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", makeHealthHandler(engine, engineAddr, registry))
+	mux.HandleFunc("/ws/viewer", ws.Handler(ws.Config{
+		Registry: registry,
+		Issuer:   issuer,
+		Logger:   log.Default(),
+	}))
 	httpSrv := &http.Server{
 		Addr:              listenAddr,
 		Handler:           mux,
@@ -122,7 +136,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("aegis-gateway: HTTP  listening on %s", listenAddr)
+		log.Printf("aegis-gateway: HTTP  listening on %s (/healthz, /ws/viewer)", listenAddr)
 		log.Printf("  engine_addr=%s", engineAddr)
 		log.Printf("  version=%s", version)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
