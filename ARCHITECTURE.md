@@ -8,14 +8,14 @@ This document defines the core architecture, technical stack, and design decisio
 ### 1. System Topology & Tech Stack
 The architecture is designed as a **Microservice + BFF (Backend For Frontend)** topology, optimized for EKS deployment and ultra-low latency.
 
-*   **Core Engine (C++)**: 
+*   **Core Engine (C++)**:
     - pure backend service handling inference.
     - Uses `whisper.cpp` / ML accelerators (Metal/CUDA).
     - Exposes a raw native **gRPC** server.
 *   **API Gateway / BFF (Go)**:
-    - Built with Go. 
+    - Built with Go.
     - Handles external WebRTC (via `Pion`) and terminates network logic.
-    - Translates gRPC-Web from frontend into native gRPC for C++. 
+    - Translates gRPC-Web from frontend into native gRPC for C++.
 *   **Web Client / App (React + Tauri)**:
     - Frontend built with React.
     - Uses `gRPC-Web` to communicate with the Go GW strong-typed APIs.
@@ -23,6 +23,87 @@ The architecture is designed as a **Microservice + BFF (Backend For Frontend)** 
 *   **Build System (Bazel Monorepo)**:
     - Entire project exists in a single Bazel Monorepo.
     - `.proto` files are stored at the root, generating strong-typed SDKs for C++, Go, and TS simultaneously.
+
+#### 1.1 System Diagram (Cloud Mode)
+
+```mermaid
+flowchart LR
+    Staff["🎙️ Staff Host<br/>(Chrome / Edge)<br/>getUserMedia + getDisplayMedia<br/>+ Web Audio mixing"]
+    Boss["👔 Viewer<br/>(boss phone / laptop)"]
+    Other["👥 Other viewers"]
+
+    Staff -->|"WebRTC audio<br/>(single mixed track)"| LB["ALB / NGINX Ingress<br/>(session-affinity cookie)"]
+    LB --> GW
+
+    subgraph EKSNamespace["EKS namespace: aegis-audio (Kyverno: no PVC, no hostPath)"]
+        direction TB
+        GW["Go Gateway pod<br/>• Pion WebRTC termination<br/>• JWT viewer-token validation<br/>• Per-session fan-out channel<br/>• ControlEvent PAUSE/RESUME/END"]
+        ENG["C++ Engine pod<br/>• whisper.cpp large-v3-turbo Q4<br/>• anonymous speaker diarization<br/>• question detection<br/>• RAG query (vector DB client)<br/>• ResourceBudget fail-fast"]
+        GW <-->|"mTLS gRPC bidi<br/>IngestMessage / EgressMessage"| ENG
+    end
+
+    GW -->|"gRPC-Web<br/>ViewerEvent stream"| Boss
+    GW -->|"gRPC-Web"| Other
+
+    subgraph ExternalServices["External Services"]
+        direction TB
+        Cognito["AWS Cognito<br/>(host JWT)"]
+        VectorDB[("Vector DB<br/>Qdrant / Milvus / OpenSearch<br/>per-tenant KMS CMK")]
+        DDB[("DynamoDB<br/>tenant metadata<br/>consent ledger<br/>per-tenant KMS CMK")]
+        OTLP["OpenTelemetry<br/>→ X-Ray / Tempo<br/>(attribute allowlist)"]
+    end
+
+    Staff -.->|"host auth"| Cognito
+    GW -.-> Cognito
+    GW -.->|"tenant / consent"| DDB
+    ENG -.->|"RAG query"| VectorDB
+    GW -.-> OTLP
+    ENG -.-> OTLP
+
+    Models[("📦 /models<br/>whisper · diarization · embeddings<br/>SHA-256 verified on mmap")]
+    ENG -.-> Models
+```
+
+#### 1.2 System Diagram (Local Mode)
+
+```mermaid
+flowchart LR
+    StaffLocal["🎙️ Staff Host<br/>(same laptop)"]
+    BossLAN["👔 Boss phone / tablet<br/>(scans QR on same Wi-Fi)"]
+
+    subgraph Laptop["Staff Laptop (single process tree)"]
+        direction TB
+        GWL["Go Gateway<br/>(bind 0.0.0.0 for LAN)<br/>• Pion WebRTC<br/>• WebSocket + Protobuf for LAN viewers<br/>• Dummy local auth"]
+        ENGL["C++ Engine<br/>(child process, exec.Command)<br/>• same inference stack as Cloud<br/>• hnswlib in-process RAG<br/>• mlockall best-effort"]
+        GWL <-->|"gRPC bidi (loopback)"| ENGL
+    end
+
+    StaffLocal -->|"WebRTC (localhost)"| GWL
+    GWL -->|"WebSocket + Protobuf<br/>(plain ws:// — LAN IP has no TLS)"| BossLAN
+
+    LocalRAG[("📚 Local RAG<br/>precompiled .bin + hnswlib")]
+    LocalModels[("📦 ./models<br/>same manifest.json as Cloud")]
+    ENGL -.-> LocalRAG
+    ENGL -.-> LocalModels
+```
+
+Notes on the diagrams:
+
+- **No persistent meeting content on the server**. In both modes the
+  Go Gateway holds only a session registry + a bounded fan-out
+  channel. Transcripts live on the host device only. See §9.1
+  Layered Privacy Model and
+  [ADR-0004](docs/adr/0004-stateless-broadcast-relay.md).
+- **Single-channel diarization** means we capture one mixed audio
+  track. This decouples capture mechanics from speaker identification
+  and unlocks pure-web MVP capture via `getUserMedia` +
+  `getDisplayMedia` ([ADR-0003](docs/adr/0003-host-audio-capture-strategy.md)).
+- **Dotted arrows are optional dependencies**; solid arrows are the
+  hot data path.
+- Status of each component is tracked in [ROADMAP.md](ROADMAP.md).
+  Phase 1 Session 3 has the C++ Engine pod skeleton running; Go
+  Gateway, frontend, and cloud wiring are Phase 1 Session 5 and
+  beyond.
 
 ### 2. Microservice Boundaries (EKS Deployment)
 *   **Compute Pods (Node Affinities)**: C++ engine runs on hardware-accelerated nodes (e.g., AWS g4dn for NVIDIA CUDA). Local mode uses the host machine's accelerator (Apple Silicon Metal, or CPU fallback).
