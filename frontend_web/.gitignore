@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
