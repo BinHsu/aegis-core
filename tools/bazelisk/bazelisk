@@ -24,7 +24,28 @@ BAZELISK_VERSION="${AEGIS_BAZELISK_VERSION:-v1.28.1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BAZELISK_DIR="$REPO_ROOT/.bazelisk"
-BAZEL_CACHE="$REPO_ROOT/.bazel_cache"
+
+# --- Bazel output_user_root placement ---
+#
+# Normally we keep the cache in-repo per CLAUDE.md Rule 6 (strict
+# directory confinement). However, Bazel's DarwinSandboxedSpawnRunner
+# crashes when --output_user_root contains a space (the error manifests
+# as "DottedVersion$InvalidDottedVersionException ... got 'None'", which
+# is really a path-quoting bug in sandbox setup). A repo cloned to
+# e.g. "/Volumes/Samsung PSSD T7 Media/aegis-core" hits this.
+#
+# Policy: if the repo path contains a space, transparently route the
+# cache to /tmp/aegis-bazel-<hash>. This is a documented Rule 6
+# exception — the cache is still local (not ~/.cache/*), ephemeral
+# across OS-level /tmp cleanups, and tied to the repo by the hash so
+# parallel clones don't collide.
+if [[ "$REPO_ROOT" == *" "* ]]; then
+  REPO_HASH="$(printf '%s' "$REPO_ROOT" | shasum -a 256 | cut -c1-12)"
+  BAZEL_CACHE="/tmp/aegis-bazel-${REPO_HASH}"
+  echo "[bazelisk] repo path contains spaces; using cache at $BAZEL_CACHE" >&2
+else
+  BAZEL_CACHE="$REPO_ROOT/.bazel_cache"
+fi
 
 # --- Detect platform for the correct bazelisk binary ---
 case "$(uname -s)-$(uname -m)" in

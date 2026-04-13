@@ -1,25 +1,19 @@
 # Bazel build file for the aegis.v1 proto package.
 #
-# Session 1 scope (Phase 1 Task 1): proto_library target only. This
-# is the language-neutral source of truth for downstream codegen.
-#
-# Session 2+ will add:
-#   - cc_proto_library / cc_grpc_library  (needs grpc + rules_cc)
-#   - go_proto_library                    (needs rules_go + gazelle)
-#   - TypeScript bindings                 (in frontend_web/, Phase 3)
-#
-# Each is deferred because cold-building grpc-cpp is 5-15 min (ADR-0009)
-# and we don't need those bindings until the engine / gateway / frontend
-# packages actually land.
+# Sessions 1-2 (done): proto_library + cc_proto_library + cc_grpc_library
+# Session 3+ (pending):
+#   - go_proto_library  (needs rules_go + gazelle)         [Phase 2]
+#   - TypeScript bindings (in frontend_web/, Phase 3)
 
+load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 
 package(default_visibility = ["//visibility:public"])
 
 # -----------------------------------------------------------------------------
 # Source proto library — the single source of truth. All language bindings
-# (cc_proto_library, go_proto_library, ts_proto_library, ...) will be derived
-# from this target in later sessions.
+# below are derived from this target.
 # -----------------------------------------------------------------------------
 proto_library(
     name = "aegis_proto",
@@ -34,25 +28,28 @@ proto_library(
 )
 
 # -----------------------------------------------------------------------------
-# Language bindings — COMMENTED OUT until their dependencies land in
-# MODULE.bazel (see MODULE.bazel "Phase 1 Session 2+ dependencies" block).
+# C++ bindings — used by the C++ engine (engine_cpp/) per ADR-0009.
+#   - cc_proto_library:  message types only (no RPC stubs)
+#   - cc_grpc_library:   RPC service stubs (adds grpc++ dependency)
+# -----------------------------------------------------------------------------
+cc_proto_library(
+    name = "aegis_cc_proto",
+    deps = [":aegis_proto"],
+)
+
+cc_grpc_library(
+    name = "aegis_cc_grpc",
+    srcs = [":aegis_proto"],
+    grpc_only = True,
+    deps = [":aegis_cc_proto"],
+)
+
+# -----------------------------------------------------------------------------
+# Language bindings pending in later sessions — COMMENTED OUT until their
+# dependencies land in MODULE.bazel.
 # -----------------------------------------------------------------------------
 
-# load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
-# load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
 # load("@rules_go//proto:def.bzl", "go_proto_library")
-#
-# cc_proto_library(
-#     name = "aegis_cc_proto",
-#     deps = [":aegis_proto"],
-# )
-#
-# cc_grpc_library(
-#     name = "aegis_cc_grpc",
-#     srcs = [":aegis_proto"],
-#     grpc_only = True,
-#     deps = [":aegis_cc_proto"],
-# )
 #
 # go_proto_library(
 #     name = "aegis_go_proto",

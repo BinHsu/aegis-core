@@ -26,20 +26,31 @@ bazel_dep(name = "rules_proto", version = "7.0.2")
 bazel_dep(name = "protobuf", version = "28.2", repo_name = "com_google_protobuf")
 
 # -----------------------------------------------------------------------------
-# Phase 1 Session 2+ dependencies (added as each language comes online):
+# C++ toolchain & gRPC — ADR-0009 Sub-decision 2 (grpc-cpp via bzlmod).
+# Adds cc_proto_library and cc_grpc_library codegen. Cold build of
+# grpc transitively pulls BoringSSL, Abseil, upb, c-ares → 5-15 min
+# on first build per ADR-0009.
+# -----------------------------------------------------------------------------
+bazel_dep(name = "rules_cc", version = "0.0.17")
+bazel_dep(name = "grpc", version = "1.71.2", repo_name = "com_github_grpc_grpc")
+
+# apple_support provides the host_xcodes target that grpc's universal_binary
+# rules (and Bazel 7.4.1 C++ actions on macOS) implicitly depend on. Required
+# whether or not full Xcode is installed — on CLT-only machines, apple_support's
+# xcode_configuration gracefully degrades to the Command Line Tools.
+bazel_dep(name = "apple_support", version = "1.21.0", repo_name = "build_bazel_apple_support")
+
+# -----------------------------------------------------------------------------
+# Phase 1 Session 3+ dependencies (added as each component comes online):
 #
-#   bazel_dep(name = "grpc",           version = "1.66.0", repo_name = "com_github_grpc_grpc")  # ADR-0009
-#   bazel_dep(name = "rules_go",       version = "0.50.1")                                      # Phase 2
-#   bazel_dep(name = "gazelle",        version = "0.39.1")                                      # Phase 2
-#   bazel_dep(name = "rules_cc",       version = "0.0.17")                                      # Phase 1 engine
-#   bazel_dep(name = "rules_foreign_cc", version = "0.12.0")                                    # ADR-0009 whisper.cpp
-#   bazel_dep(name = "rules_nodejs",   version = "6.3.2")                                       # Phase 3 frontend
-#   bazel_dep(name = "rules_oci",      version = "2.0.1")                                       # Phase 4 packaging
-#   bazel_dep(name = "rules_rust",     version = "0.54.0")                                      # Phase 4 Tauri
+#   bazel_dep(name = "rules_foreign_cc", version = "0.12.0")   # ADR-0009 whisper.cpp
+#   bazel_dep(name = "rules_go",         version = "0.50.1")   # Phase 2
+#   bazel_dep(name = "gazelle",          version = "0.39.1")   # Phase 2
+#   bazel_dep(name = "rules_nodejs",     version = "6.3.2")    # Phase 3 frontend
+#   bazel_dep(name = "rules_oci",        version = "2.0.1")    # Phase 4 packaging
+#   bazel_dep(name = "rules_rust",       version = "0.54.0")   # Phase 4 Tauri
 #
 # They are commented here, not added, because:
-#   (a) Cold-building grpc-cpp takes 5-15 min (ADR-0009) — not worth
-#       it until we're actually building C++ targets.
-#   (b) Each dep adds build graph surface and possible version conflicts.
-#   (c) Session 1 scope is just proto_library validation.
+#   (a) Each dep adds build graph surface and possible version conflicts.
+#   (b) We unblock one language at a time with a verified checkpoint.
 # -----------------------------------------------------------------------------

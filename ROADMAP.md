@@ -45,7 +45,8 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 
 ### Build System
 - [x] Initialize Bazel `MODULE.bazel` (bzlmod) with `rules_proto`, `protobuf` — Session 1 baseline
-- [ ] Add `rules_cc`, `rules_foreign_cc`, `grpc` bazel_deps — Session 2+ (triggers cold grpc build)
+- [x] Add `rules_cc`, `grpc`, `apple_support` bazel_deps — Session 2 (cold grpc build 5m14s)
+- [ ] Add `rules_foreign_cc` bazel_dep — Session 4 (for whisper.cpp)
 - [ ] Add `rules_go`, `gazelle` bazel_deps — Phase 2 (Go Gateway)
 - [ ] Add `rules_nodejs`, `rules_rust`, `rules_oci` bazel_deps — Phase 3/4
 - [x] Configure `.bazelrc` with CPU default, metal/cuda/cpu configs, `try-import %workspace%/.bazelrc.user` (ADR-0009)
@@ -60,8 +61,8 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Define `IngestMessage` oneof (`PcmChunk` | `ControlEvent{PAUSE|RESUME|END_STREAM}`) per ADR-0006
 - [x] Define `CreateMeetingRequest` with reserved field for Phase 5 `allowed_viewer_account_ids` per ADR-0001
 - [x] Add `buf` configuration (`proto/buf.yaml`) and `buf breaking` check to CI
-- [x] **Validate** `proto/aegis/v1/BUILD.bazel` — `proto_library` target builds (Session 1). `cc_proto_library`, `cc_grpc_library`, `go_proto_library` are commented out pending Session 2+ deps.
-- [ ] Generate C++ bindings under Bazel (`cc_proto_library` + `cc_grpc_library`) — Session 2
+- [x] **Validate** `proto/aegis/v1/BUILD.bazel` — `proto_library` target builds (Session 1)
+- [x] Generate C++ bindings under Bazel (`cc_proto_library` + `cc_grpc_library`) — Session 2 complete
 - [ ] Generate Go bindings under Bazel (`go_proto_library`) — Phase 2
 - [ ] Generate TypeScript bindings under Bazel — Phase 3
 

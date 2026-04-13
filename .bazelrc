@@ -14,6 +14,26 @@ build --cxxopt=-Wall
 build --cxxopt=-Wextra
 build --host_cxxopt=-Wall
 build --host_cxxopt=-Wextra
+
+# --- macOS without full Xcode (Command Line Tools only) ---
+# Bazel's XcodeLocalEnvProvider (invoked by BOTH sandbox and local spawn
+# runners on Darwin) calls xcode-locator, which returns the literal
+# string "None" when no full Xcode is installed. DottedVersion then
+# crashes parsing "None".
+#
+# Fix: point Bazel explicitly at the Command Line Tools developer dir
+# AND provide a fake XCODE_VERSION_OVERRIDE so xcode-locator takes the
+# early-return path instead of trying to resolve "None".
+# (Bug: bazelbuild/bazel#17037, #21106.)
+build --action_env=DEVELOPER_DIR=/Library/Developer/CommandLineTools
+build --host_action_env=DEVELOPER_DIR=/Library/Developer/CommandLineTools
+build --repo_env=DEVELOPER_DIR=/Library/Developer/CommandLineTools
+build --xcode_version_config=@bazel_tools//tools/cpp:host_xcodes
+# Override Bazel's ancient macOS 10.11 minimum / SDK defaults. Apple Silicon
+# machines cannot build against 10.11; use a currently-available SDK.
+build --macos_minimum_os=11.0
+build --macos_sdk_version=15.4
+build --host_macos_minimum_os=11.0
 # -Werror is intentionally NOT set at the top level because it makes
 # every third-party warning a hard failure. Re-enable per target via
 # cc_library(copts=["-Werror"]) in engine_cpp/.
