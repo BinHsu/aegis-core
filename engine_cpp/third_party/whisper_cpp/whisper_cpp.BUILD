@@ -42,6 +42,19 @@ cmake(
         "GGML_BLAS": "OFF",
         "GGML_CUDA": "OFF",
         "GGML_VULKAN": "OFF",
+        # ggml enables OpenMP by default on Linux, which introduces a
+        # link dependency on libgomp (GOMP_barrier / GOMP_parallel /
+        # omp_get_thread_num / etc.). Our CI runners' default toolchain
+        # links with GCC but without -lgomp in linkopts; the Linux
+        # build then fails at engine-binary link time. macOS builds are
+        # unaffected because Apple Clang ships OpenMP support via the
+        # runtime by default.
+        #
+        # Disable OpenMP in ggml so it falls back to pthreads for
+        # threading. Small perf cost at Phase-1 (CPU-only baseline)
+        # scale; revisit when Phase 2+ load tests show threading as a
+        # bottleneck, and add -lgomp to Linux linkopts at that point.
+        "GGML_OPENMP": "OFF",
     },
     # Backend selection (metal/cuda flags) is deferred to the consumer
     # wrapper in the root module, which has access to

@@ -531,6 +531,93 @@ satisfies `go_bin_runner`'s workspace lookup.
 
 ---
 
+## Incident 07 — Linux CI link error: ggml's libgomp dependency
+
+**Date**: 2026-04-13  **Severity**: S3  **Duration**: ~20 min
+**Related commit**: Phase 1 closeout follow-up (this session)
+
+### Symptom
+
+Adding a `bazel-unit-tests` job to GitHub Actions surfaced a
+Linux-specific link failure that had been silently dormant on the
+macOS development machine:
+
+```
+/usr/bin/gcc @bazel-out/.../engine-2.params
+bazel-out/.../libggml-cpu.a(ggml-cpu.c.o):
+  ggml_compute_forward_mul_mat:    undefined reference to 'GOMP_barrier'
+  ggml_graph_compute_thread.isra.0: undefined reference to 'GOMP_barrier' (×3)
+  ggml_graph_compute._omp_fn.0:    undefined reference to 'GOMP_single_start'
+                                   undefined reference to 'omp_get_thread_num'
+                                   undefined reference to 'omp_get_num_threads'
+  ggml_graph_compute:              undefined reference to 'GOMP_parallel'
+collect2: error: ld returned 1 exit status
+```
+
+### Root cause
+
+ggml's CMake enables `GGML_OPENMP=ON` by default. On Linux with GCC,
+this introduces a hard runtime dependency on `libgomp` (the GNU
+implementation of OpenMP); the symbols above (`GOMP_*`,
+`omp_get_*`) live in `libgomp.so` and must be linked via `-lgomp`.
+
+Our consumer `cc_library` wrapper at
+`engine_cpp/third_party/whisper_cpp:whisper_cpp` carried Apple
+linkopts (`-framework Accelerate` etc.) but no Linux equivalent —
+the macOS build worked because Apple Clang ships an OpenMP runtime
+shim by default. The Linux gap was invisible until CI ran for the
+first time on `ubuntu-latest`.
+
+### Detection
+
+The new `bazel-unit-tests` CI job's failure log named the missing
+symbols verbatim. `GOMP_*` is unambiguous — Linux GCC OpenMP runtime
+— so the chain "ggml uses OpenMP → Linux needs libgomp → our
+linkopts don't include it" was 30 seconds of search.
+
+### Resolution
+
+Two clean options:
+
+| Option | Pro | Con |
+|---|---|---|
+| (A) Disable `GGML_OPENMP=OFF` in cmake cache_entries | One-line, no platform-specific linkopts | Threading falls back to pthreads — small perf loss |
+| (B) Keep OpenMP ON, add `-lgomp` in linkopts on Linux | Faster threading on Linux | Two more `select()` cases on linkopts; matrix surface grows |
+
+Picked (A) for Phase 1 — CPU-only baseline, no live performance
+SLO yet. A Phase 2+ load test will tell us whether the perf delta
+matters; if so, flip to (B) and add Linux linkopts. Inline comment
+in `whisper_cpp.BUILD` documents the trade-off and the upgrade
+path.
+
+### Prevention
+
+- The pattern "third-party static library has Linux-only runtime
+  deps that surface only at link time" is the same shape as
+  Incident #03 (`_vDSP_*` on macOS). The wrapper `cc_library` we
+  built for #03 is the right place to enumerate Linux deps too —
+  inline comment in `whisper_cpp.BUILD` flags the symmetry.
+- The `bazel-unit-tests` CI job — added in the same Phase 1
+  closeout — is the new safety net that caught this. Without it,
+  the Linux gap would have remained dormant until the first
+  contributor on a Linux dev box.
+
+### Lessons
+
+1. **macOS-only development hides Linux-only platform deps.** The
+   first CI run on Linux is a high-value drift-check moment;
+   schedule it sooner rather than later.
+2. **Third-party libs with optional accelerators (OpenMP, BLAS,
+   Metal, CUDA) often default-on per platform.** Audit the
+   defaults explicitly and turn off everything you do not link
+   for, even the "free" accelerators that look harmless.
+3. **A new CI job often catches a class of issue, not a single
+   issue.** When the `bazel-unit-tests` job lit up red, the lesson
+   was "we have no Linux validation pre-merge," not "ggml has a
+   bug." The fix is one line; the value is the new check itself.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a

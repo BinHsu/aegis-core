@@ -71,14 +71,16 @@ updates:
       - bazel
 
   # ---------------------------------------------------------------------------
-  # Docker (Dockerfile) — not present yet. Phase 4a wires Dockerfiles;
-  # this stanza will start producing PRs automatically once they land.
+  # Docker (Dockerfile) — Phase 4a adds Dockerfiles. Enabling this
+  # stanza before any Dockerfile exists produces a hard Dependabot job
+  # failure rather than a no-op (Incident #07 — see docs/incidents.md).
+  # Un-comment when Phase 4a lands real Dockerfiles.
   # ---------------------------------------------------------------------------
-  - package-ecosystem: docker
-    directory: "/"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - docker
+  # - package-ecosystem: docker
+  #   directory: "/"
+  #   schedule:
+  #     interval: weekly
+  #   open-pull-requests-limit: 3
+  #   labels:
+  #     - dependencies
+  #     - docker
