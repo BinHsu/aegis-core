@@ -5,6 +5,10 @@
   "description": "Aegis Core pure-web host + viewer UI per ADR-0002 (pure web for MVP, Tauri-wrappable) and ADR-0003 (getUserMedia + getDisplayMedia capture)",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

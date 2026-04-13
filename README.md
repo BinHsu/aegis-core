@@ -156,9 +156,26 @@ For the full 11-section specification see
 
 ## Quick Start
 
-**Prerequisites**: macOS (Apple Silicon or Intel) or Linux, `git`,
-`python3` (for pre-commit), and `bash`. No Bazel install required —
-the wrapper script downloads it.
+**Prerequisites**:
+
+| Always required          | Why                                                      | Notes                                                                |
+| ------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------- |
+| `bash` ≥ 4               | wrapper scripts in `tools/`                              | macOS / Linux ship one                                               |
+| `git`                    | obvious                                                  | any modern version                                                   |
+| `curl` or `wget`         | `tools/bazelisk/bazelisk` and `tools/buf/buf` downloads  | macOS ships `curl`, Linux ships both                                 |
+| C++ toolchain            | hermetic Bazel build still uses the system C/C++ compiler| macOS: Xcode CLT (`xcode-select --install`); Linux: `build-essential`|
+| Python ≥ 3.10            | pre-commit framework (Phase 0 governance)                | `pyenv` / `pipx` if you do not want a system-wide install            |
+
+| Required for some tasks  | Why                                                      | Notes                                                                |
+| ------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------- |
+| `jq`                     | `tools/scripts/download_models.sh` parses manifest.json  | `brew install jq` (macOS) / `apt install jq` (Debian/Ubuntu)         |
+| Node ≥ 20 + npm ≥ 10     | `frontend_web/` Vite dev server + build                  | Pinned in `frontend_web/package.json` `engines`; `frontend_web/.nvmrc` for `nvm users` |
+
+**Everything else is hermetic** — Bazel 7.4.1, the Go 1.24.12 SDK,
+whisper.cpp v1.8.4, grpc/protobuf, gtest, all proto-codegen plugins,
+and every model file (with SHA-256 verification) — is downloaded
+into `.bazel_cache/`, `.bazelisk/`, `.bufsk/`, and `models/` per
+[CLAUDE.md Rule 6](CLAUDE.md). Nothing escapes the repo tree.
 
 ```bash
 git clone https://github.com/BinHsu/aegis-core.git
