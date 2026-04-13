@@ -213,6 +213,12 @@ Other primary references:
 - [docs/github-setup.md](docs/github-setup.md) — reproducible
   `gh` CLI commands for every admin operation applied to this repo
   (ruleset, private vuln reporting, SSH commit signing, etc.).
+- [docs/incidents.md](docs/incidents.md) — development-time incident
+  postmortems (what broke, root cause, resolution, lessons). Written
+  as they happen during Phase 1. Currently covers: macOS CLT-only
+  Bazel crash, boringssl `-Werror` flag-ordering, whisper.cpp
+  `_vDSP_` link failure, buf v1/v2 config mismatch, GitHub ruleset
+  silent no-op on private Free repos.
 
 ---
 
