@@ -1,0 +1,17 @@
+# Root BUILD file for the Aegis Core monorepo.
+#
+# Intentionally almost-empty. Every build target lives under its component
+# subtree (engine_cpp/, gateway_go/, proto/, ...). This file exists so
+# Bazel recognizes the repo root as a package and so the root-level
+# .bazelrc's %workspace% substitution resolves correctly.
+#
+# No //:gazelle target is defined here. An earlier experiment added one
+# but gazelle's auto-generation rewrote hand-maintained load paths using
+# the old @io_bazel_rules_go repo name (invalid in our bzlmod setup) and
+# added unwanted go_library targets. When the Go codebase grows past a
+# handful of files in Phase 2+, revisit with proper gazelle directives
+# (# gazelle:ignore, etc.) scoped to gateway_go/ only.
+#
+# In the meantime, Go tooling on this repo is handled by:
+#   tools/scripts/go.sh        — hermetic `go` via the Bazel-managed SDK
+#   tools/scripts/go_check.sh  — run `go fmt` + `go vet` across go.work modules

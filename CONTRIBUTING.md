@@ -90,6 +90,28 @@ pre-commit run --files path/to/f    # run on specific files
 pre-commit run clang-format         # run one hook across staged files
 ```
 
+### Running Go tools (no system Go required)
+
+Aegis Core does not require a system Go install — the Go 1.24.12 SDK is
+hermetic via `rules_go`. Two wrapper scripts surface the underlying
+toolchain without leaving the repo:
+
+```bash
+./tools/scripts/go.sh fmt ./...     # run from inside a Go module root
+./tools/scripts/go.sh vet ./...
+./tools/scripts/go.sh mod tidy      # from inside gateway_go/
+
+./tools/scripts/go_check.sh         # run gofmt + govet across every
+                                    # module listed in go.work. Suitable
+                                    # as a pre-PR smoke test.
+```
+
+Why this pattern instead of `pre-commit`-driven Go hooks? The widely-used
+`dnephin/pre-commit-golang` hooks shell out to a system `go` binary,
+which violates [CLAUDE.md Rule 6](CLAUDE.md). Running Go through
+`tools/scripts/go.sh` keeps every byte of toolchain state inside the
+repo tree.
+
 ## Pull Request Conventions
 
 ### Branch naming
