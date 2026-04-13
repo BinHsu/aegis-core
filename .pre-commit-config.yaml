@@ -59,13 +59,18 @@ repos:
   # ---------------------------------------------------------------------------
   # Go formatting and basic checks
   # ---------------------------------------------------------------------------
-  - repo: https://github.com/dnephin/pre-commit-golang
-    rev: v0.5.1
-    hooks:
-      - id: go-fmt
-      - id: go-vet
-      - id: go-imports
-      - id: go-mod-tidy
+  # Intentionally NOT using dnephin/pre-commit-golang — its hooks call
+  # `go fmt` / `goimports` / `go vet` / `go mod tidy` from a SYSTEM Go
+  # install, which violates CLAUDE.md Rule 6 (no global toolchain
+  # dependencies). Our hermetic Go 1.24.12 SDK lives inside Bazel via
+  # rules_go, so Go lint is enforced there instead:
+  #
+  #   bazel build //...         # `go build` equivalent, catches compile errors
+  #   bazel test //gateway_go/...
+  #   gofmt / goimports / govet via CI-only Bazel toolchain setup (Phase 2)
+  #
+  # Once Phase 2 adds `bazel run @rules_go//go -- fmt`-style wrappers in
+  # tools/scripts/, this comment can point to the replacement enforcement.
 
   # ---------------------------------------------------------------------------
   # Frontend / TypeScript / JSON / YAML formatting
