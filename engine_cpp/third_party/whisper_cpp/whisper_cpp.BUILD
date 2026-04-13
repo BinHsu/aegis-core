@@ -16,6 +16,15 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Audio fixtures that come bundled with the upstream whisper.cpp tarball.
+# Session 4c integration test transcribes jfk.wav (11 seconds of JFK's
+# inaugural address) and asserts the output contains known phrases.
+filegroup(
+    name = "samples",
+    srcs = glob(["samples/*.wav"]),
+    visibility = ["//visibility:public"],
+)
+
 cmake(
     name = "whisper_cpp_cmake",
     cache_entries = {

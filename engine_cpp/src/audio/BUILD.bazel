@@ -1,0 +1,12 @@
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+cc_library(
+    name = "wav_reader",
+    srcs = ["wav_reader.cc"],
+    hdrs = ["wav_reader.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)

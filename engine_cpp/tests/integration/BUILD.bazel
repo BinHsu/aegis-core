@@ -1,0 +1,23 @@
+package(default_visibility = ["//visibility:private"])
+
+cc_test(
+    name = "whisper_transcribe_test",
+    srcs = ["whisper_transcribe_test.cc"],
+    size = "medium",
+    # Model file isn't committed (75 MB, gitignored). The test uses
+    # GTEST_SKIP if the model is absent so CI stays green even without
+    # the download step.
+    data = [
+        "@whisper_cpp//:samples",
+    ],
+    tags = [
+        "exclusive",        # real inference is CPU-heavy; don't parallelize
+        "requires-model",   # documentation tag for filtering in CI
+    ],
+    deps = [
+        "//engine_cpp/src/audio:wav_reader",
+        "//engine_cpp/src/inference:whisper_engine",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

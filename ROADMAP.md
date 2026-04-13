@@ -75,8 +75,8 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Vendor `whisper.cpp` via Bazel `http_archive` + SHA256 and rules_foreign_cc — Session 4a
 - [x] Engine binary links whisper.cpp + ggml; `whisper_print_system_info` at startup proves linkage (CPU baseline, Apple NEON/Accelerate detected) — Session 4a
 - [x] `WhisperEngine::Create(model_path)` + `Transcribe(pcm)` returning `absl::StatusOr<T>`, with gtest unit tests for error paths — Session 4b
-- [ ] End-to-end transcription integration test with `ggml-tiny.en.bin` + `samples/jfk.wav` — Session 4c
-- [ ] Wire `WhisperEngine` into `StreamTranscribe` consuming `IngestMessage` stream — Session 4c
+- [x] End-to-end transcription integration test with `ggml-tiny.en.bin` + `samples/jfk.wav`; WAV reader + download_models.sh + manifest.json real SHA-256 — Session 4c
+- [ ] Wire `WhisperEngine` into `StreamTranscribe` consuming `IngestMessage` stream (Pause/Resume state machine, thread-per-session) — Session 4d
 - [ ] Session lifetime management (audio ring buffer, Pause/Resume state machine) — Session 5
 
 ### Go Gateway Skeleton
