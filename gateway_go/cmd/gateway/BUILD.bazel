@@ -3,8 +3,9 @@ load("@rules_go//go:def.bzl", "go_binary")
 go_binary(
     name = "gateway",
     srcs = ["main.go"],
-    # The Go module root (//gateway_go/go.mod) names this import path;
-    # cmd/gateway is a main package under it.
+    # The Go module is //gateway_go/go.mod, named
+    # "github.com/BinHsu/aegis-core/gateway_go" so import paths mirror
+    # the on-disk layout in this polyglot monorepo.
     importpath = "github.com/BinHsu/aegis-core/gateway_go/cmd/gateway",
     visibility = ["//visibility:public"],
     deps = [
@@ -13,6 +14,9 @@ go_binary(
         # checked-in gateway_go/gen/go/ files (those exist only for IDE
         # / go-tooling consumption).
         "//proto/aegis/v1:aegis_go_proto",
+        "//gateway_go/internal/grpc",
+        "//gateway_go/internal/session",
+        "//gateway_go/internal/token",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],

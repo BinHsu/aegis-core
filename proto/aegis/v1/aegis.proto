@@ -45,7 +45,7 @@ package aegis.v1;
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/BinHsu/aegis-core/gen/go/aegis/v1;aegisv1";
+option go_package = "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1;aegisv1";
 option java_multiple_files = true;
 option java_package = "io.aegis.v1";
 

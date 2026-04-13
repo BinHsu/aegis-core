@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "session",
+    srcs = ["session.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/session",
+    visibility = ["//gateway_go:__subpackages__"],
+)
+
+go_test(
+    name = "session_test",
+    size = "small",
+    srcs = ["session_test.go"],
+    embed = [":session"],
+)

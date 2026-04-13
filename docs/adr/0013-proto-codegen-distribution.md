@@ -24,7 +24,7 @@ Phase 2 Session A1 (Gateway → Engine gRPC client) tripped this
 conflict head-on. Adding a `require google.golang.org/grpc ...` to
 `gateway_go/go.mod` got silently reverted by `go mod tidy` because no
 `.go` file actually imported it — and the Go file that *would* import
-it (`import "github.com/BinHsu/aegis-core/gen/go/aegis/v1"`) could
+it (`import "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"`) could
 not resolve that import path without a physical `.pb.go` file on
 disk. Chicken and egg.
 
@@ -126,7 +126,7 @@ buf.yaml                            # buf module config (lint, break, format)
 buf.gen.yaml                        # buf codegen config (plugins + outputs)
 
 gateway_go/
-├── go.mod                          # module github.com/BinHsu/aegis-core
+├── go.mod                          # module github.com/BinHsu/aegis-core/gateway_go
 ├── go.sum
 └── gen/
     └── go/
