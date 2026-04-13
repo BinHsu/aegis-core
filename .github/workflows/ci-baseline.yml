@@ -91,6 +91,80 @@ jobs:
         run: buf breaking --against ".git#branch=${{ github.base_ref }}"
 
   # ---------------------------------------------------------------------------
+  # Proto codegen drift — ADR-0013. The .pb.go files under
+  # gateway_go/gen/go/ are checked in for IDE/gopls consumption while
+  # Bazel remains the authoritative producer. This job re-runs
+  # `buf generate` and fails if the working tree differs, catching PRs
+  # that edit .proto without re-running tools/scripts/proto_gen.sh.
+  # ---------------------------------------------------------------------------
+  proto-codegen-drift:
+    name: Proto codegen drift check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Regenerate via tools/scripts/proto_gen.sh
+        run: ./tools/scripts/proto_gen.sh
+
+      - name: Verify no diff
+        run: |
+          if ! git diff --exit-code -- gateway_go/gen/ frontend_web/gen/ 2>/dev/null; then
+            echo "::error::Generated proto code is out of sync with .proto sources."
+            echo "::error::Run ./tools/scripts/proto_gen.sh locally and commit the result."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Bazel unit tests — runs //engine_cpp/tests/unit/... and any future
+  # //gateway_go/...:test targets. Excludes integration tests tagged
+  # `requires-model` because CI does not fetch the 75 MB whisper model
+  # (per ADR-0011's CI integration plan; full WER regression lands in
+  # Phase 2 with the cron-based workflow).
+  #
+  # actions/cache holds .bazel_cache so subsequent CI runs skip the
+  # cold whisper.cpp + grpc build. Cache key is keyed on MODULE.bazel
+  # so dep bumps invalidate cleanly.
+  # ---------------------------------------------------------------------------
+  bazel-unit-tests:
+    name: Bazel unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          # Linux CI runners have spaceless paths so our bazelisk wrapper
+          # uses the in-repo .bazel_cache; on macOS dev machines with
+          # spaces in the repo path it routes to /tmp/aegis-bazel-* —
+          # both included so the cache pattern is portable.
+          # .bazelisk/ holds the downloaded Bazel binary.
+          path: |
+            ${{ github.workspace }}/.bazel_cache
+            ${{ github.workspace }}/.bazelisk
+            /tmp/aegis-bazel-*
+          key: bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc') }}
+          restore-keys: |
+            bazel-unit-${{ runner.os }}-
+
+      - name: Build proto + engine + gateway
+        run: |
+          ./tools/bazelisk/bazelisk build \
+            //proto/aegis/v1:aegis_cc_grpc \
+            //proto/aegis/v1:aegis_go_proto \
+            //engine_cpp/cmd/engine:engine \
+            //gateway_go/cmd/gateway:gateway
+
+      - name: Run unit tests (excludes requires-model)
+        run: |
+          ./tools/bazelisk/bazelisk test \
+            //engine_cpp/tests/unit/... \
+            --test_tag_filters=-requires-model
+
+  # ---------------------------------------------------------------------------
   # Documentation link check — basic sanity for internal cross-references.
   # Uses a lightweight action; does not fail the build on external link
   # timeouts (those are noisy).

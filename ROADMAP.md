@@ -52,9 +52,9 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Configure `.bazelrc` with CPU default, metal/cuda/cpu configs, `try-import %workspace%/.bazelrc.user` (ADR-0009)
 - [x] `.bazelversion` pinning Bazel 7.4.1
 - [x] Add `tools/bazelisk/bazelisk` wrapper — downloads bazelisk locally, forces `--output_user_root=./.bazel_cache` (CLAUDE.md Rule 6)
-- [ ] Configure hermetic C++ toolchain with Metal (macOS) / CUDA (Linux) detection — Session 2+
-- [ ] Configure hermetic Go toolchain — Phase 2
-- [ ] Configure hermetic Node.js toolchain for frontend — Phase 3
+- [x] Configure hermetic C++ toolchain with Metal (macOS) / CUDA (Linux) selection via `--config=metal|cuda|cpu` and `tools/scripts/configure_backend.sh` (ADR-0009 Sub-decision 4) — Session 2/4a
+- [x] Configure hermetic Go toolchain (Go 1.24.12 SDK via `go_sdk.download` extension) — Session 5
+- [ ] Configure hermetic Node.js toolchain for frontend — Phase 4 (frontend currently NPM-managed per Phase 1 C1; Bazel wrap deferred to Phase 4a OCI packaging)
 
 ### Contracts
 - [x] Create `proto/aegis/v1/aegis.proto` (per ADR-0008 layout) and define: `CreateMeeting`, `StreamTranscribe`, `JoinAsViewer`, `EndMeeting` (AskRAG removed per ADR-0012)
@@ -77,17 +77,17 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] `WhisperEngine::Create(model_path)` + `Transcribe(pcm)` returning `absl::StatusOr<T>`, with gtest unit tests for error paths — Session 4b
 - [x] End-to-end transcription integration test with `ggml-tiny.en.bin` + `samples/jfk.wav`; WAV reader + download_models.sh + manifest.json real SHA-256 — Session 4c
 - [x] Wire `WhisperEngine` into `StreamTranscribe` consuming `IngestMessage` stream with full state machine (WaitingForStart → Active → Paused/Resumed → END_STREAM); per-session `WhisperEngine`; `ResourceBudget` Reserve/Release paired with session lifetime; in-process gRPC integration test passing end-to-end — Session 4d
-- [ ] Session lifetime management (audio ring buffer, Pause/Resume state machine) — Session 5
+- [x] Session lifetime management (per-session WhisperEngine, accumulated PCM ring buffer, Pause/Resume/END_STREAM state machine) — Session 4d (`engine_cpp/src/session/session.cc`)
 
 ### Go Gateway Skeleton
-- [ ] Establish `gateway_go/` with Go module and Bazel build
-- [ ] HTTP/2 gRPC server acting as passthrough to C++ engine
-- [ ] Implement `RedactedPCM` type with safe log formatter (ADR-0005 R3)
-- [ ] Implement Hexagonal Architecture interface boundaries for auth, storage, telemetry (ARCH §5)
+- [x] Establish `gateway_go/` with Go module and Bazel build (rules_go) — Session 5
+- [x] HTTP/2 gRPC server acting as passthrough to C++ engine — Phase 2 A1 (`/healthz` proxies `Engine.Health`)
+- [ ] Implement `RedactedPCM` type with safe log formatter (ADR-0005 R3) — Phase 2 A3 (when PCM actually flows through Go)
+- [ ] Implement Hexagonal Architecture interface boundaries for auth, storage, telemetry (ARCH §5) — Phase 2 A2+
 
 ### Models
-- [ ] Create `/models/` directory with `manifest.json` and download script that verifies SHA256 before mmap (ARCH §10.1)
-- [ ] Document the first model set: `whisper-large-v3-turbo-q4`, diarization embedder, sentence-transformers
+- [x] Create `/models/` directory with `manifest.json` and download script that verifies SHA256 before mmap (ARCH §10.1) — Phase 0 / Session 4c (`tools/scripts/download_models.sh`)
+- [x] Document the first model set: `whisper-tiny-en` (Phase 1 test fixture), `whisper-large-v3-turbo-q4` (production placeholder), diarization embedder (placeholder), sentence-transformers (placeholder), llama-3-8b (Phase 5+) — `models/manifest.json`
 
 ---
 

@@ -49,8 +49,8 @@ implementation in progress.
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
-| **Phase 1** | Bazel monorepo, proto contracts, C++ engine + whisper.cpp + StreamTranscribe, Go Gateway skeleton, Vite/React frontend with provider abstractions | ✅ Done — engine transcribes audio end-to-end; Go GW listening; frontend Host + Viewer pages render via provider interfaces (backend wire-up is Phase 2) |
-| **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 📋 Designed |
+| **Phase 1** | Bazel monorepo, proto contracts, C++ engine + whisper.cpp + StreamTranscribe, Go Gateway skeleton, Vite/React frontend with provider abstractions | ✅ Done |
+| **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1 shipped (Gateway → Engine gRPC client, ADR-0013 proto codegen distribution); A2-A5 pending |
 | **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
@@ -201,7 +201,8 @@ with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`. The gateway's Phase 2
 wiring will have it act as a client to the engine over gRPC and
 terminate WebRTC from the host browser.
 
-> *Last verified against `main`: 2026-04-13 (Phase 1 Session 5).*
+> *Last verified against `main`: 2026-04-13 (Phase 2 A1 — gateway-engine
+> gRPC pipeline + ADR-0013 proto codegen distribution).*
 
 ---
 
