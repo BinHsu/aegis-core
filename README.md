@@ -49,7 +49,7 @@ implementation in progress.
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
-| **Phase 1** | Bazel monorepo, proto contracts, C++ engine skeleton, whisper.cpp inference, StreamTranscribe bidi stream, Go Gateway skeleton | ✅ 5 / 5 sessions shipped — real gRPC transcription end-to-end, Go GW listening |
+| **Phase 1** | Bazel monorepo, proto contracts, C++ engine + whisper.cpp + StreamTranscribe, Go Gateway skeleton, Vite/React frontend with provider abstractions | ✅ Done — engine transcribes audio end-to-end; Go GW listening; frontend Host + Viewer pages render via provider interfaces (backend wire-up is Phase 2) |
 | **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 📋 Designed |
 | **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
@@ -83,6 +83,14 @@ What runs today:
 - **Polyglot proto codegen verified** — `//proto/aegis/v1:aegis_go_proto`
   produces Go message types + gRPC stubs alongside the C++ counterparts
   from Session 2.
+- **frontend_web/ scaffold + provider abstractions** — Vite 6 + React 19 +
+  TypeScript 5.7. `WebAudioCaptureProvider` (getUserMedia +
+  getDisplayMedia + Web Audio mixing per ADR-0003), and
+  `TranscriptStreamProvider` with Cloud (gRPC-Web) vs Local (WebSocket
+  per ADR-0007) implementations selected at build time. HostPage drives
+  capture; ViewerPage renders a rolling 5-line prompter with
+  Reconnecting / Meeting ended banners. Backend wire-up is Phase 2;
+  pages depend only on provider interfaces (ADR-0002 Constraint 2).
 - **Hermetic Bazel build** — `./tools/bazelisk/bazelisk` downloads a
   local Bazel 7.4.1, all external deps fetched via `MODULE.bazel`
   bzlmod, nothing leaks into `~/.cache` or `/opt`.

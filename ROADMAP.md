@@ -128,19 +128,18 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 **Scope change from original roadmap**: Phase 3 delivers **pure web only**. Tauri is deferred per ADR-0002 and ADR-0003.
 
 ### Frontend Scaffolding
-- [ ] Scaffold `frontend_web/` with React + Vite + TypeScript
+- [x] Scaffold `frontend_web/` with React 19 + Vite 6 + TypeScript 5.7 strict — Phase 1 C1 (NPM-managed; Bazel wrap deferred to Phase 4a)
 - [ ] Configure generated Protobuf JS/TS bindings under Bazel
-- [ ] Implement Hexagonal abstractions required by ADR-0002 Constraint 2:
-  - [ ] `AudioCaptureProvider` interface with web implementation (`getUserMedia`, `getDisplayMedia`, Web Audio mixing)
-  - [ ] `TranscriptStreamProvider` interface with gRPC-Web (Cloud) and WebSocket (Local) implementations
-  - [ ] `AuthProvider`, `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` stubs
+- [x] `AudioCaptureProvider` interface + `WebAudioCaptureProvider` impl (getUserMedia, getDisplayMedia, Web Audio mixing for the three capture modes per ADR-0003) — Phase 1 C2
+- [x] `TranscriptStreamProvider` interface + `GrpcWebTranscriptStreamProvider` (Cloud) + `WebSocketTranscriptStreamProvider` (Local) stubs per ADR-0007 — Phase 1 C3
+- [ ] `AuthProvider`, `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` stubs — Phase 2+
 - [ ] Respect all ADR-0002 Phase 3 Constraints 1–6 (no `chrome.*`, no Service Worker dependency, etc.)
 
 ### Host UI (Staff)
-- [ ] Login flow (Cognito Cloud / dummy Local)
-- [ ] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display
-- [ ] Audio source picker: "Physical room (microphone)" vs "Remote meeting (browser tab)"
-- [ ] `getUserMedia` and `getDisplayMedia` calls with clear privacy copy (ADR-0003)
+- [ ] Login flow (Cognito Cloud / dummy Local) — Phase 2
+- [ ] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display — Phase 2
+- [x] Audio source picker: "Physical room (microphone)" vs "Remote meeting (browser tab)" vs both — Phase 1 C4
+- [x] `getUserMedia` and `getDisplayMedia` calls with clear privacy copy (ADR-0003) — Phase 1 C4 (via WebAudioCaptureProvider)
 - [ ] One-time audio-processing consent capture on first use (ARCH §9.3; no biometric consent needed — see ADR-0012)
 - [ ] Speaker label tagging UI — curated choice list, **no free-text name input** (ARCH §9.2)
 - [ ] Live prompter display with rolling 5-line window
@@ -149,12 +148,12 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] QR code display for LAN viewer join (Local mode only) (ADR-0007)
 
 ### Viewer UI (Boss)
-- [ ] Join via invite URL → token parsing → `TranscriptStreamProvider` subscription
-- [ ] Rolling 5-line prompter display
-- [ ] "Host reconnecting..." banner on transient host loss (ADR-0006 Disconnected state)
-- [ ] "Meeting ended" message on session termination
-- [ ] **No export UI** (L3)
-- [ ] No history rendering for late joiners (L4 is a feature, not a bug)
+- [x] Join via invite URL → token parsing → `TranscriptStreamProvider` subscription — Phase 1 C4
+- [x] Rolling 5-line prompter display — Phase 1 C4 (PROMPTER_WINDOW=5)
+- [x] "Host reconnecting..." banner on transient host loss (ADR-0006 Disconnected state) — Phase 1 C4
+- [x] "Meeting ended" message on session termination — Phase 1 C4
+- [x] **No export UI** (L3) — Phase 1 C4 (intentionally absent)
+- [x] No history rendering for late joiners (L4 is a feature, not a bug) — Phase 1 C4 (rolling window only)
 
 ### Cross-WebView Testing
 - [ ] Chrome / Edge primary testing
