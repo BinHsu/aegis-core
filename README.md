@@ -276,9 +276,23 @@ PR conventions. Before editing code:
 2. Read [ARCHITECTURE.md](ARCHITECTURE.md) and the relevant ADRs.
 3. Any architectural change requires a new ADR in the same PR.
 
-Commit signing is required for merge. See
-[docs/github-setup.md §0.5](docs/github-setup.md#05-ssh-commit-signing-setup-macos)
-for the one-time setup.
+### Required one-time contributor setup
+
+```bash
+# 1. Install pre-commit git hooks (both pre-commit AND commit-msg stages)
+pipx install pre-commit              # or pip install --user pre-commit
+pre-commit install
+pre-commit install --hook-type commit-msg
+
+# 2. Configure SSH commit signing — required by the main ruleset
+#    See docs/github-setup.md §0.5 SSH Commit Signing Setup
+```
+
+Without these, your local commits will still be blocked by the `main`
+branch ruleset (required CI + signed commits). Local hooks are the
+fast-feedback path; CI is the belt-and-braces second pass. See
+[CONTRIBUTING.md §Development Setup](CONTRIBUTING.md#first-time-setup)
+for what each hook catches.
 
 ---
 
