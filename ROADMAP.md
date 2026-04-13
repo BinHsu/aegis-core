@@ -179,6 +179,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] SLSA Level 3 provenance emission
 - [ ] Trivy container scan; block push on critical CVEs
 - [ ] kube-score + kube-bench manifest scan
+- [ ] Checkov IaC scanner for K8s manifests + Dockerfile + Helm charts (complements kube-score/kube-bench from the misconfiguration / policy-as-code angle; see debrief discussion 2026-04-12)
 - [ ] CodeQL, Semgrep, gosec, govulncheck, clang-tidy in CI (ARCH §10.2)
 - [ ] Verify no binary contains `AEGIS_DEV_AUDIO_DUMP` symbol (ADR-0005 R7)
 - [ ] ECR push pipeline; ArgoCD in landing-zone repository polls the manifests in this repository

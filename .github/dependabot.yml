@@ -1,0 +1,84 @@
+# Dependabot version-updates config for Aegis Core.
+#
+# Aegis has five distinct dependency surfaces. Dependabot covers them
+# below with conservative schedules so drift is noticed without spamming
+# review queues. Security alerts (separate from version updates) are
+# enabled repo-wide and fire immediately on vulnerable deps.
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # GitHub Actions — catches workflow action version drift.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+
+  # ---------------------------------------------------------------------------
+  # Go modules (gateway_go/). grpc-go + protobuf-go bump frequently;
+  # keep a weekly cadence but grouped so we don't drown in micro-PRs.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: gomod
+    directory: "/gateway_go"
+    schedule:
+      interval: weekly
+      day: tuesday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    groups:
+      grpc-protobuf:
+        patterns:
+          - "google.golang.org/grpc*"
+          - "google.golang.org/protobuf"
+          - "github.com/golang/protobuf"
+      otel:
+        patterns:
+          - "go.opentelemetry.io/*"
+
+  # ---------------------------------------------------------------------------
+  # NPM (frontend_web/). Vite and React moved fast; don't auto-open PRs
+  # for every patch — monthly + patch-level only to keep signal high.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: "/frontend_web"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - frontend
+    versioning-strategy: increase-if-necessary
+
+  # ---------------------------------------------------------------------------
+  # Bazel MODULE.bazel deps. Dependabot has native bzlmod support.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: bazel
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - bazel
+
+  # ---------------------------------------------------------------------------
+  # Docker (Dockerfile) — not present yet. Phase 4a wires Dockerfiles;
+  # this stanza will start producing PRs automatically once they land.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
