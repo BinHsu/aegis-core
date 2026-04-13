@@ -34,3 +34,11 @@
    * **Mandatory Isolation**: You MUST use virtual environments (`.venv` for Python), local `node_modules`, and isolated workspaces to prevent ANY side effects on the host OS.
    * Big models (.ggml files) must be downloaded strongly to a local `/models` directory within the repo.
    * Build tools must be scoped locally. For example, Bazel MUST be configured via `.bazelrc` to set `--output_user_root=./.bazel_cache`.
+
+7. **Incident Postmortems (Field Notes Discipline)**
+   * When you encounter a **non-trivial development-time blocker** — working definition: ≥ 15 minutes of debugging, OR two or more failed fix attempts, OR a root cause more than one layer below the surface error — you MUST add a postmortem entry to `docs/incidents.md` before the task is considered done.
+   * Use the existing template verbatim: `Symptom → Root cause → Detection → Resolution → Prevention → Lessons`. Severity scale is defined at the top of `docs/incidents.md` (S2/S3/S4/S5 development-time scale; do NOT invent new levels).
+   * Be honest about **red herrings and failed attempts**. "We first tried X which didn't work because Y" is load-bearing for the lesson; omitting it turns the postmortem into marketing.
+   * Link the resolving commit hash; keep nitty-gritty details (full error text, full diff) in the commit message, keep the **narrative layer** in the postmortem.
+   * Trivial bugs (typo in a BUILD file fixed in 60 seconds, clang-format whitespace) do NOT warrant a postmortem — don't pollute the file.
+   * This rule is a portfolio-grade **learning-culture signal**. Treat it with the same seriousness as Rule 2 Testing Integrity.
