@@ -33,9 +33,9 @@ void HandleShutdown(int /*signum*/) {
   }
 }
 
-}  // namespace
+} // namespace
 
-int main(int /*argc*/, char** /*argv*/) {
+int main(int /*argc*/, char ** /*argv*/) {
   std::signal(SIGINT, HandleShutdown);
   std::signal(SIGTERM, HandleShutdown);
 

@@ -14,28 +14,28 @@
 
 namespace aegis::session {
 class ResourceBudget;
-}  // namespace aegis::session
+} // namespace aegis::session
 
 namespace aegis::grpc_service {
 
 class AegisEngineServiceImpl final : public aegis::v1::Engine::Service {
- public:
+public:
   // `budget` is not owned; must outlive this service instance.
-  explicit AegisEngineServiceImpl(session::ResourceBudget* budget) noexcept;
+  explicit AegisEngineServiceImpl(session::ResourceBudget *budget) noexcept;
 
   ::grpc::Status StreamTranscribe(
-      ::grpc::ServerContext* context,
+      ::grpc::ServerContext *context,
       ::grpc::ServerReaderWriter<aegis::v1::EgressMessage,
-                                 aegis::v1::IngestMessage>* stream) override;
+                                 aegis::v1::IngestMessage> *stream) override;
 
-  ::grpc::Status Health(::grpc::ServerContext* context,
-                        const aegis::v1::HealthRequest* request,
-                        aegis::v1::HealthResponse* response) override;
+  ::grpc::Status Health(::grpc::ServerContext *context,
+                        const aegis::v1::HealthRequest *request,
+                        aegis::v1::HealthResponse *response) override;
 
- private:
-  session::ResourceBudget* budget_;  // not owned
+private:
+  session::ResourceBudget *budget_; // not owned
 };
 
-}  // namespace aegis::grpc_service
+} // namespace aegis::grpc_service
 
-#endif  // AEGIS_ENGINE_CPP_SRC_GRPC_AEGIS_ENGINE_SERVICE_H_
+#endif // AEGIS_ENGINE_CPP_SRC_GRPC_AEGIS_ENGINE_SERVICE_H_

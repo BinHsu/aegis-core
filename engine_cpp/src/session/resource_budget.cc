@@ -16,8 +16,8 @@ absl::Status ResourceBudget::Reserve(std::size_t bytes) {
     // Check for overflow AND budget overflow in one conditional.
     if (next < current || next > total_bytes_) {
       return absl::ResourceExhaustedError(absl::StrCat(
-          "ResourceBudget: cannot reserve ", bytes,
-          " bytes (used=", current, ", total=", total_bytes_, ")"));
+          "ResourceBudget: cannot reserve ", bytes, " bytes (used=", current,
+          ", total=", total_bytes_, ")"));
     }
     if (bytes_used_.compare_exchange_weak(current, next,
                                           std::memory_order_acq_rel,
@@ -41,4 +41,4 @@ std::size_t ResourceBudget::BytesAvailable() const noexcept {
   return used >= total_bytes_ ? 0 : (total_bytes_ - used);
 }
 
-}  // namespace aegis::session
+} // namespace aegis::session

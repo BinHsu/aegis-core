@@ -27,7 +27,7 @@
 namespace aegis::infra {
 
 class SensitiveBytes {
- public:
+public:
   constexpr SensitiveBytes() noexcept = default;
 
   // Caller is responsible for ensuring the underlying buffer outlives
@@ -38,8 +38,8 @@ class SensitiveBytes {
 
   // Convenience ctor from raw pointer + size (for proto::bytes fields
   // which come as std::string-of-char).
-  SensitiveBytes(const void* data, std::size_t size) noexcept
-      : data_(static_cast<const std::byte*>(data), size) {}
+  SensitiveBytes(const void *data, std::size_t size) noexcept
+      : data_(static_cast<const std::byte *>(data), size) {}
 
   // Explicit raw access. Code that needs the bytes for legitimate
   // purposes (inference, framing) uses this. This is the ONE call
@@ -51,21 +51,22 @@ class SensitiveBytes {
 
   // Copy/move are safe because the view is non-owning. Clients must
   // ensure the underlying buffer lifetime covers the view.
-  constexpr SensitiveBytes(const SensitiveBytes&) noexcept = default;
-  constexpr SensitiveBytes& operator=(const SensitiveBytes&) noexcept = default;
-  constexpr SensitiveBytes(SensitiveBytes&&) noexcept = default;
-  constexpr SensitiveBytes& operator=(SensitiveBytes&&) noexcept = default;
+  constexpr SensitiveBytes(const SensitiveBytes &) noexcept = default;
+  constexpr SensitiveBytes &
+  operator=(const SensitiveBytes &) noexcept = default;
+  constexpr SensitiveBytes(SensitiveBytes &&) noexcept = default;
+  constexpr SensitiveBytes &operator=(SensitiveBytes &&) noexcept = default;
 
- private:
+private:
   std::span<const std::byte> data_{};
 };
 
 // The ONLY stream operator for SensitiveBytes. Always emits the
 // redacted form. There is no escape hatch that prints the bytes.
-inline std::ostream& operator<<(std::ostream& os, const SensitiveBytes& sb) {
+inline std::ostream &operator<<(std::ostream &os, const SensitiveBytes &sb) {
   return os << "[REDACTED " << sb.size() << " bytes]";
 }
 
-}  // namespace aegis::infra
+} // namespace aegis::infra
 
-#endif  // AEGIS_ENGINE_CPP_SRC_INFRA_SENSITIVE_BYTES_H_
+#endif // AEGIS_ENGINE_CPP_SRC_INFRA_SENSITIVE_BYTES_H_

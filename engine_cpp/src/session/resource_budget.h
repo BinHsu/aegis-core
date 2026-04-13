@@ -19,7 +19,7 @@
 namespace aegis::session {
 
 class ResourceBudget {
- public:
+public:
   explicit ResourceBudget(std::size_t total_bytes) noexcept;
 
   // Try to reserve `bytes`. Returns OK on success; ResourceExhaustedError
@@ -37,16 +37,16 @@ class ResourceBudget {
   std::size_t TotalBytes() const noexcept { return total_bytes_; }
 
   // Non-copyable / non-movable — ResourceBudget is a process singleton.
-  ResourceBudget(const ResourceBudget&) = delete;
-  ResourceBudget& operator=(const ResourceBudget&) = delete;
-  ResourceBudget(ResourceBudget&&) = delete;
-  ResourceBudget& operator=(ResourceBudget&&) = delete;
+  ResourceBudget(const ResourceBudget &) = delete;
+  ResourceBudget &operator=(const ResourceBudget &) = delete;
+  ResourceBudget(ResourceBudget &&) = delete;
+  ResourceBudget &operator=(ResourceBudget &&) = delete;
 
- private:
+private:
   const std::size_t total_bytes_;
   std::atomic<std::size_t> bytes_used_;
 };
 
-}  // namespace aegis::session
+} // namespace aegis::session
 
-#endif  // AEGIS_ENGINE_CPP_SRC_SESSION_RESOURCE_BUDGET_H_
+#endif // AEGIS_ENGINE_CPP_SRC_SESSION_RESOURCE_BUDGET_H_
