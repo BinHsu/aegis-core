@@ -290,10 +290,12 @@ cat > /tmp/ruleset_update.json <<'JSON'
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          {"context": "Pre-commit hooks",      "integration_id": 15368},
-          {"context": "Gitleaks secret scan",  "integration_id": 15368},
-          {"context": "Proto lint",            "integration_id": 15368},
-          {"context": "Markdown link check",   "integration_id": 15368}
+          {"context": "Pre-commit hooks",            "integration_id": 15368},
+          {"context": "Gitleaks secret scan",        "integration_id": 15368},
+          {"context": "Proto lint",                  "integration_id": 15368},
+          {"context": "Markdown link check",         "integration_id": 15368},
+          {"context": "Proto codegen drift check",   "integration_id": 15368},
+          {"context": "Bazel unit tests",            "integration_id": 15368}
         ]
       }
     }
