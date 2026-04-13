@@ -1,0 +1,12 @@
+package(default_visibility = ["//visibility:private"])
+
+cc_test(
+    name = "whisper_engine_test",
+    srcs = ["whisper_engine_test.cc"],
+    size = "small",
+    deps = [
+        "//engine_cpp/src/inference:whisper_engine",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
