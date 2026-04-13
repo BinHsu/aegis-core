@@ -49,7 +49,7 @@ implementation in progress.
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
-| **Phase 1** | Bazel monorepo, proto contracts, C++ engine skeleton, whisper.cpp inference, Go Gateway skeleton | 🚧 4 / 5 sessions shipped — real transcription working |
+| **Phase 1** | Bazel monorepo, proto contracts, C++ engine skeleton, whisper.cpp inference, StreamTranscribe bidi stream, Go Gateway skeleton | 🚧 4 / 5 sessions shipped — real gRPC transcription end-to-end |
 | **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 📋 Designed |
 | **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
@@ -67,6 +67,14 @@ What runs today:
   proves this by transcribing JFK's inaugural address fixture and
   asserting "ask not" appears in the output — ~370 ms on Apple
   Silicon CPU with ggml-tiny.en.
+- **StreamTranscribe** — full gRPC bidi stream handler with Session
+  state machine (SessionStart → Active → Paused/Resumed → END_STREAM)
+  per ADR-0006 and ADR-0010. `//engine_cpp/tests/integration:stream_transcribe_test`
+  drives the real service over an in-process gRPC channel and verifies
+  transcribed text arrives on the wire. `ResourceBudget` reservation
+  is paired with session lifetime — the second test case confirms
+  the budget returns to zero even when the first message is malformed
+  and the session is rejected with `INVALID_ARGUMENT`.
 - **Hermetic Bazel build** — `./tools/bazelisk/bazelisk` downloads a
   local Bazel 7.4.1, all external deps fetched via `MODULE.bazel`
   bzlmod, nothing leaks into `~/.cache` or `/opt`.
@@ -148,17 +156,17 @@ cd aegis-core
 ./bazel-bin/engine_cpp/cmd/engine/engine
 # aegis-engine: listening on 0.0.0.0:50051
 #   budget_total_bytes=5767168000
-#   version=0.1.0-phase1-s4a
+#   model_path=models/ggml-tiny.en.bin
+#   version=0.1.0-phase1-s4d
 #   whisper: WHISPER : COREML = 0 | ... | CPU : NEON = 1 | ... | ACCELERATE = 1 | ...
 ```
 
 The engine responds to `aegis.v1.Engine.Health` with ready=true and
-service metadata. whisper.cpp is statically linked and reports hardware
-capability detection at startup. `StreamTranscribe` still returns
-`UNIMPLEMENTED` — Session 4d wires `WhisperEngine` into the gRPC
-bidi stream with the full Pause/Resume state machine.
+service metadata, and `aegis.v1.Engine.StreamTranscribe` runs the
+full state machine per ADR-0006 / ADR-0010. Override the model path
+with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`.
 
-> *Last verified against `main`: 2026-04-13 (Phase 1 Session 4c).*
+> *Last verified against `main`: 2026-04-13 (Phase 1 Session 4d).*
 
 ---
 

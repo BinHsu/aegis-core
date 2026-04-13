@@ -42,8 +42,15 @@ int main(int /*argc*/, char ** /*argv*/) {
 
   const std::string address = "0.0.0.0:50051";
 
+  // Model path — AEGIS_MODEL_PATH env var, else a sane default relative
+  // to CWD. Phase 2+ will switch to absl::flags and/or a config file.
+  std::string model_path = "models/ggml-tiny.en.bin";
+  if (const char *env = std::getenv("AEGIS_MODEL_PATH"); env != nullptr) {
+    model_path = env;
+  }
+
   aegis::session::ResourceBudget budget(kDefaultBudgetBytes);
-  aegis::grpc_service::AegisEngineServiceImpl service(&budget);
+  aegis::grpc_service::AegisEngineServiceImpl service(&budget, model_path);
 
   ::grpc::ServerBuilder builder;
   // Session 3: insecure for local dev. Production uses mTLS via Istio
@@ -61,7 +68,8 @@ int main(int /*argc*/, char ** /*argv*/) {
 
   std::cout << "aegis-engine: listening on " << address << std::endl;
   std::cout << "  budget_total_bytes=" << budget.TotalBytes() << std::endl;
-  std::cout << "  version=0.1.0-phase1-s4a" << std::endl;
+  std::cout << "  model_path=" << model_path << std::endl;
+  std::cout << "  version=0.1.0-phase1-s4d" << std::endl;
   std::cout << "  whisper: " << aegis::inference::WhisperSystemInfo()
             << std::endl;
 

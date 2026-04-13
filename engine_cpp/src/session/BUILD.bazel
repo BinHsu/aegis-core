@@ -9,3 +9,18 @@ cc_library(
         "@com_google_absl//absl/strings",
     ],
 )
+
+cc_library(
+    name = "session",
+    srcs = ["session.cc"],
+    hdrs = ["session.h"],
+    deps = [
+        ":resource_budget",
+        "//engine_cpp/src/inference:whisper_engine",
+        "//proto/aegis/v1:aegis_cc_grpc",
+        "//proto/aegis/v1:aegis_cc_proto",
+        "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+    ],
+)

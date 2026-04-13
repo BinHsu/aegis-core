@@ -21,3 +21,26 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "stream_transcribe_test",
+    srcs = ["stream_transcribe_test.cc"],
+    size = "medium",
+    data = [
+        "@whisper_cpp//:samples",
+    ],
+    tags = [
+        "exclusive",
+        "requires-model",
+    ],
+    deps = [
+        "//engine_cpp/src/audio:wav_reader",
+        "//engine_cpp/src/grpc:aegis_engine_service",
+        "//engine_cpp/src/session:resource_budget",
+        "//proto/aegis/v1:aegis_cc_grpc",
+        "//proto/aegis/v1:aegis_cc_proto",
+        "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

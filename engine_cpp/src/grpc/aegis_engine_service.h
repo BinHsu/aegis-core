@@ -1,13 +1,16 @@
 // engine_cpp/src/grpc/aegis_engine_service.h
 //
-// Implementation of aegis.v1.Engine gRPC service. Session 3 skeleton
-// returns UNIMPLEMENTED for StreamTranscribe and a minimal Health
-// response. Full wiring (whisper inference, PcmChunk handling,
-// ControlEvent state machine) lands in later sessions per
-// ADR-0010 Sub-decision 1 (1-session-1-thread model).
+// Implementation of aegis.v1.Engine gRPC service. Session 4d wires
+// StreamTranscribe to the Session state machine (see
+// engine_cpp/src/session/session.h); Health continues to report
+// budget + version. Per ADR-0010 Sub-decision 1, each StreamTranscribe
+// invocation runs on its own grpc-cpp sync thread and owns a Session
+// object for the stream's lifetime.
 
 #ifndef AEGIS_ENGINE_CPP_SRC_GRPC_AEGIS_ENGINE_SERVICE_H_
 #define AEGIS_ENGINE_CPP_SRC_GRPC_AEGIS_ENGINE_SERVICE_H_
+
+#include <string>
 
 #include "grpcpp/grpcpp.h"
 #include "proto/aegis/v1/aegis.grpc.pb.h"
@@ -20,8 +23,9 @@ namespace aegis::grpc_service {
 
 class AegisEngineServiceImpl final : public aegis::v1::Engine::Service {
 public:
-  // `budget` is not owned; must outlive this service instance.
-  explicit AegisEngineServiceImpl(session::ResourceBudget *budget) noexcept;
+  // `budget` and `model_path` must outlive this service instance.
+  AegisEngineServiceImpl(session::ResourceBudget *budget,
+                         std::string model_path) noexcept;
 
   ::grpc::Status StreamTranscribe(
       ::grpc::ServerContext *context,
@@ -34,6 +38,7 @@ public:
 
 private:
   session::ResourceBudget *budget_; // not owned
+  std::string model_path_;
 };
 
 } // namespace aegis::grpc_service
