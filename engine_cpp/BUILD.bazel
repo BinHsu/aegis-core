@@ -1,0 +1,25 @@
+# engine_cpp/BUILD.bazel
+#
+# Top-level BUILD file for the C++ engine. Defines config_setting targets
+# that select the whisper.cpp hardware acceleration backend per ADR-0009
+# Sub-decision 4. The default is CPU (set via --define=whisper_backend=cpu
+# in .bazelrc); developers override with --config=metal or --config=cuda,
+# or via `tools/scripts/configure_backend.sh` which writes a preference
+# to .bazelrc.user (gitignored).
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "backend_metal",
+    define_values = {"whisper_backend": "metal"},
+)
+
+config_setting(
+    name = "backend_cuda",
+    define_values = {"whisper_backend": "cuda"},
+)
+
+config_setting(
+    name = "backend_cpu",
+    define_values = {"whisper_backend": "cpu"},
+)

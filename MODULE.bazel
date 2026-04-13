@@ -46,9 +46,25 @@ bazel_dep(name = "abseil-cpp", version = "20250127.2", repo_name = "com_google_a
 bazel_dep(name = "apple_support", version = "1.21.0", repo_name = "build_bazel_apple_support")
 
 # -----------------------------------------------------------------------------
-# Phase 1 Session 3+ dependencies (added as each component comes online):
+# whisper.cpp — ADR-0009 Sub-decision 3 — vendored via http_archive + SHA256
+# and built via rules_foreign_cc's `cmake` rule. Upstream moved from Makefile
+# to CMake as the primary build; we follow.
+# -----------------------------------------------------------------------------
+bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "whisper_cpp",
+    build_file = "//engine_cpp/third_party/whisper_cpp:whisper_cpp.BUILD",
+    sha256 = "b26f30e52c095ccb75da40b168437736605eb280de57381887bf9e2b65f31e66",
+    strip_prefix = "whisper.cpp-1.8.4",
+    urls = ["https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.4.tar.gz"],
+)
+
+# -----------------------------------------------------------------------------
+# Phase 1 Session 5+ / Phase 2+ dependencies (added as each component comes online):
 #
-#   bazel_dep(name = "rules_foreign_cc", version = "0.12.0")   # ADR-0009 whisper.cpp
 #   bazel_dep(name = "rules_go",         version = "0.50.1")   # Phase 2
 #   bazel_dep(name = "gazelle",          version = "0.39.1")   # Phase 2
 #   bazel_dep(name = "rules_nodejs",     version = "6.3.2")    # Phase 3 frontend

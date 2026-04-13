@@ -13,6 +13,7 @@
 #include "grpcpp/grpcpp.h"
 
 #include "engine_cpp/src/grpc/aegis_engine_service.h"
+#include "engine_cpp/src/inference/whisper_engine.h"
 #include "engine_cpp/src/session/resource_budget.h"
 
 namespace {
@@ -60,7 +61,9 @@ int main(int /*argc*/, char ** /*argv*/) {
 
   std::cout << "aegis-engine: listening on " << address << std::endl;
   std::cout << "  budget_total_bytes=" << budget.TotalBytes() << std::endl;
-  std::cout << "  version=0.1.0-phase1-s3" << std::endl;
+  std::cout << "  version=0.1.0-phase1-s4a" << std::endl;
+  std::cout << "  whisper: " << aegis::inference::WhisperSystemInfo()
+            << std::endl;
 
 #ifdef AEGIS_DEV_AUDIO_DUMP
   // ADR-0005 R7: this banner is intentional — it is the audit signal

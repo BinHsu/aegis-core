@@ -46,7 +46,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 ### Build System
 - [x] Initialize Bazel `MODULE.bazel` (bzlmod) with `rules_proto`, `protobuf` — Session 1 baseline
 - [x] Add `rules_cc`, `grpc`, `apple_support` bazel_deps — Session 2 (cold grpc build 5m14s)
-- [ ] Add `rules_foreign_cc` bazel_dep — Session 4 (for whisper.cpp)
+- [x] Add `rules_foreign_cc` 0.15.1 + whisper.cpp v1.8.4 via http_archive+SHA256, CMake build — Session 4a (cold +7m38s)
 - [ ] Add `rules_go`, `gazelle` bazel_deps — Phase 2 (Go Gateway)
 - [ ] Add `rules_nodejs`, `rules_rust`, `rules_oci` bazel_deps — Phase 3/4
 - [x] Configure `.bazelrc` with CPU default, metal/cuda/cpu configs, `try-import %workspace%/.bazelrc.user` (ADR-0009)
@@ -72,9 +72,11 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Implement `SensitiveBytes` type with redacting `operator<<` (ADR-0005 R3) — Session 3
 - [x] Implement `ResourceBudget` with atomic Reserve/Release, fail-fast RESOURCE_EXHAUSTED (ADR-0010) — Session 3
 - [x] `#ifdef AEGIS_DEV_AUDIO_DUMP` gating for debug dump code (ADR-0005 R7) — Session 3 (verified compiled out of release)
-- [ ] Vendor `whisper.cpp` via Bazel `http_archive` + SHA256 and rules_foreign_cc — Session 4
-- [ ] Wire `whisper.cpp` inference into StreamTranscribe consuming `IngestMessage` — Session 4
-- [ ] Session lifetime management (audio ring buffer, Pause/Resume state machine) — Session 4-5
+- [x] Vendor `whisper.cpp` via Bazel `http_archive` + SHA256 and rules_foreign_cc — Session 4a
+- [x] Engine binary links whisper.cpp + ggml; `whisper_print_system_info` at startup proves linkage (CPU baseline, Apple NEON/Accelerate detected) — Session 4a
+- [ ] Wire `whisper_init_from_file` + transcribe a fixture WAV — Session 4b
+- [ ] Wire `whisper.cpp` inference into StreamTranscribe consuming `IngestMessage` stream — Session 4c
+- [ ] Session lifetime management (audio ring buffer, Pause/Resume state machine) — Session 5
 
 ### Go Gateway Skeleton
 - [ ] Establish `gateway_go/` with Go module and Bazel build

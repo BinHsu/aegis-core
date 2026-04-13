@@ -132,14 +132,17 @@ cd aegis-core
 ./bazel-bin/engine_cpp/cmd/engine/engine
 # aegis-engine: listening on 0.0.0.0:50051
 #   budget_total_bytes=5767168000
-#   version=0.1.0-phase1-s3
+#   version=0.1.0-phase1-s4a
+#   whisper: WHISPER : COREML = 0 | ... | CPU : NEON = 1 | ... | ACCELERATE = 1 | ...
 ```
 
 The engine responds to `aegis.v1.Engine.Health` with ready=true and
-service metadata. `StreamTranscribe` will be functional once Session 4
-(whisper.cpp via `rules_foreign_cc`) lands.
+service metadata. whisper.cpp is statically linked and reports hardware
+capability detection at startup. `StreamTranscribe` will perform
+real transcription once Sessions 4b/4c land (model loading + IngestMessage
+stream wiring).
 
-> *Last verified against `main`: 2026-04-13 (Phase 1 Session 3).*
+> *Last verified against `main`: 2026-04-13 (Phase 1 Session 4a).*
 
 ---
 

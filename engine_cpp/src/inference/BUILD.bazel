@@ -1,0 +1,10 @@
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+cc_library(
+    name = "whisper_engine",
+    srcs = ["whisper_engine.cc"],
+    hdrs = ["whisper_engine.h"],
+    deps = [
+        "//engine_cpp/third_party/whisper_cpp:whisper_cpp",
+    ],
+)

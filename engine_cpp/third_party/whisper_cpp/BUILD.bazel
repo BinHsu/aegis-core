@@ -1,0 +1,36 @@
+# engine_cpp/third_party/whisper_cpp/BUILD.bazel
+#
+# Consumer-facing wrapper for whisper.cpp. Adds platform-specific
+# linkopts that the external @whisper_cpp BUILD cannot emit (it has
+# no @platforms / @aegis_core visibility in the http_archive context).
+
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+# Export whisper_cpp.BUILD so MODULE.bazel http_archive can reference it.
+exports_files(["whisper_cpp.BUILD"])
+
+# ggml's CPU backend uses Apple Accelerate (vDSP_* symbols) on macOS;
+# Metal backend additionally needs Metal + MetalKit. Without these,
+# the engine binary fails to link with "undefined symbol _vDSP_*".
+cc_library(
+    name = "whisper_cpp",
+    deps = ["@whisper_cpp//:whisper_cpp_cmake"],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework",
+            "Accelerate",
+            "-framework",
+            "Foundation",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//engine_cpp:backend_metal": [
+            "-framework",
+            "Metal",
+            "-framework",
+            "MetalKit",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
