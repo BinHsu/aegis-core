@@ -42,3 +42,11 @@
    * Link the resolving commit hash; keep nitty-gritty details (full error text, full diff) in the commit message, keep the **narrative layer** in the postmortem.
    * Trivial bugs (typo in a BUILD file fixed in 60 seconds, clang-format whitespace) do NOT warrant a postmortem — don't pollute the file.
    * This rule is a portfolio-grade **learning-culture signal**. Treat it with the same seriousness as Rule 2 Testing Integrity.
+
+8. **Environment Pre-flight (Trust the Handbook, Verify the Machine)**
+   * Before you start committing work on a fresh clone, run a one-shot pre-flight check: confirm the repo's own tooling is wired up for THIS machine. Specifically:
+     - `ls .git/hooks/pre-commit .git/hooks/commit-msg` — both must exist. If not, run `pre-commit install && pre-commit install --hook-type commit-msg` exactly as `CONTRIBUTING.md` §Development Setup mandates.
+     - `git config --get user.signingkey && git config --get commit.gpgsign` — signing must be live. If not, follow `docs/github-setup.md` §0.5.
+     - `./tools/bazelisk/bazelisk --version` — bazelisk wrapper must be on PATH from the repo root. If the first invocation has to download Bazel, that is expected.
+   * The handbook (`CONTRIBUTING.md`, `docs/github-setup.md`) is the source of truth for these steps. The risk pattern to avoid: **"the docs said X, I skipped it, then I asked the user why my commits keep getting rewritten by clang-format in CI."** That is drift by omission, not drift by documentation error.
+   * If you discover the pre-flight is missing a check that would have caught a real mistake in the current task, **add the check here** as part of closing that task.

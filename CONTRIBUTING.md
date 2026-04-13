@@ -40,13 +40,37 @@ You do need, once per clone:
 git clone https://github.com/BinHsu/aegis-core.git
 cd aegis-core
 
-# Install pre-commit hooks (runs automatically on every git commit)
+# REQUIRED: install BOTH git hooks. Without these, your local commits
+# will look green to you but will be blocked by CI, burning a round-trip
+# per commit. The pre-commit hook catches formatting / secrets / proto
+# lint; the commit-msg hook enforces Conventional Commits.
 pre-commit install
 pre-commit install --hook-type commit-msg
 
-# Sanity check that hooks work
+# Sanity check — should print "Passed" / "Skipped" for every hook.
 pre-commit run --all-files
 ```
+
+**If `pre-commit` isn't installed yet**:
+
+```bash
+pipx install pre-commit              # preferred (isolated)
+# or
+pip install --user pre-commit        # fallback
+```
+
+**Why both hooks are required**:
+
+| Hook type         | What it catches                                         |
+|-------------------|---------------------------------------------------------|
+| `pre-commit`      | trailing whitespace, secret leaks (gitleaks), clang-format drift, `buf lint`, `buf format`, `buf breaking`, prettier, `go fmt`/`vet`, YAML/JSON validity, large file guard |
+| `commit-msg`      | Conventional Commits format (`feat(scope): ...`)        |
+
+The **same `.pre-commit-config.yaml` runs in CI** as a belt-and-braces
+second pass. Skipping the local install does not leak bad code to `main`
+(ruleset + CI block the push), but every skipped local check is a wasted
+CI cycle — fixed formatting means an extra round-trip of push →
+CI-fail → format → re-push → CI-retry.
 
 During Phase 1+ when Bazel targets exist, you will also run:
 
