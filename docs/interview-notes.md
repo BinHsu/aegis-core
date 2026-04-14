@@ -13,19 +13,27 @@
 
 ## The 30-second version
 
-I am a **generic architect** — I make the cross-cutting decisions on a
-software project (which languages, which protocols, how the pieces fit
-together, what's in scope, what isn't) rather than specializing in one
-layer of the stack. This repo (`aegis-core`) is evidence of that, and
-a companion repo (`landing-zone`) shows the same pattern applied to
-cloud infrastructure.
+I am a **hands-on architect** — I make the cross-cutting decisions on
+a software project (which languages, which protocols, how the pieces
+fit together, what's in scope, what isn't) *and* I write the code that
+enforces them. My specialty is not any single layer of the stack; it
+is the **seams between layers** — build-system design, type contracts
+across language boundaries, protocol definitions, scope artifacts that
+survive team handover.
+
+This repo (`aegis-core`) is evidence. Every architectural decision
+below has my commit next to it; every ADR was written before the code
+it governs; every type-safety guarantee is compile-checked, not
+lint-checked.
 
 My style: **pick proven open-source building blocks, compose them
-honestly, and write down every decision so the next person on the team
-can audit, challenge, or replace it**.
+correctly (including the classes of composition bug that proven
+libraries don't protect you from), write down every decision so the
+next person on the team can audit, challenge, or replace it.**
 
-If your team needs someone who owns "the shape of the whole system"
-rather than a single component — that's the role I do best.
+If your team needs someone who can own "the shape of the whole system"
+AND show up to pair-program the tricky parts — that's the role I do
+best.
 
 ---
 
@@ -90,12 +98,14 @@ technical team can verify.
   not just what it does. The goal is that someone new to the
   codebase can work productively within a day — not a week.
 
-- **I catch the things a generalist should catch.** One concrete
-  example: when the code validates authentication tokens, there's a
-  specific test that confirms the classic `alg=none` downgrade attack
-  is rejected (this is a JWT implementation pitfall that has
-  historically compromised production systems). I know the class of
-  bug to watch for and encode that knowledge in tests.
+- **I catch the cross-cutting bug classes an architect should catch
+  — and I write the test that proves it.** One concrete example: when
+  the code validates authentication tokens, there's a specific test
+  that confirms the classic `alg=none` downgrade attack is rejected
+  (this is a JWT implementation pitfall that has historically
+  compromised production systems). I know the class of bug to watch
+  for and encode that knowledge in tests — the tests are in the repo,
+  under my own authorship, not delegated to "whoever picks this up".
 
 - **I follow rules I've written for myself.** The repo contains
   `CLAUDE.md`, a charter of engineering rules — about testing, about
@@ -135,13 +145,17 @@ probably not the strongest candidate:
 
 ## What kind of role fits
 
-**Target level.** Staff / Principal engineer; architect; tech lead.
-Someone responsible for "the shape of the thing", not a single
-sub-component.
+**Target level.** Staff / Principal engineer; hands-on architect; tech
+lead with real commit activity. Someone responsible for "the shape of
+the thing" AND the tricky parts of the code that enforce it — not a
+pure-strategy architect who only produces slides.
 
 **Target function.** Backend and platform architecture. Designing
-protocols, choosing build systems, setting team conventions, mentoring,
-writing ADRs, running technical reviews.
+protocols, choosing build systems, enforcing type contracts across
+language boundaries, setting team conventions, mentoring, writing
+ADRs, running technical reviews — *and* implementing the hard seams
+myself (build-graph surgery, cross-runtime type guarantees, protocol
+multiplexing, graceful-degradation paths).
 
 **Where the two repos land.**
 
