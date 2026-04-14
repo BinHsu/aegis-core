@@ -82,8 +82,8 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 ### Go Gateway Skeleton
 - [x] Establish `gateway_go/` with Go module and Bazel build (rules_go) — Session 5
 - [x] HTTP/2 gRPC server acting as passthrough to C++ engine — Phase 2 A1 (`/healthz` proxies `Engine.Health`)
-- [ ] Implement `RedactedPCM` type with safe log formatter (ADR-0005 R3) — Phase 2 A3 (when PCM actually flows through Go)
-- [ ] Implement Hexagonal Architecture interface boundaries for auth, storage, telemetry (ARCH §5) — Phase 2 A2+
+- [x] Implement `RedactedPCM` type with safe log formatter (ADR-0005 R3) — Phase 2 A4 follow-up. `gateway_go/internal/sensitive.RedactedPCM` implements `fmt.Formatter` (covers every verb), `fmt.Stringer`, `fmt.GoStringer`, `json.Marshaler`, and `slog.LogValuer` — all render `[REDACTED PCM N bytes]` matching the C++ `SensitiveBytes` format for cross-runtime grep parity. `Pipeline.WritePCM` now takes `sensitive.RedactedPCM` (compile-time guard); `.Bytes()` is the single ADR-0005-audited unwrap at the proto-Send boundary.
+- [~] Implement Hexagonal Architecture interface boundaries for auth, storage, telemetry (ARCH §5) — Phase 2 A2+. **Auth port landed** (`gateway_go/internal/auth.Provider`, NoOp + StaticJWT implementations, interceptor wiring). **Storage / Telemetry ports descoped** — no callers today, adding them speculatively would be YAGNI; see Phase 2 Known Gaps for when each port's first caller is expected to arrive.
 
 ### Models
 - [x] Create `/models/` directory with `manifest.json` and download script that verifies SHA256 before mmap (ARCH §10.1) — Phase 0 / Session 4c (`tools/scripts/download_models.sh`)
@@ -98,29 +98,111 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 ### Gateway Functionality
 - [x] Go GW: gRPC client to engine; `/healthz` aggregates gateway + engine status (Phase 2 A1)
 - [x] Proto codegen distribution strategy (ADR-0013): checked-in `.pb.go` under `gateway_go/gen/go/` via `buf generate`; Bazel still authoritative; CI drift check via `proto_gen.sh + git diff --exit-code`
-- [ ] Go GW: implement Pion WebRTC to accept browser UDP frames
-- [ ] Go GW: implement `gRPC-Web` multiplexing for cloud-mode viewer transport
+- [x] Go GW: implement Pion WebRTC to accept browser UDP frames — non-trickle SDP exchange via `internal/webrtc.Negotiator` (Phase 2 A3); loopback ICE+RTP test passing
+- [x] Go GW: wire full audio pipeline (WebRTC → pion/opus decode → 16 kHz mono PCM → engine `StreamTranscribe` → `Session.Broadcast`) via `internal/pipeline.Pipeline` and factory-injected `AudioPipelineStart` (Phase 2 A4); bufconn unit tests + `AEGIS_ENGINE_ADDR`-gated integration test
+- [x] Go GW: implement `gRPC-Web` multiplexing for cloud-mode viewer transport — `github.com/improbable-eng/grpc-web` v0.15.0 wrapped around the same `grpc.Server` instance; the HTTP listener (`:8080`) sniffs `IsGrpcWebRequest` / `IsAcceptableGrpcCorsRequest` and routes matching traffic to the wrapped server, leaving `/healthz` and `/ws/viewer` on the native HTTP mux. Origin allowlist is permissive for Local mode (ADR-0007 LAN scope); Cloud mode will tighten via a config-driven origin list (see Phase 2 Known Gaps).
 - [x] Go GW: implement **WebSocket + Protobuf** transport for local-mode viewer (ADR-0007) — Phase 2 A5 (`/ws/viewer?session_id=&token=`, binary `aegis.v1.ViewerEvent` frames, `Sec-WebSocket-Protocol: aegis.v1.transcript`, shares Registry+Issuer with the gRPC Gateway)
 - [x] Go GW: implement session registry (ADR-0004 `Session` struct) — in-memory, per-replica (Phase 2 A2). Subscribe/Broadcast fan-out added in Phase 2 A5 (per-subscription sequence, slow-consumer drop policy).
-- [ ] Go GW: implement `ControlEvent{PAUSE|RESUME|END_STREAM}` generation on WebRTC state transitions (ADR-0006)
-- [ ] Go GW: configure keepalive — 30s Time / 10s Timeout for both gRPC to C++ and gRPC-Web to viewers (ADR-0006)
+- [x] Go GW: implement `ControlEvent{PAUSE|RESUME|END_STREAM}` generation on WebRTC state transitions (ADR-0006) — Phase 2 A4 (ICE `Disconnected`→PAUSE, `Connected`→RESUME, `Failed`→END_STREAM, translated inside `cmd/gateway` factory closure from `webrtc.Negotiator.ICEChan`)
+- [x] Go GW: configure keepalive — 30s Time / 10s Timeout for both gRPC to C++ and gRPC-Web to viewers (ADR-0006) — server-side `keepalive.ServerParameters{Time: 30s, Timeout: 10s}` + `keepalive.EnforcementPolicy{MinTime: 10s, PermitWithoutStream: true}` on the `aegis.v1.Gateway` server; matching `keepalive.ClientParameters` on the engine dial client. Named constants in `cmd/gateway/main.go` so ADR-0006 stays the single source of truth. Detection window ≤ 40 s for silent viewer disconnects (laptop lid closed, cable pulled) so fan-out channels are reclaimed promptly.
 - [x] Go GW: implement JWT session-token issuance and verification (ADR-0001) — Phase 2 A2 (HS256, process-scoped key, alg=none rejected, cross-session replay rejected)
-- [x] Go GW: implement `aegis.v1.Gateway` server: CreateMeeting + EndMeeting full; JoinAsViewer real fan-out via `Session.Subscribe` (Phase 2 A5, replacing A2 stub); NegotiateWebRTC UNIMPLEMENTED until A3
-- [ ] Go GW: implement graceful shutdown with `terminationGracePeriodSeconds: 14400` matching `session_max_lifetime` (ADR-0006)
+- [x] Go GW: implement `aegis.v1.Gateway` server: CreateMeeting + EndMeeting full; JoinAsViewer real fan-out via `Session.Subscribe` (Phase 2 A5, replacing A2 stub); NegotiateWebRTC real SDP exchange (Phase 2 A3)
+- [x] Go GW: implement graceful shutdown with `terminationGracePeriodSeconds: 14400` matching `session_max_lifetime` (ADR-0006) — configurable via `AEGIS_GATEWAY_DRAIN_TIMEOUT` env var (duration parseable by `time.ParseDuration`), default 30 s for Local-mode developer feel. Cloud deployment sets it to 14400 s (4 h) to match the K8s `terminationGracePeriodSeconds` and ADR-0001 `session_max_lifetime`. Shutdown races `grpcSrv.GracefulStop()` against `shutdownCtx`; on timeout the forced `grpcSrv.Stop()` fallback guarantees the drain window is a hard UPPER bound, not a lower bound. HTTP server shuts first (fast), then gRPC.
 
 ### Dual-Mode Wiring
-- [ ] Local mode: implement `bazel run //:app_local` that starts Go GW and spawns C++ engine as child (ARCH §5)
-- [ ] Local mode: bind Go GW to 0.0.0.0 for LAN viewers (ADR-0007)
-- [ ] Local mode: dummy auth middleware (ARCH §8 Local Mode Interface Fallback)
-- [ ] Cloud mode: Cognito JWT middleware
-- [ ] Cloud mode: Pod Identity integration scaffolding
+- [x] Local mode: implement `bazel run //:app_local` that starts Go GW and spawns C++ engine as child (ARCH §5) — `gateway_go/cmd/app_local/main.go` locates both binaries via Bazel runfiles, polls engine Health until Ready before starting the gateway, prefixes interleaved child stdout/stderr with `[engine]`/`[gateway]`, and on SIGINT/SIGTERM tears down the gateway first (drain) then the engine; root alias `//:app_local` in `BUILD.bazel`.
+- [x] Local mode: bind Go GW to 0.0.0.0 for LAN viewers (ADR-0007) — default HTTP/gRPC bind is `":8080"` / `":9090"` which Go's `net.Listen` resolves to `0.0.0.0:port` (bind on all interfaces) per stdlib convention. Explicit comment in `cmd/gateway/main.go` documents WHY — to prevent a well-meaning maintainer from narrowing to `localhost` thinking it's a security improvement (it would break the LAN QR-code viewer flow the ADR calls out).
+- [x] Local mode: dummy auth middleware (ARCH §8 Local Mode Interface Fallback) — `gateway_go/internal/auth.NoOpProvider` plus `auth.UnaryInterceptor` / `auth.StreamInterceptor` wired into the gRPC server. Every RPC gets the synthetic `Principal{UserID: "local", TenantID: "", Mode: ModeLocal}` in ctx via `auth.WithPrincipal`; handlers that care (tenant-scoped queries, host-only policy) read it via `auth.FromContext`.
+- [~] Cloud mode: Cognito JWT middleware — **SCAFFOLDED, NOT production-wired.** `auth.StaticJWTProvider` validates HS256-signed Bearer tokens against a pre-shared secret (integration-test grade). Validates signing method (rejects `alg=none` downgrade attacks per its dedicated test), `aud` / `exp`, and extracts `sub` + `custom:tenant_id` claims into the Principal. Live Cognito JWKS fetching is Phase 3 scope — see Phase 2 Known Gaps.
+- [~] Cloud mode: Pod Identity integration scaffolding — **DESCOPED from Phase 2.** No AWS callers exist yet (no DynamoDB / S3 / SQS). Will wire `github.com/aws/aws-sdk-go-v2/config.LoadDefaultConfig` when Phase 4 packaging adds the EKS deployment surface — Pod Identity credentials flow via the service-account IAM role with zero Go code changes at that point. See Phase 2 Known Gaps.
 
 ### Testing
 - [ ] Unit tests: C++ (`gtest`), Go (`go test`)
-- [ ] Integration test: send raw WAV files through Go GW and verify C++ transcriptions are streamed back
-- [ ] **WER golden audio regression suite** — 10–20 fixtures in English, Traditional Chinese, code-switch, multi-speaker, noise; WER threshold enforced in CI (ARCH §10.5)
-- [ ] `buf breaking` check on every proto change
+- [x] Integration test: send raw WAV files through Go GW and verify C++ transcriptions are streamed back — Phase 2 A4 follow-up; `TestTranscribeJFKLiveEngine` in `gateway_go/internal/pipeline/pipeline_test.go` gated on `AEGIS_ENGINE_ADDR`, feeds `@whisper_cpp//:samples/jfk.wav` through `Pipeline.WritePCM`, asserts transcript contains "ask not" / "your country" (parity with `engine_cpp/tests/integration/stream_transcribe_test.cc`).
+- [~] **WER golden audio regression suite** — 10–20 fixtures in English, Traditional Chinese, code-switch, multi-speaker, noise; WER threshold enforced in CI (ARCH §10.5). **DESCOPED from Phase 2 — see "Known Gaps" below.** In place of a full regression suite, `TestTranscribeJFKLiveEngine` (see above) acts as a single-fixture English smoke test: it gates on transcript content equality, not WER, which is sufficient to catch catastrophic regressions (model file corruption, resampling off-by-factor, wrong decoder) but **NOT** sufficient to catch subtle accuracy drift.
+- [x] `buf breaking` check on every proto change — configured in `.pre-commit-config.yaml:98-104` using `bufbuild/buf` v1.67.0 `buf-breaking` hook against `main`; runs on every commit. `buf.yaml` uses `FILE` breaking rules with a single exception (`FILE_SAME_GO_PACKAGE`, rationale inline in that file) because this project is the only consumer of its own protos (ADR-0013).
 - [ ] Load test scaffolding: k6 driving N concurrent WebRTC sessions (nightly)
+
+### Known Gaps (Phase 2 — tracked here so new contributors see them)
+
+> *Phase 2's stated scope is "wire it up to the point it works."* The
+> items below are **deliberately** shallow or absent, not forgotten.
+> Each entry states the gap, why it was descoped, and what a future
+> contributor needs to know before depending on the affected path.
+
+- **No WER regression suite.** The canonical measure of ASR quality is Word
+  Error Rate on a curated corpus — 10–20 fixtures spanning English, Traditional
+  Chinese, code-switch, multi-speaker, and noise conditions, with a CI
+  threshold (e.g. `WER_EN < 0.08`) that fails the build if accuracy drifts.
+  This repo ships without one. **Why descoped:**
+    1. *Ground truth sourcing is expensive.* Can't use YouTube (licensing) or
+       random podcasts (CC-BY-NC disallows commercial use). Public-domain
+       options (LibriSpeech, Common Voice) cover English well but thin out on
+       Taiwan-accented Traditional Chinese, which is a primary target language
+       here (ADR-0012 "English + Traditional Chinese baseline").
+    2. *Ground truth quality needs human audit.* Hand-written transcripts with
+       a second-pass reviewer, per language. Whisper output cannot be used as
+       ground truth — that's circular.
+    3. *Harness isn't the hard part.* The hard part is the corpus; `jiwer` /
+       `sacrebleu` give us WER arithmetic, punctuation normalization, and
+       case-folding out of the box on the Python side (Go equivalents are
+       thinner but tractable). What we lack is the audio.
+  **Stopgap in place:** `TestTranscribeJFKLiveEngine` (see Testing above)
+  asserts transcript content equality on one English fixture (`jfk.wav`).
+  That catches whole-chain regressions (wrong model, broken resampling,
+  corrupted Opus decode) but NOT subtle WER drift. If someone swaps the
+  whisper model or tweaks Opus params, this gap means the quality regression
+  will only surface in user reports, not CI.
+  **How to close it:** pick the corpus, commission / record the audio,
+  land ground-truth transcripts, then the harness is a 1-day wrap. Phase 3+
+  territory, likely paired with the first real users' consent to use
+  their meeting recordings as anchor fixtures.
+
+- **Cognito JWT middleware is stubbed, not production-wired.** The
+  `internal/auth` package lands a real `AuthProvider` port, a working
+  `NoOpProvider` for Local mode, and a `StaticJWTProvider` stub for Cloud
+  mode that validates HS256 (shared-secret) or RS256-with-hardcoded-JWKS
+  tokens. **What's missing:** live JWKS fetching from a Cognito User Pool
+  (`https://cognito-idp.{region}.amazonaws.com/{pool}/.well-known/jwks.json`),
+  JWKS cache with periodic refresh, and mapping Cognito claims
+  (`cognito:groups`, `custom:tenant_id`) to the internal `Principal`.
+  **Why descoped:** real AWS Cognito wiring needs a live User Pool to
+  test against, which is a Phase 3 frontend-login concern — the first
+  caller is the React login flow (Phase 3 ROADMAP line 143). Writing the
+  JWKS client now without a caller exercising it is speculative. **How to
+  close:** drop in `github.com/lestrrat-go/jwx/v2` (JWKS client +
+  caching), point it at the real User Pool URL (config-driven), and wire
+  claim extraction — ~half a day once the Cognito pool exists.
+
+- **Pod Identity integration is descoped from Phase 2 entirely.** ADR-0001
+  says the Gateway authenticates to DynamoDB/S3 via EKS Pod Identity
+  (IRSA's successor). **Why descoped:** Phase 2 has zero AWS callers —
+  no DynamoDB, no S3, no SQS. Pod Identity's only value is when you're
+  actually making AWS API calls. **How to close:** when Phase 4 OCI
+  packaging adds the EKS landing-zone deployment, wire
+  `github.com/aws/aws-sdk-go-v2/config.LoadDefaultConfig` — it picks up
+  Pod Identity credentials via the service-account IAM role without any
+  Go-side code changes. Tracking this as Phase 4 ops wiring, not a Go
+  code task.
+
+- **No production-grade load test cadence.** A `k6` skeleton script will
+  land in `tests/load/` with a single scenario (N concurrent
+  WebSocket viewers fan-out), runnable via `make load-smoke`. That
+  exercises "it doesn't crash under 100 connections." **What's missing:**
+  sustained soak, p99 latency SLO gates, WebRTC host simulation (requires
+  a browser or pion-driven harness), multi-region egress shaping, CI
+  cadence. Phase 4 operational concern — deploy surface arrives with real
+  infrastructure, not before.
+
+- **Hexagonal ports partially landed.** ARCH §5 calls out auth, storage,
+  telemetry, and filesystem as the ports. Phase 2 lands `AuthProvider`
+  (real) and stops. `StorageProvider` and `TelemetryProvider` have zero
+  callers today (no persisted meeting metadata, no OpenTelemetry
+  shipper), so writing those ports now would be pure speculation.
+  **How to close:** introduce each port when its first caller arrives —
+  `StorageProvider` when we persist meeting records (Phase 3+),
+  `TelemetryProvider` when we add OTel shippers (Phase 4+
+  observability sprint).
 
 ---
 

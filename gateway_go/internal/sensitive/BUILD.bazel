@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sensitive",
+    srcs = ["redacted_pcm.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/sensitive",
+    visibility = ["//gateway_go:__subpackages__"],
+    # No deps beyond stdlib — fmt / encoding/json / log/slog are all
+    # core. Keeping this package dep-free is itself an ADR-0005
+    # guarantee: there's no third-party logger/formatter lurking that
+    # might bypass the Format implementation.
+)
+
+go_test(
+    name = "sensitive_test",
+    size = "small",
+    srcs = ["redacted_pcm_test.go"],
+    embed = [":sensitive"],
+)

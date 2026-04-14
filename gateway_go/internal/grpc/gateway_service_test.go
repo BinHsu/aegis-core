@@ -218,6 +218,28 @@ func TestEndMeetingUnknownSession(t *testing.T) {
 	}
 }
 
+// stubNegotiator implements WebRTCNegotiator for unit tests. It is
+// defined inside package grpc (the internal test package) so it does
+// not pull the Pion dependency into this test binary.
+type stubNegotiator struct {
+	negotiateFn  func(context.Context, string, string) (string, error)
+	closedSessID string
+}
+
+func (s *stubNegotiator) Negotiate(ctx context.Context, sessionID, offerSDP string) (string, error) {
+	if s.negotiateFn != nil {
+		return s.negotiateFn(ctx, sessionID, offerSDP)
+	}
+	return "v=0\r\na=stub-answer\r\n", nil
+}
+
+func (s *stubNegotiator) Close(sessionID string) error {
+	s.closedSessID = sessionID
+	return nil
+}
+
+// TestNegotiateWebRTCUnimplemented verifies that a GatewayService wired
+// without a WebRTCNegotiator (the nil/test path) returns UNIMPLEMENTED.
 func TestNegotiateWebRTCUnimplemented(t *testing.T) {
 	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
 	client, cleanup := setupServer(t, svc)
@@ -228,7 +250,103 @@ func TestNegotiateWebRTCUnimplemented(t *testing.T) {
 		OfferSdp:  "v=0\r\n",
 	})
 	if got := status.Code(err); got != codes.Unimplemented {
-		t.Fatalf("NegotiateWebRTC: got code %v, want Unimplemented", got)
+		t.Fatalf("NegotiateWebRTC (nil neg): got code %v, want Unimplemented", got)
+	}
+}
+
+// TestNegotiateWebRTCDelegatesToNegotiator verifies that, when a
+// WebRTCNegotiator is injected, NegotiateWebRTC calls it and returns
+// its answer SDP.
+func TestNegotiateWebRTCDelegatesToNegotiator(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	stub := &stubNegotiator{}
+	svc.webrtcNeg = stub
+	client, cleanup := setupServer(t, svc)
+	defer cleanup()
+
+	created, err := client.CreateMeeting(context.Background(), &aegisv1.CreateMeetingRequest{
+		RagId: "corpus-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateMeeting: %v", err)
+	}
+
+	resp, err := client.NegotiateWebRTC(context.Background(), &aegisv1.NegotiateWebRTCRequest{
+		SessionId: created.GetSessionId(),
+		OfferSdp:  "v=0\r\n",
+	})
+	if err != nil {
+		t.Fatalf("NegotiateWebRTC: %v", err)
+	}
+	if resp.GetAnswerSdp() != "v=0\r\na=stub-answer\r\n" {
+		t.Fatalf("answer_sdp: got %q", resp.GetAnswerSdp())
+	}
+}
+
+// TestNegotiateWebRTCValidatesInputs covers INVALID_ARGUMENT and
+// NOT_FOUND paths on NegotiateWebRTC.
+func TestNegotiateWebRTCValidatesInputs(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	svc.webrtcNeg = &stubNegotiator{}
+	client, cleanup := setupServer(t, svc)
+	defer cleanup()
+
+	tests := []struct {
+		name string
+		req  *aegisv1.NegotiateWebRTCRequest
+		want codes.Code
+	}{
+		{
+			name: "missing session_id",
+			req:  &aegisv1.NegotiateWebRTCRequest{OfferSdp: "v=0\r\n"},
+			want: codes.InvalidArgument,
+		},
+		{
+			name: "missing offer_sdp",
+			req:  &aegisv1.NegotiateWebRTCRequest{SessionId: "s1"},
+			want: codes.InvalidArgument,
+		},
+		{
+			name: "unknown session",
+			req:  &aegisv1.NegotiateWebRTCRequest{SessionId: "ghost", OfferSdp: "v=0\r\n"},
+			want: codes.NotFound,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.NegotiateWebRTC(context.Background(), tc.req)
+			if got := status.Code(err); got != tc.want {
+				t.Fatalf("%s: got code %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEndMeetingCallsNegotiatorClose verifies that EndMeeting invokes
+// WebRTCNegotiator.Close with the correct session ID.
+func TestEndMeetingCallsNegotiatorClose(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	stub := &stubNegotiator{}
+	svc.webrtcNeg = stub
+	client, cleanup := setupServer(t, svc)
+	defer cleanup()
+
+	created, err := client.CreateMeeting(context.Background(), &aegisv1.CreateMeetingRequest{
+		RagId: "corpus-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateMeeting: %v", err)
+	}
+
+	if _, err := client.EndMeeting(context.Background(), &aegisv1.EndMeetingRequest{
+		SessionId: created.GetSessionId(),
+	}); err != nil {
+		t.Fatalf("EndMeeting: %v", err)
+	}
+
+	if stub.closedSessID != created.GetSessionId() {
+		t.Fatalf("Negotiator.Close not called with session id; got %q, want %q",
+			stub.closedSessID, created.GetSessionId())
 	}
 }
 

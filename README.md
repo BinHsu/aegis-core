@@ -50,7 +50,7 @@ implementation in progress.
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
 | **Phase 1** | Bazel monorepo, proto contracts, C++ engine + whisper.cpp + StreamTranscribe, Go Gateway skeleton, Vite/React frontend with provider abstractions | ✅ Done |
-| **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1 shipped (Gateway → Engine gRPC client, ADR-0013 proto codegen distribution); A2-A5 pending |
+| **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1–A5 shipped; a few items deliberately descoped — see [Known Gaps](#known-gaps-phase-2) below |
 | **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
@@ -181,45 +181,96 @@ into `.bazel_cache/`, `.bazelisk/`, `.bufsk/`, and `models/` per
 git clone https://github.com/BinHsu/aegis-core.git
 cd aegis-core
 
-# Build the C++ engine skeleton (cold ~10 min first time, <1s incremental)
-./tools/bazelisk/bazelisk build //engine_cpp/cmd/engine:engine
-
-# Run unit + integration tests (skips transcribe test if model not fetched)
-./tools/bazelisk/bazelisk test //engine_cpp/...
-
-# Optional: fetch the test model (75 MB) and run the real-inference test
+# One-time: fetch the whisper model (~75 MB, SHA-256-verified)
 ./tools/scripts/download_models.sh --all
-./tools/bazelisk/bazelisk test //engine_cpp/tests/integration:whisper_transcribe_test \
-  --test_env=AEGIS_MODEL_DIR="$(pwd)/models"
-# [ RUN      ] WhisperTranscribeTest.JfkAskNot
-# [       OK ] WhisperTranscribeTest.JfkAskNot (370 ms)
 
-# Run the engine binary
-./bazel-bin/engine_cpp/cmd/engine/engine
-# aegis-engine: listening on 0.0.0.0:50051
-#   budget_total_bytes=5767168000
-#   model_path=models/ggml-tiny.en.bin
-#   version=0.1.0-phase1-s4d
-#   whisper: WHISPER : COREML = 0 | ... | CPU : NEON = 1 | ... | ACCELERATE = 1 | ...
+# Run everything — engine + gateway, one command
+./tools/bazelisk/bazelisk run //:app_local
+# [launcher] starting engine: .../engine_cpp/cmd/engine/engine
+# [engine] aegis-engine: listening on 0.0.0.0:50051
+# [engine]   model_path=/path/to/aegis-core/models/ggml-tiny.en.bin
+# [launcher] engine ready at localhost:50051 (model=ggml-tiny.en.bin)
+# [launcher] starting gateway: .../gateway_go/cmd/gateway/gateway_/gateway
+# [launcher] gateway up; HTTP :8080 (/healthz, /ws/viewer) and gRPC :9090
+# [launcher] press Ctrl-C to stop
 
-# Run the Go Gateway (in another terminal)
-./tools/bazelisk/bazelisk build //gateway_go/cmd/gateway:gateway
-./bazel-bin/gateway_go/cmd/gateway/gateway_/gateway
-# aegis-gateway: listening on :8080
-#   version=0.1.0-phase1-s5
-$ curl -s http://localhost:8080/healthz
-# {"ready":true,"version":"0.1.0-phase1-s5"}
+# Verify both are wired (in another terminal)
+curl -s http://localhost:8080/healthz
+# {"ready":true,"version":"0.1.0-phase2-a4","active_sessions":0,
+#  "engine":{"reachable":true,"addr":"localhost:50051","ready":true,
+#            "model":"...ggml-tiny.en.bin","backend":"cpu"}}
+
+# Ctrl-C — gateway drains first, then engine, then launcher exits
 ```
 
-The engine responds to `aegis.v1.Engine.Health` with ready=true and
-service metadata, and `aegis.v1.Engine.StreamTranscribe` runs the
-full state machine per ADR-0006 / ADR-0010. Override the model path
-with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`. The gateway's Phase 2
-wiring will have it act as a client to the engine over gRPC and
-terminate WebRTC from the host browser.
+**Running pieces individually** (for debugging or CI):
 
-> *Last verified against `main`: 2026-04-13 (Phase 2 A1 — gateway-engine
-> gRPC pipeline + ADR-0013 proto codegen distribution).*
+```bash
+# Engine only
+./tools/bazelisk/bazelisk run //engine_cpp/cmd/engine:engine
+# aegis-engine: listening on 0.0.0.0:50051
+
+# Gateway only (needs an engine reachable at AEGIS_ENGINE_ADDR, default localhost:50051)
+./tools/bazelisk/bazelisk run //gateway_go/cmd/gateway:gateway
+
+# Full Go+C++ E2E transcription test: real engine, real WAV, asserts "ask not" / "your country"
+./tools/bazelisk/bazelisk run //engine_cpp/cmd/engine:engine   # terminal 1
+AEGIS_ENGINE_ADDR=localhost:50051 \
+  ./tools/bazelisk/bazelisk test //gateway_go/internal/pipeline:pipeline_test \
+  --test_env=AEGIS_ENGINE_ADDR --test_output=errors              # terminal 2
+
+# Engine unit + integration tests (C++ gtest; skips transcribe test if model not fetched)
+./tools/bazelisk/bazelisk test //engine_cpp/...
+```
+
+Override the whisper model with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`.
+The engine exposes `aegis.v1.Engine.Health` (readiness + backend / model
+metadata) and `aegis.v1.Engine.StreamTranscribe` (the full state machine
+per ADR-0006 / ADR-0010). The gateway terminates WebRTC from the host
+browser, decodes Opus → 16 kHz PCM, proxies to the engine's bidi stream,
+and fans transcript egress out to viewers over gRPC-Web (Cloud mode) or
+WebSocket (Local mode).
+
+> *Last verified against `main`: 2026-04-14 (Phase 2 A1–A5 + ops polish —
+> audio pipeline wired end-to-end, `//:app_local` one-command bundle,
+> ADR-0005 R3 `RedactedPCM` type).*
+
+---
+
+## Known Gaps (Phase 2)
+
+Phase 2's stated scope was **"wire it up to the point it works"** — a
+demoable Local mode, end-to-end transcription, nothing more. A handful
+of items intentionally ship shallow or absent. Each is tracked in
+[`ROADMAP.md` → Phase 2 → Known Gaps](ROADMAP.md) with full rationale;
+the short list, so you don't trip over a missing surface expecting it
+to be there:
+
+- **No WER regression suite** — a single-fixture English smoke test
+  (`jfk.wav` content-equality check) catches catastrophic regressions
+  but NOT subtle accuracy drift. Closing this requires a curated
+  multilingual audio corpus with human-audited ground truth, which is
+  Phase 3+ territory (corpus sourcing / licensing is the hard part,
+  not the harness).
+- **Cognito JWT auth is stubbed**, not production-wired. `AuthProvider`
+  port exists with a real `NoOpProvider` for Local mode and a
+  `StaticJWTProvider` stub for Cloud mode. Live JWKS fetching lands
+  alongside the Phase 3 frontend login flow.
+- **Pod Identity integration is absent.** Phase 2 has no AWS callers —
+  Pod Identity's value appears with the Phase 4 EKS deployment surface.
+- **Load testing is skeleton-only.** `tests/load/` ships a runnable k6
+  script, but SLO gates, soak scenarios, and CI cadence belong to
+  Phase 4 ops.
+- **Hexagonal ports partial.** `AuthProvider` is the only port with a
+  real implementation. `StorageProvider` / `TelemetryProvider` have
+  zero callers today — adding them speculatively would be the exact
+  kind of "framework for future us" code this project avoids.
+
+These are deliberate, not oversights. If you're evaluating the repo for
+production use, treat them as open line items; if you're reading it as
+a portfolio artifact, treat them as the honest scope-management that
+the rest of the work documents (see `docs/incidents.md` for the same
+discipline applied to dev-time blockers).
 
 ---
 

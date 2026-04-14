@@ -1,6 +1,6 @@
 // Package main is the entrypoint for the Aegis Core Go Gateway.
 //
-// As of Phase 2 A5, this binary runs three concurrent servers:
+// As of Phase 2 A4, this binary runs three concurrent servers:
 //
 //   - HTTP on :8080 — /healthz probe (HTTP/1.1, no TLS) and the
 //     /ws/viewer Local-mode WebSocket transport for viewer events
@@ -9,17 +9,20 @@
 //     viewers (gRPC-Web in front of this) plus the host's
 //     CreateMeeting / EndMeeting / NegotiateWebRTC RPCs.
 //
-// All three share one Engine client (the C++ engine on :50051), one
-// Session registry, and one JWT issuer — so a token issued by
-// CreateMeeting is accepted by JoinAsViewer (gRPC) and /ws/viewer
-// (WebSocket) interchangeably.
+// All servers share one Engine client (the C++ engine on :50051), one
+// Session registry, one JWT issuer, and one WebRTC Negotiator — so a
+// token issued by CreateMeeting is accepted by JoinAsViewer (gRPC) and
+// /ws/viewer (WebSocket) interchangeably, and ICE state is tied to the
+// same session lifetime.
 //
-// Future phases:
-//
-//	Phase 2 A3 : Pion WebRTC ingest — NegotiateWebRTC flips from
-//	             UNIMPLEMENTED to a real SDP exchange.
-//	Phase 2 A4 : Full pipeline — host audio → WebRTC → PCM → engine
-//	             StreamTranscribe → session.Broadcast() to viewers.
+// A4 wires the full audio pipeline. The factory closure injected into
+// internal/grpc as AudioPipelineStart captures the process ctx, the
+// Negotiator, and the Engine client so internal/grpc stays free of
+// pion and pipeline imports. On NegotiateWebRTC success, the closure
+// pulls RTP payloads off negotiator.AudioChan(sid), decodes them via
+// pion/opus, and sends them as PcmChunks to the engine's
+// StreamTranscribe stream; transcript egress is fanned out via
+// session.Broadcast to viewers on both transports.
 //
 // The binary is built via Bazel:
 //
@@ -38,22 +41,51 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/improbable-eng/grpc-web/go/grpcweb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
 	gatewaygrpc "github.com/BinHsu/aegis-core/gateway_go/internal/grpc"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
+	aegiswebrtc "github.com/BinHsu/aegis-core/gateway_go/internal/webrtc"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/ws"
 )
 
 const (
+	// Empty host in ":8080" / ":9090" is Go's "bind on all interfaces"
+	// spelling (net.Listen unpacks it to 0.0.0.0:8080). This is the
+	// Local-mode LAN-viewer requirement per ADR-0007 — explicit here
+	// because a maintainer might otherwise "narrow" it to localhost
+	// thinking it's a security improvement. It is NOT: the LAN QR-code
+	// viewer flow depends on other devices on the LAN being able to
+	// reach the Gateway. Cloud mode sits behind an ingress that does
+	// the narrowing at the network layer (ADR-0006 / ARCH §5).
 	defaultListenAddr = ":8080"
 	defaultGRPCAddr   = ":9090"
 	defaultEngineAddr = "localhost:50051"
-	version           = "0.1.0-phase2-a5"
+	version           = "0.1.0-phase2-a4"
 	engineRPCTimeout  = 2 * time.Second
+
+	// defaultDrainTimeout is the bound on shutdown. Short enough for a
+	// Local-mode developer's Ctrl-C to feel instant; long enough for
+	// in-flight viewer streams to drain via GracefulStop. Cloud mode
+	// sets AEGIS_GATEWAY_DRAIN_TIMEOUT=14400s to match the
+	// terminationGracePeriodSeconds in ADR-0006.
+	defaultDrainTimeout = 30 * time.Second
+
+	// keepaliveTime / keepaliveTimeout follow ADR-0006 exactly: a viewer
+	// that silently vanishes (laptop lid closed, network cable pulled)
+	// is detected within Time + Timeout = 40 s and its fan-out channel
+	// is reclaimed. Without this, Go gRPC's 2-hour default keepalive
+	// would hold fan-out resources for disconnected viewers.
+	keepaliveTime           = 30 * time.Second
+	keepaliveTimeout        = 10 * time.Second
+	keepaliveMinTime        = 10 * time.Second
 )
 
 func main() {
@@ -72,11 +104,18 @@ func main() {
 
 	// Dial the engine. grpc.NewClient (the 1.64+ preferred form) does
 	// NOT block on a live TCP connection — the RPC at call time drives
-	// the dial. ADR-0006 keepalive tuning lands when we have bidi
-	// streams (A4) that need aggressive liveness detection.
+	// the dial. Keepalive settings match ADR-0006 so a dead engine
+	// (pod crash, cable pull) is detected within 40 s on any open
+	// StreamTranscribe bidi stream and the pipeline errors out instead
+	// of hanging forever.
 	conn, err := grpc.NewClient(
 		engineAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                keepaliveTime,
+			Timeout:             keepaliveTimeout,
+			PermitWithoutStream: true,
+		}),
 	)
 	if err != nil {
 		log.Fatalf("aegis-gateway: grpc.NewClient %q: %v", engineAddr, err)
@@ -93,20 +132,128 @@ func main() {
 		log.Fatalf("aegis-gateway: token.NewIssuer: %v", err)
 	}
 
+	// Signal-driven process context. Shared between all long-lived
+	// subsystems: audio pipelines (so they tear down on SIGTERM), the
+	// HTTP/gRPC servers' shutdown path, and anything we add later.
+	// Creating it up here — rather than right before the <-ctx.Done()
+	// wait — lets the pipeline factory closure capture a process-scoped
+	// ctx that outlives the per-RPC NegotiateWebRTC context.
+	processCtx, stopSignals := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+
+	negotiator := aegiswebrtc.New()
+
+	// Factory closure for the audio pipeline. Called once per
+	// successful NegotiateWebRTC. Returns a stop function the gRPC
+	// service calls on EndMeeting (or on re-negotiation). Captures
+	// processCtx so the pipeline outlives the NegotiateWebRTC RPC
+	// context (which cancels as soon as the RPC returns).
+	startAudioPipeline := func(sess *session.Session, sessionID string) (func(), error) {
+		// Per-pipeline context derived from the process context —
+		// cancelled by stop() on EndMeeting, or on process shutdown
+		// via processCtx propagation.
+		pipeCtx, pipeCancel := context.WithCancel(processCtx)
+
+		p, pErr := pipeline.New(pipeCtx, engine, sess, sessionID)
+		if pErr != nil {
+			pipeCancel()
+			return nil, pErr
+		}
+
+		audioCh := negotiator.AudioChan(sessionID)
+		iceCh := negotiator.ICEChan(sessionID)
+
+		go func() {
+			for {
+				select {
+				case payload, ok := <-audioCh:
+					if !ok {
+						// Channel is never closed by the Negotiator
+						// (see AudioChan docs); this case exists for
+						// symmetry if that contract ever changes.
+						return
+					}
+					if err := p.WriteRTPPayload(payload); err != nil {
+						// Single-frame decode/send errors are logged
+						// but not fatal — one corrupt Opus packet
+						// shouldn't kill an otherwise-healthy session.
+						log.Printf("aegis-gateway: pipeline write (session=%s): %v", sessionID, err)
+					}
+				case state, ok := <-iceCh:
+					if !ok {
+						return
+					}
+					switch state {
+					case aegiswebrtc.ICEStateDisconnected:
+						_ = p.SendControl(aegisv1.ControlKind_CONTROL_KIND_PAUSE)
+					case aegiswebrtc.ICEStateConnected:
+						_ = p.SendControl(aegisv1.ControlKind_CONTROL_KIND_RESUME)
+					case aegiswebrtc.ICEStateFailed:
+						// Terminal — emit END_STREAM and exit; the
+						// engine will flush and close the stream.
+						_ = p.SendControl(aegisv1.ControlKind_CONTROL_KIND_END_STREAM)
+						return
+					}
+				case <-pipeCtx.Done():
+					return
+				}
+			}
+		}()
+
+		stop := func() {
+			pipeCancel() // release the pump goroutine
+			p.Close()    // END_STREAM + CloseSend + drain egress
+		}
+		return stop, nil
+	}
+
 	gatewaySvc, err := gatewaygrpc.New(gatewaygrpc.Config{
 		Registry:           registry,
 		Issuer:             issuer,
 		Engine:             engine,
+		WebRTCNegotiator:   negotiator,
+		AudioPipelineStart: startAudioPipeline,
 		EngineProbeTimeout: engineRPCTimeout,
 	})
 	if err != nil {
 		log.Fatalf("aegis-gateway: gatewaygrpc.New: %v", err)
 	}
 
-	// HTTP server for /healthz and the Local-mode /ws/viewer
-	// transport (ADR-0007). The WebSocket endpoint shares the
-	// registry + issuer with the gRPC Gateway so a single token
-	// works on either transport.
+	// Auth provider: Local mode uses NoOp (synthetic "local" Principal
+	// on every RPC); Cloud mode would swap in a StaticJWTProvider or
+	// (future) a real Cognito client — see internal/auth for the port
+	// definition and Phase 2 "Known Gaps" in ROADMAP.md for the
+	// Cognito-integration scope that is descoped from this phase.
+	authProvider := auth.NoOpProvider{}
+
+	// gRPC server for aegis.v1.Gateway. Interceptors fire in registration
+	// order: auth first (attaches Principal to ctx); future additions
+	// (request logging, telemetry, rate limit) slot in after it.
+	// Keepalive params follow ADR-0006: a viewer whose stream is idle
+	// for `keepaliveTime` triggers a PING; no PONG within
+	// `keepaliveTimeout` tears down the connection and reclaims the
+	// fan-out channel. EnforcementPolicy.MinTime caps how often clients
+	// may send their own pings — without it, a misbehaving client could
+	// trip gRPC's "too many pings" disconnect.
+	grpcSrv := grpc.NewServer(
+		grpc.UnaryInterceptor(auth.UnaryInterceptor(authProvider)),
+		grpc.StreamInterceptor(auth.StreamInterceptor(authProvider)),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    keepaliveTime,
+			Timeout: keepaliveTimeout,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             keepaliveMinTime,
+			PermitWithoutStream: true,
+		}),
+	)
+	aegisv1.RegisterGatewayServer(grpcSrv, gatewaySvc)
+
+	// HTTP server for /healthz, the Local-mode /ws/viewer transport
+	// (ADR-0007), AND the Cloud-mode gRPC-Web bridge. The WebSocket
+	// endpoint shares the registry + issuer with the gRPC Gateway so
+	// a single token works on either transport.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", makeHealthHandler(engine, engineAddr, registry))
 	mux.HandleFunc("/ws/viewer", ws.Handler(ws.Config{
@@ -114,29 +261,52 @@ func main() {
 		Issuer:   issuer,
 		Logger:   log.Default(),
 	}))
+
+	// gRPC-Web wrapper: same grpcSrv, spoken over HTTP/1.1 with
+	// grpc-web framing so browsers (which cannot speak native HTTP/2
+	// gRPC with trailers) can reach CreateMeeting / JoinAsViewer. The
+	// origin allowlist is permissive here because Local mode runs on
+	// the host's LAN; Cloud mode will replace this closure with an
+	// explicit allowlist tied to the Cognito-issued frontend origin
+	// (tracked in Phase 2 Known Gaps — ROADMAP.md).
+	wrappedGrpc := grpcweb.WrapServer(
+		grpcSrv,
+		grpcweb.WithOriginFunc(func(string) bool { return true }),
+		grpcweb.WithAllowNonRootResource(true),
+	)
+
 	httpSrv := &http.Server{
-		Addr:              listenAddr,
-		Handler:           mux,
+		Addr: listenAddr,
+		// Route order:
+		//   1. grpc-web (content-type / Accept sniff) → wrapped server
+		//   2. everything else → existing mux (/healthz, /ws/viewer)
+		// The sniff-first pattern means grpc-web requests don't need a
+		// dedicated URL prefix — gRPC service methods hit paths like
+		// /aegis.v1.Gateway/CreateMeeting which don't collide with our
+		// native HTTP handlers. IsGrpcWebRequest + the CORS preflight
+		// check cover both simple and preflighted browser calls.
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if wrappedGrpc.IsGrpcWebRequest(r) || wrappedGrpc.IsAcceptableGrpcCorsRequest(r) {
+				wrappedGrpc.ServeHTTP(w, r)
+				return
+			}
+			mux.ServeHTTP(w, r)
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	// gRPC server for aegis.v1.Gateway.
-	grpcSrv := grpc.NewServer()
-	aegisv1.RegisterGatewayServer(grpcSrv, gatewaySvc)
 	grpcLis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		log.Fatalf("aegis-gateway: listen %s: %v", grpcAddr, err)
 	}
 
-	// Signal-driven graceful shutdown. ADR-0006's
-	// terminationGracePeriodSeconds=14400 drain hook plugs in here in
-	// A4 once we have live sessions to drain.
-	ctx, stop := signal.NotifyContext(context.Background(),
-		syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// Signal handling is rooted at processCtx (declared above). Pipelines
+	// observe processCtx cancellation through their pipeCtx parent; this
+	// goroutine still waits on <-processCtx.Done() for the shutdown dance.
+	// ADR-0006's terminationGracePeriodSeconds=14400 drain hook plugs
+	// in here in a later phase once we have live sessions to drain.
 
 	go func() {
-		log.Printf("aegis-gateway: HTTP  listening on %s (/healthz, /ws/viewer)", listenAddr)
+		log.Printf("aegis-gateway: HTTP  listening on %s (/healthz, /ws/viewer, grpc-web)", listenAddr)
 		log.Printf("  engine_addr=%s", engineAddr)
 		log.Printf("  version=%s", version)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -151,20 +321,46 @@ func main() {
 		}
 	}()
 
-	<-ctx.Done()
+	<-processCtx.Done()
 	log.Printf("aegis-gateway: shutdown signal received; draining")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	drainTimeout := defaultDrainTimeout
+	if env := os.Getenv("AEGIS_GATEWAY_DRAIN_TIMEOUT"); env != "" {
+		if d, err := time.ParseDuration(env); err == nil && d > 0 {
+			drainTimeout = d
+		} else {
+			log.Printf("aegis-gateway: invalid AEGIS_GATEWAY_DRAIN_TIMEOUT=%q; using default %s",
+				env, defaultDrainTimeout)
+		}
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
 
-	// Shut down HTTP first (fast), then gRPC. GracefulStop waits for
-	// in-flight RPCs to complete, which for streams means until the
-	// client disconnects. A4 will add a bounded deadline + forced
-	// Stop fallback once we have real stream fan-out.
+	// Shut down HTTP first (fast) — the healthz probe and /ws/viewer
+	// paths don't participate in long-running sessions; their shutdown
+	// is bounded by shutdownCtx.
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("aegis-gateway: HTTP shutdown error: %v", err)
 	}
-	grpcSrv.GracefulStop()
+
+	// gRPC GracefulStop waits for in-flight streams to finish, which
+	// for a long-lived viewer can mean "until the client disconnects".
+	// Race it against shutdownCtx so an impolite viewer can't block
+	// shutdown beyond the drain deadline — the forced Stop() fallback
+	// is how ADR-0006's 14400 s terminationGracePeriodSeconds stays a
+	// hard upper bound and not a lower bound.
+	stopped := make(chan struct{})
+	go func() {
+		grpcSrv.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-shutdownCtx.Done():
+		log.Printf("aegis-gateway: drain deadline (%s) exceeded; forcing Stop", drainTimeout)
+		grpcSrv.Stop()
+		<-stopped
+	}
 	log.Printf("aegis-gateway: bye")
 }
 

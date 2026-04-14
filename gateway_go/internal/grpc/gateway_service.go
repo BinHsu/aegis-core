@@ -1,18 +1,18 @@
 // Package grpc wires the Go Gateway's gRPC server-side handlers.
 //
 // This file implements aegis.v1.Gateway — the client-facing service
-// hosted by the Gateway. Phase 2 A2 scope:
+// hosted by the Gateway. Phases completed:
 //
-//   - CreateMeeting — allocates a Session in the registry, issues a
+//   - CreateMeeting    — allocates a Session in the registry, issues a
 //     viewer join JWT, reports engine metadata from the engine's
-//     Health RPC.
-//   - EndMeeting    — removes the session from the registry.
-//   - JoinAsViewer  — token-validated server stream. For A2 it emits
-//     a MEETING_STATE_ACTIVE state_change and then blocks on the
-//     peer's context until the session ends or the caller disconnects.
-//     Real transcript fan-out arrives in A4 (Pion audio pipeline).
-//   - NegotiateWebRTC — returns UNIMPLEMENTED. A3 replaces this with a
-//     full non-trickle SDP exchange.
+//     Health RPC. (A2)
+//   - EndMeeting       — removes the session from the registry; calls
+//     WebRTCNegotiator.Close to release ICE sockets. (A2, extended A3)
+//   - JoinAsViewer     — token-validated server stream; fans out
+//     transcript events via Session.Subscribe. (A2, A5)
+//   - NegotiateWebRTC  — non-trickle SDP exchange via WebRTCNegotiator.
+//     When no negotiator is configured (Config.WebRTCNegotiator == nil),
+//     returns UNIMPLEMENTED. (A3)
 //
 // Naming note: we avoid importing this package as plain `grpc` because
 // it collides with google.golang.org/grpc at call sites. Consumers
@@ -22,6 +22,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -39,13 +40,49 @@ import (
 // they don't have to stand up a full gRPC client.
 type healthProber func(ctx context.Context) (*aegisv1.HealthResponse, error)
 
+// WebRTCNegotiator is the interface injected into GatewayService for
+// the SDP-exchange and PeerConnection lifecycle. The concrete type is
+// *webrtc.Negotiator from //gateway_go/internal/webrtc; tests supply a
+// stub without importing the Pion-backed package.
+//
+// Nil is a valid value: NegotiateWebRTC returns UNIMPLEMENTED and
+// EndMeeting skips the Close call.
+type WebRTCNegotiator interface {
+	Negotiate(ctx context.Context, sessionID, offerSDP string) (answerSDP string, err error)
+	Close(sessionID string) error
+}
+
+// AudioPipelineStartFn is the factory that NegotiateWebRTC calls after
+// a successful SDP exchange to spin up the audio → engine → viewers
+// pipeline for the session. Returning stopFn transfers pipeline
+// ownership back to the service, which calls stopFn on EndMeeting.
+//
+// The concrete implementation lives in cmd/gateway/main.go so the
+// factory can close over the Negotiator's audio/ICE channels and the
+// engine client without this package importing internal/webrtc or
+// internal/pipeline (keeping the gRPC test binary free of the pion
+// dep graph — ADR-0013 isolation principle applied to Go deps).
+//
+// Nil is valid: NegotiateWebRTC still returns its answer SDP but no
+// audio is ever piped to the engine. The Gateway degrades gracefully
+// to "WebRTC works, transcription silent" instead of failing the RPC.
+type AudioPipelineStartFn func(sess *session.Session, sessionID string) (stopFn func(), err error)
+
 // GatewayService implements aegisv1.GatewayServer.
 type GatewayService struct {
 	aegisv1.UnimplementedGatewayServer
 
-	registry *session.Registry
-	issuer   *token.Issuer
-	health   healthProber
+	registry   *session.Registry
+	issuer     *token.Issuer
+	health     healthProber
+	webrtcNeg  WebRTCNegotiator     // nil → NegotiateWebRTC returns UNIMPLEMENTED
+	pipelineStart AudioPipelineStartFn // nil → no audio pipeline on NegotiateWebRTC
+
+	// pipelineStops tracks per-session stopFns returned by pipelineStart.
+	// Populated in NegotiateWebRTC, drained in EndMeeting. Using sync.Map
+	// instead of a mutex-guarded map because the load/store pattern is
+	// rare (once per session lifetime) and the key (sessionID) is unique.
+	pipelineStops sync.Map // map[string]func()
 
 	engineProbeTimeout time.Duration
 }
@@ -56,6 +93,18 @@ type Config struct {
 	Registry *session.Registry
 	Issuer   *token.Issuer
 	Engine   aegisv1.EngineClient
+
+	// WebRTCNegotiator handles SDP exchange and PeerConnection lifetime
+	// for the NegotiateWebRTC RPC. If nil, NegotiateWebRTC returns
+	// UNIMPLEMENTED and EndMeeting does not call Close. Production sets
+	// this to *webrtc.Negotiator from //gateway_go/internal/webrtc.
+	WebRTCNegotiator WebRTCNegotiator
+
+	// AudioPipelineStart is invoked at the tail of a successful
+	// NegotiateWebRTC to bring up the audio pipeline for the session.
+	// If nil, no pipeline is started (transcription is silent) but the
+	// RPC still returns the answer SDP. See AudioPipelineStartFn docs.
+	AudioPipelineStart AudioPipelineStartFn
 
 	// EngineProbeTimeout applies to the Health call made during
 	// CreateMeeting. Defaults to 2s when zero (matches the /healthz
@@ -76,11 +125,14 @@ func New(cfg Config) (*GatewayService, error) {
 		return nil, errors.New("gateway grpc: Engine client is required")
 	}
 	engine := cfg.Engine
-	return newWithProber(cfg.Registry, cfg.Issuer,
+	svc := newWithProber(cfg.Registry, cfg.Issuer,
 		func(ctx context.Context) (*aegisv1.HealthResponse, error) {
 			return engine.Health(ctx, &aegisv1.HealthRequest{})
 		},
-		cfg.EngineProbeTimeout), nil
+		cfg.EngineProbeTimeout)
+	svc.webrtcNeg = cfg.WebRTCNegotiator
+	svc.pipelineStart = cfg.AudioPipelineStart
+	return svc, nil
 }
 
 // newWithProber is the test seam: it bypasses the engine gRPC client
@@ -201,6 +253,25 @@ func (s *GatewayService) EndMeeting(
 		return nil, status.Errorf(codes.Internal, "registry.Delete: %v", err)
 	}
 
+	// Stop the audio pipeline FIRST so it can flush END_STREAM to the
+	// engine while the PeerConnection is still up (DTLS/SRTP intact).
+	// Closing the PC before the pipeline would not cause data loss,
+	// but it would leave the last few in-flight PCM chunks without a
+	// source and trigger spurious gRPC Send errors in logs.
+	if raw, loaded := s.pipelineStops.LoadAndDelete(sess.ID); loaded {
+		if fn, ok := raw.(func()); ok && fn != nil {
+			fn()
+		}
+	}
+
+	// Release the PeerConnection ICE sockets for this session.
+	// Best-effort: a Close error does not fail the RPC because the
+	// session is already removed from the registry and the meeting is
+	// over from the caller's perspective.
+	if s.webrtcNeg != nil {
+		_ = s.webrtcNeg.Close(sess.ID)
+	}
+
 	return &aegisv1.EndMeetingResponse{
 		Duration:          durationpb.New(duration),
 		FinalSegmentCount: 0, // A4: read from engine final count.
@@ -208,15 +279,75 @@ func (s *GatewayService) EndMeeting(
 	}, nil
 }
 
-// NegotiateWebRTC is the SDP-exchange entrypoint. A3 replaces this
-// stub with a real Pion-driven answer; the explicit UNIMPLEMENTED
-// here lets the frontend detect "cloud mode not ready yet" and fall
-// back to the local WebSocket path (ADR-0007).
+// NegotiateWebRTC performs a non-trickle SDP exchange with the host.
+//
+// The caller must send a complete offer (ICE gathering state "complete")
+// and wait for the returned answer before starting audio. Trickle ICE
+// is not supported in this phase (ADR-0007 LAN assumption).
+//
+// When Config.WebRTCNegotiator is nil (not wired in the binary), this
+// returns UNIMPLEMENTED so the frontend can detect the unconfigured
+// state and fall back to the local WebSocket path.
 func (s *GatewayService) NegotiateWebRTC(
 	ctx context.Context,
 	req *aegisv1.NegotiateWebRTCRequest,
 ) (*aegisv1.NegotiateWebRTCResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "NegotiateWebRTC lands in Phase 2 A3")
+	if s.webrtcNeg == nil {
+		return nil, status.Error(codes.Unimplemented, "WebRTC not configured on this gateway")
+	}
+	if req == nil || req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	if req.GetOfferSdp() == "" {
+		return nil, status.Error(codes.InvalidArgument, "offer_sdp is required")
+	}
+
+	sess, err := s.registry.Get(req.GetSessionId())
+	if err != nil {
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return nil, status.Error(codes.NotFound, "session not found")
+		}
+		return nil, status.Errorf(codes.Internal, "registry.Get: %v", err)
+	}
+	if sess.Ended() {
+		return nil, status.Error(codes.FailedPrecondition, "session already ended")
+	}
+
+	answerSDP, err := s.webrtcNeg.Negotiate(ctx, req.GetSessionId(), req.GetOfferSdp())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "WebRTC negotiate: %v", err)
+	}
+
+	// Start the audio pipeline now that the PeerConnection exists and
+	// the Negotiator's AudioChan / ICEChan are populated. Errors here
+	// are non-fatal for the RPC: returning the SDP lets the host
+	// connect; absence of transcription is surfaced via viewer events
+	// (or lack thereof) rather than a hard RPC failure. A stop handle
+	// is stored under the session id so EndMeeting can tear it down.
+	if s.pipelineStart != nil {
+		stop, startErr := s.pipelineStart(sess, req.GetSessionId())
+		if startErr != nil {
+			// Log via the error return channel is out of scope here;
+			// the pipeline package owns its own structured logging.
+			// We surface a controlled Internal so upstream telemetry
+			// notices, while still closing the negotiator to avoid
+			// leaking an ICE agent without a consumer.
+			_ = s.webrtcNeg.Close(req.GetSessionId())
+			return nil, status.Errorf(codes.Internal, "audio pipeline start: %v", startErr)
+		}
+		if stop != nil {
+			// Last-writer-wins on re-negotiation: if the host
+			// re-negotiates, tear down the previous pipeline first so
+			// there's at most one StreamTranscribe stream per session.
+			if prev, loaded := s.pipelineStops.Swap(req.GetSessionId(), stop); loaded {
+				if fn, ok := prev.(func()); ok && fn != nil {
+					fn()
+				}
+			}
+		}
+	}
+
+	return &aegisv1.NegotiateWebRTCResponse{AnswerSdp: answerSDP}, nil
 }
 
 // JoinAsViewer validates the token, registers the viewer in the

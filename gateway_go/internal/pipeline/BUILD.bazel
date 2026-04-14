@@ -1,0 +1,45 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pipeline",
+    srcs = [
+        "pipeline.go",
+        "wav.go",
+    ],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/pipeline",
+    visibility = ["//gateway_go:__subpackages__"],
+    deps = [
+        "//gateway_go/internal/sensitive",
+        "//gateway_go/internal/session",
+        # Proto Go bindings — per ADR-0013, Bazel is authoritative for
+        # codegen; //gateway_go/gen/go/... is for IDE tooling only.
+        "//proto/aegis/v1:aegis_go_proto",
+        "@com_github_pion_opus//:opus",
+        "@org_golang_google_protobuf//types/known/timestamppb",
+    ],
+)
+
+go_test(
+    name = "pipeline_test",
+    # "medium" — bufconn unit tests finish in < 1 s, but the
+    # AEGIS_ENGINE_ADDR-gated TestTranscribeJFKLiveEngine has to wait
+    # for whisper.cpp to actually decode ~11 s of audio on a real
+    # engine (tiny.en model ~1-2 s on M-series). Medium (5 min budget)
+    # comfortably covers that without flaking on a slow machine.
+    size = "medium",
+    srcs = ["pipeline_test.go"],
+    # The @whisper_cpp repo's samples/ filegroup carries jfk.wav
+    # (same source the C++ stream_transcribe_test uses). TEST_SRCDIR
+    # plus a couple of known repo-mapping spellings locate it at run
+    # time — see resolveJFKWAV() in pipeline_test.go.
+    data = ["@whisper_cpp//:samples"],
+    embed = [":pipeline"],
+    deps = [
+        "//gateway_go/internal/sensitive",
+        "//gateway_go/internal/session",
+        "//proto/aegis/v1:aegis_go_proto",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//test/bufconn",
+    ],
+)

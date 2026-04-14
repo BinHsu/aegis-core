@@ -14,11 +14,16 @@ go_binary(
         # checked-in gateway_go/gen/go/ files (those exist only for IDE
         # / go-tooling consumption).
         "//proto/aegis/v1:aegis_go_proto",
+        "//gateway_go/internal/auth",
         "//gateway_go/internal/grpc",
+        "//gateway_go/internal/pipeline",
         "//gateway_go/internal/session",
         "//gateway_go/internal/token",
+        "//gateway_go/internal/webrtc",
         "//gateway_go/internal/ws",
+        "@com_github_improbable_eng_grpc_web//go/grpcweb",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//keepalive",
     ],
 )
