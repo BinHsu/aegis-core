@@ -28,12 +28,19 @@
    * **ALL generated code, comments, commit messages, file names, and project documentation (like `.md` files) MUST be written strictly in English.** This ensures global open-source compatibility.
    * Multilingual or local languages (like Traditional Chinese) should ONLY be used during conversational interactions/chat with the human user.
 
-6. **Strict Directory Confinement (The Repo Boundary)**
-   * **ABSOLUTE RULE**: Every single action, dependency, cache, and model MUST be strictly confined to the current repository directory. Do NOT step out of bounds.
+6. **Strict Directory Confinement — All Toolchains Are Hermetic**
+   * **The foundational premise of this project is: clone it, build it, it just works — with zero reliance on anything the host OS happens to have installed.** Every compiler, runtime, SDK, and tool is managed inside the repository. Do NOT assume any system-provided binary is present or correct.
+   * **ABSOLUTE RULE**: Every action, dependency, cache, and model MUST be strictly confined to the current repository directory. Do NOT step out of bounds.
    * If a user clones this repo into `D://temp`, you do not touch `C://` or `~/.cache` under any circumstances. **DO NOT pollute the user's global system directories.**
-   * **Mandatory Isolation**: You MUST use virtual environments (`.venv` for Python), local `node_modules`, and isolated workspaces to prevent ANY side effects on the host OS.
-   * Big models (.ggml files) must be downloaded strongly to a local `/models` directory within the repo.
-   * Build tools must be scoped locally. For example, Bazel MUST be configured via `.bazelrc` to set `--output_user_root=./.bazel_cache`.
+   * **The correct entry point for ALL build and test operations is `./tools/bazelisk/bazelisk`.** Bazel manages every hermetic toolchain in this repo:
+     - **Go** — SDK 1.24.12 via `go_sdk.download`; NEVER run `go`, `gofmt`, or `go test` directly.
+     - **C++** — hermetic clang/LLVM toolchain; NEVER run `clang++`, `cmake`, or `make` directly.
+     - **Protobuf / gRPC** — `buf` via pre-commit; codegen via Bazel `proto_library` rules; NEVER run `protoc` directly.
+     - **Node.js / TypeScript** — Phase 3+ will use `rules_nodejs`; until then `frontend_web/` uses local `npm` inside that directory only.
+     - **Python** — if ever needed, use `.venv` inside the repo; NEVER install packages globally.
+   * Big models (`.gguf`/`.ggml`) must be downloaded to `/models` inside the repo; NEVER to `~/.cache` or system model directories.
+   * Bazel itself MUST be configured via `.bazelrc` with `--output_user_root=./.bazel_cache`.
+   * **Bazel test flag reminder**: `--test_output=short` is NOT valid; use `summary`, `errors`, `all`, or `streamed`.
 
 7. **Incident Postmortems (Field Notes Discipline)**
    * When you encounter a **non-trivial development-time blocker** — working definition: ≥ 15 minutes of debugging, OR two or more failed fix attempts, OR a root cause more than one layer below the surface error — you MUST add a postmortem entry to `docs/incidents.md` before the task is considered done.
