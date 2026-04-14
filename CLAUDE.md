@@ -36,7 +36,7 @@
      - **Go** — SDK 1.24.12 via `go_sdk.download`; NEVER run `go`, `gofmt`, or `go test` directly.
      - **C++** — hermetic clang/LLVM toolchain; NEVER run `clang++`, `cmake`, or `make` directly.
      - **Protobuf / gRPC** — `buf` via pre-commit; codegen via Bazel `proto_library` rules; NEVER run `protoc` directly.
-     - **Node.js / TypeScript** — Phase 3+ will use `rules_nodejs`; until then `frontend_web/` uses local `npm` inside that directory only.
+     - **Node.js / TypeScript** — hermetic Node 20 LTS + pnpm via `aspect_rules_js` (ADR-0015). ALWAYS invoke via `./tools/scripts/frontend.sh {install|dev|build|typecheck}`; NEVER run a system `node` / `npm` / `pnpm`. `pnpm-lock.yaml` at the repo root is authoritative; the content-addressable store lives at `./.pnpm-store/` per `.npmrc`.
      - **Python** — if ever needed, use `.venv` inside the repo; NEVER install packages globally.
    * Big models (`.gguf`/`.ggml`) must be downloaded to `/models` inside the repo; NEVER to `~/.cache` or system model directories.
    * Bazel itself MUST be configured via `.bazelrc` with `--output_user_root=./.bazel_cache`.

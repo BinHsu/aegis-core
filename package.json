@@ -1,0 +1,11 @@
+{
+  "//": "Root package.json exists solely to declare the pnpm workspace that aspect_rules_js reads via npm_translate_lock. No runtime deps here; individual packages live under the workspace members (currently just frontend_web/). See ADR-0015 for why this lives at the repo root and why pnpm specifically.",
+  "name": "aegis-core-root",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.6.7"
+}

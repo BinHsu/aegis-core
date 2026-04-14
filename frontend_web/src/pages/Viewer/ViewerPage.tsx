@@ -8,7 +8,7 @@
 //   - show "Host reconnecting..." on transient state changes
 //   - NO export, NO history (L3, L4 — intentional features)
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import {

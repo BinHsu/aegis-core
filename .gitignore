@@ -76,8 +76,10 @@ htmlcov/
 coverage.xml
 *.egg-info/
 
-# --- Node.js (CLAUDE.md Rule 6) ------------------------------------------
+# --- Node.js (CLAUDE.md Rule 6, ADR-0015) --------------------------------
 node_modules/
+# pnpm's content-addressable store — pinned to ./.pnpm-store/ via
+# .npmrc `store-dir=.pnpm-store` so it stays inside the repo tree.
 .pnpm-store/
 .npm/
 .yarn/

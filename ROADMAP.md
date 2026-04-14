@@ -213,8 +213,8 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 **Scope change from original roadmap**: Phase 3 delivers **pure web only**. Tauri is deferred per ADR-0002 and ADR-0003.
 
 ### Frontend Scaffolding
-- [x] Scaffold `frontend_web/` with React 19 + Vite 6 + TypeScript 5.7 strict — Phase 1 C1 (NPM-managed; Bazel wrap deferred to Phase 4a)
-- [ ] Configure generated Protobuf JS/TS bindings under Bazel
+- [x] Scaffold `frontend_web/` with React 19 + Vite 6 + TypeScript 5.7 strict — Phase 1 C1; **Phase 3 promoted from local-npm to hermetic Node + pnpm via `aspect_rules_js`** (ADR-0015). Wrapper script `./tools/scripts/frontend.sh {install|dev|build|typecheck}` is the single entry point; no system `node` required.
+- [x] Configure generated Protobuf JS/TS bindings — Phase 3 kickoff. `buf.gen.yaml` adds `protobuf-es` v1 + `connectrpc/es` v1 plugins; output checked in to `frontend_web/src/gen/proto/aegis/v1/{aegis_pb.ts,aegis_connect.ts}` per ADR-0013 distribution model. Connect's grpc-web transport speaks to the gateway's `improbable-eng/grpc-web` wrapper. (v2 migration deferred — see plugin-version comment in buf.gen.yaml.)
 - [x] `AudioCaptureProvider` interface + `WebAudioCaptureProvider` impl (getUserMedia, getDisplayMedia, Web Audio mixing for the three capture modes per ADR-0003) — Phase 1 C2
 - [x] `TranscriptStreamProvider` interface + `GrpcWebTranscriptStreamProvider` (Cloud) + `WebSocketTranscriptStreamProvider` (Local) stubs per ADR-0007 — Phase 1 C3
 - [ ] `AuthProvider`, `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` stubs — Phase 2+

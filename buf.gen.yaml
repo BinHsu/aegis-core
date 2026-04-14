@@ -2,7 +2,14 @@
 #
 # Run via `./tools/scripts/proto_gen.sh` (which shells out to
 # `./tools/buf/buf generate`). Outputs go to:
-#   gateway_go/gen/go/<proto-package-path>/*.pb.go
+#
+#   gateway_go/gen/go/<proto-package-path>/*.pb.go              (Go backend)
+#   frontend_web/src/gen/proto/<proto-package-path>/*_pb.ts      (TS frontend)
+#
+# Both trees are CHECKED IN per ADR-0013 so IDE tooling (gopls, tsc)
+# works without a Bazel / buf invocation. Bazel remains the
+# authoritative producer for Go (via //proto/aegis/v1:aegis_go_proto);
+# CI runs proto_gen.sh + `git diff --exit-code` to catch drift.
 #
 # Remote plugins (buf.build/...) run server-side on the Buf Schema
 # Registry; no local protoc-gen-* install required. Pinned versions
@@ -25,3 +32,36 @@ plugins:
     opt:
       - paths=source_relative
       - require_unimplemented_servers=false
+
+  # TypeScript message types (Phase 3 frontend). protobuf-es emits
+  # modern ES2022 TS classes, not legacy google-protobuf + .d.ts —
+  # pairs cleanly with the `@bufbuild/protobuf` runtime at consume site.
+  #
+  # Version pinning: we hold the whole frontend proto stack at v1.x
+  # (protobuf-es v1, connectrpc/es v1). The v2 major bump landed late
+  # 2024 in the npm packages but the BSR remote plugin for
+  # connectrpc/es is still on v1.6.1 at time of writing. Running a
+  # mismatched plugin-to-runtime major pair breaks code generation.
+  # When BSR catches up to v2 AND connectrpc's v2 migration notes
+  # confirm stability, bump both this plugin and the npm package
+  # entries in one PR.
+  - remote: buf.build/bufbuild/es:v1.10.0
+    out: frontend_web/src/gen/proto
+    opt:
+      - target=ts
+      - import_extension=js
+
+  # Connect RPC client for TypeScript. We invoke it configured for the
+  # grpc-web wire protocol (the Connect library supports three
+  # transports: `connect` | `grpc-web` | `grpc`) so it talks to the
+  # `improbable-eng/grpc-web` wrapper already mounted on the Go
+  # Gateway's HTTP :8080 listener. Same proto contract, same message
+  # definitions, just a client-side library choice.
+  #
+  # Version pinning: keep the v1 pair with the protobuf-es plugin
+  # above. See that block's comment for the v2 migration plan.
+  - remote: buf.build/connectrpc/es:v1.6.1
+    out: frontend_web/src/gen/proto
+    opt:
+      - target=ts
+      - import_extension=js

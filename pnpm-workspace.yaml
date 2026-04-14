@@ -1,0 +1,9 @@
+# pnpm workspace configuration — read by pnpm and by
+# aspect_rules_js's npm_translate_lock extension (MODULE.bazel).
+#
+# Keep this list flat; add one entry per workspace member. Each
+# member has its own package.json. Shared config (TypeScript, ESLint)
+# can move to the repo root when a second member arrives.
+
+packages:
+  - "frontend_web"

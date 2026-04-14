@@ -13,7 +13,7 @@
 //   - rendering the live transcript / prompter
 // All of those need the Gateway, which is Phase 2 work.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type JSX } from "react";
 import {
   CaptureError,
   type CaptureMode,

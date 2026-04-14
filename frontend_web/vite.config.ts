@@ -6,11 +6,23 @@
 // gateway at a runtime-configured URL (env-var at build time for now;
 // ADR-0002 Constraint 2 provider abstractions handle transport swap).
 
+import { fileURLToPath, URL } from "node:url";
+
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // Mirror tsconfig.json `paths` for Rollup. TypeScript resolves
+    // `@/…` at typecheck via the paths map, but Vite/Rollup build
+    // time uses a separate resolver that does NOT read tsconfig —
+    // both have to agree or we get "Rollup failed to resolve import"
+    // at bundle time while tsc is happy.
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   build: {
     target: "es2022",
     sourcemap: true,

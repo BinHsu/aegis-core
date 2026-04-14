@@ -222,6 +222,23 @@ curl -s http://localhost:8080/healthz
 # Ctrl-C — gateway drains first, then engine, then launcher exits
 ```
 
+**Frontend (Phase 3)** — hermetic Node 20 + pnpm via `aspect_rules_js`
+(ADR-0015). No system `node` / `npm` prerequisite:
+
+```bash
+# One-time, after a fresh clone: install frontend deps via Bazel-managed pnpm
+./tools/scripts/frontend.sh install
+
+# Inner-loop dev: Vite dev server on :5173, reads gateway at :8080 by default
+./tools/scripts/frontend.sh dev
+
+# Production build → frontend_web/dist/
+./tools/scripts/frontend.sh build
+
+# Type check (tsc --noEmit) — runs across src/ + generated proto bindings
+./tools/scripts/frontend.sh typecheck
+```
+
 **Running pieces individually** (for debugging or CI):
 
 ```bash
