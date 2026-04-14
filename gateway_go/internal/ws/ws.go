@@ -28,7 +28,7 @@ package ws
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -45,14 +45,8 @@ import (
 // upgrade path if v2 ever breaks the framing.
 const Subprotocol = "aegis.v1.transcript"
 
-// Logger is the optional log sink used for connection-lifecycle
-// messages. When nil, the handler stays silent (test mode).
-type Logger interface {
-	Printf(format string, args ...any)
-}
-
 // Config wires the handler to its collaborators. All fields are
-// required.
+// required except Logger.
 type Config struct {
 	Registry *session.Registry
 	Issuer   *token.Issuer
@@ -67,8 +61,11 @@ type Config struct {
 	// handshake may take. Defaults to 5s.
 	HandshakeTimeout time.Duration
 
-	// Logger is optional; when nil the handler is silent.
-	Logger Logger
+	// Logger receives connection-lifecycle events (accept errors,
+	// id allocation failures, per-event send errors). When nil the
+	// handler stays silent — appropriate for tests where log noise
+	// would mask real assertion output.
+	Logger *slog.Logger
 }
 
 // Handler returns an http.HandlerFunc that upgrades the request to a
@@ -106,9 +103,13 @@ func Handler(cfg Config) http.HandlerFunc {
 }
 
 func serve(cfg Config, w http.ResponseWriter, r *http.Request) {
-	logf := func(format string, args ...any) {
+	// Nil-safe log helper — when Config.Logger is nil (tests), emit
+	// nothing. Keeps every call site free of a nil check. The wrapper
+	// closes over cfg.Logger by value, not by reference, so any later
+	// mutation of cfg is a no-op from the handler's perspective.
+	log := func(level slog.Level, msg string, args ...any) {
 		if cfg.Logger != nil {
-			cfg.Logger.Printf(format, args...)
+			cfg.Logger.Log(r.Context(), level, msg, args...)
 		}
 	}
 
@@ -147,7 +148,7 @@ func serve(cfg Config, w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		logf("ws: Accept: %v", err)
+		log(slog.LevelWarn, "ws accept", "err", err)
 		return
 	}
 	// Defer a generic InternalError close; happy paths overwrite it
@@ -158,7 +159,7 @@ func serve(cfg Config, w http.ResponseWriter, r *http.Request) {
 	// JoinAsViewer behavior).
 	connID, err := session.NewID()
 	if err != nil {
-		logf("ws: NewID: %v", err)
+		log(slog.LevelError, "ws new conn id", "err", err, "session_id", sessionID)
 		conn.Close(cwebsocket.StatusInternalError, "id alloc failed")
 		return
 	}
@@ -183,7 +184,7 @@ func serve(cfg Config, w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}); err != nil {
-		logf("ws: send kickoff: %v", err)
+		log(slog.LevelWarn, "ws send kickoff", "err", err, "session_id", sessionID, "conn_id", connID)
 		return
 	}
 
@@ -214,7 +215,7 @@ func serve(cfg Config, w http.ResponseWriter, r *http.Request) {
 				Payload:   ev.Payload,
 			}
 			if err := sendEvent(ctx, conn, out); err != nil {
-				logf("ws: send: %v", err)
+				log(slog.LevelWarn, "ws send event", "err", err, "session_id", sessionID, "conn_id", connID, "seq", seq)
 				return
 			}
 		case <-ctx.Done():
@@ -235,14 +236,4 @@ func sendEvent(ctx context.Context, conn *cwebsocket.Conn, ev *aegisv1.ViewerEve
 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return conn.Write(writeCtx, cwebsocket.MessageBinary, wireBytes)
-}
-
-// EnsureLogger is a convenience for callers that want a stdlib
-// log.Logger as the handler's Logger. It exists so cmd/gateway/main.go
-// doesn't have to define a wrapper struct.
-func EnsureLogger(l *log.Logger) Logger {
-	if l == nil {
-		return nil
-	}
-	return l
 }

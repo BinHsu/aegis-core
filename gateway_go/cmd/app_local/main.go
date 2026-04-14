@@ -38,7 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -53,6 +53,16 @@ import (
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
 )
+
+// logger is the launcher's own logger — text handler because this is
+// an interactive terminal tool, not a service running in a pod. Child
+// processes (engine, gateway) emit whatever format THEIR env chooses;
+// streamLines below prefixes their output with "[engine] " / "[gateway] "
+// so the three streams (launcher + two children) remain distinguishable
+// on a single terminal.
+var logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	Level: slog.LevelInfo,
+})).With("tag", "launcher")
 
 const (
 	engineAddr = "localhost:50051"
@@ -76,9 +86,9 @@ const (
 )
 
 func main() {
-	log.SetFlags(log.Lmicroseconds)
 	if err := run(); err != nil {
-		log.Fatalf("[launcher] %v", err)
+		logger.Error("launch failed", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -106,12 +116,11 @@ func run() error {
 	}
 
 	if err := waitEngineReady(ctx, engineAddr); err != nil {
-		log.Printf("[launcher] engine did not become ready: %v", err)
+		logger.Error("engine did not become ready", "err", err)
 		terminate(engine, engineWait)
 		return err
 	}
-	log.Printf("[launcher] engine ready at %s (model=%s)",
-		engineAddr, filepath.Base(modelPath))
+	logger.Info("engine ready", "addr", engineAddr, "model", filepath.Base(modelPath))
 
 	// Gateway second — now that the engine is known-good, any /healthz
 	// hit on the gateway will report "engine.reachable=true".
@@ -121,8 +130,8 @@ func run() error {
 		terminate(engine, engineWait)
 		return fmt.Errorf("start gateway: %w", err)
 	}
-	log.Printf("[launcher] gateway up; HTTP :8080 (/healthz, /ws/viewer) and gRPC :9090")
-	log.Printf("[launcher] press Ctrl-C to stop")
+	logger.Info("gateway up", "http", ":8080", "grpc", ":9090")
+	logger.Info("press Ctrl-C to stop")
 
 	// Wait for either (a) a signal, or (b) an unexpected child exit.
 	// An unexpected exit is treated as a fatal system failure — we
@@ -212,7 +221,7 @@ func startChild(
 	go streamLines(stdout, "["+tag+"] ", os.Stdout)
 	go streamLines(stderr, "["+tag+"] ", os.Stderr)
 
-	log.Printf("[launcher] starting %s: %s", tag, path)
+	logger.Info("starting child", "tag", tag, "path", path)
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
@@ -304,23 +313,23 @@ func superviseUntilShutdown(
 ) error {
 	select {
 	case err := <-gatewayWait:
-		log.Printf("[launcher] gateway exited unexpectedly: %v", err)
+		logger.Error("gateway exited unexpectedly", "err", err)
 		terminate(engine, engineWait)
 		return fmt.Errorf("gateway exited: %w", err)
 	case err := <-engineWait:
-		log.Printf("[launcher] engine exited unexpectedly: %v", err)
+		logger.Error("engine exited unexpectedly", "err", err)
 		terminate(gateway, gatewayWait)
 		return fmt.Errorf("engine exited: %w", err)
 	case <-ctx.Done():
-		log.Printf("[launcher] shutdown signal received; stopping gateway")
+		logger.Info("shutdown signal received; stopping gateway")
 		// startChild's ctx-done goroutine already SIGTERM'd both
 		// children when ctx cancelled, so this is just drainage.
 		// We still call terminate() for its SIGKILL-after-grace-period
 		// behavior in case a child ignored SIGTERM.
 		terminate(gateway, gatewayWait)
-		log.Printf("[launcher] gateway down; stopping engine")
+		logger.Info("gateway down; stopping engine")
 		terminate(engine, engineWait)
-		log.Printf("[launcher] bye")
+		logger.Info("bye")
 		return nil
 	}
 }
@@ -342,8 +351,8 @@ func terminate(cmd *exec.Cmd, waitCh <-chan error) {
 	select {
 	case <-waitCh:
 	case <-time.After(shutdownGracePeriod):
-		log.Printf("[launcher] child did not exit within %v; escalating to SIGKILL",
-			shutdownGracePeriod)
+		logger.Warn("child did not exit within grace; escalating to SIGKILL",
+			"grace", shutdownGracePeriod)
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}

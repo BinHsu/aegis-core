@@ -185,3 +185,11 @@ coverage/
 ._.DS_Store
 .Spotlight-V100
 .Trashes
+
+# --- Author-personal files (NOT for repo consumers) ---------------------
+# Private interview-prep reference maintained by the author. Contains
+# portfolio positioning, likely interviewer questions, and suggested
+# answer frames that map to this repo's code. A downstream consumer
+# cloning the repo for its actual utility should NOT have to carry the
+# author's personal career material, so it stays out of version control.
+/interview-prep.md

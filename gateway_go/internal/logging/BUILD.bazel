@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "logging",
+    srcs = ["logger.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/logging",
+    visibility = ["//gateway_go:__subpackages__"],
+    # No deps beyond stdlib — log/slog is Go 1.21+ core. Keeping this
+    # package dep-free is itself a guarantee: nothing lurking can alter
+    # the handler chain under the application's feet.
+)
+
+go_test(
+    name = "logging_test",
+    size = "small",
+    srcs = ["logger_test.go"],
+    embed = [":logging"],
+)

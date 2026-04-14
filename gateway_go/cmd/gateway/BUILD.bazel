@@ -16,6 +16,7 @@ go_binary(
         "//proto/aegis/v1:aegis_go_proto",
         "//gateway_go/internal/auth",
         "//gateway_go/internal/grpc",
+        "//gateway_go/internal/logging",
         "//gateway_go/internal/pipeline",
         "//gateway_go/internal/session",
         "//gateway_go/internal/token",

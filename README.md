@@ -27,6 +27,25 @@ this V2 is a ground-up enterprise rewrite.
 
 ---
 
+### 📖 Reading this repo
+
+- **Recruiters / hiring partners** — start at
+  [`docs/interview-notes.md`](docs/interview-notes.md). Plain language,
+  7-minute read, no jargon. It answers *"what does this candidate
+  bring?"*.
+- **Technical reviewers / hiring-manager engineering leads** — start
+  with [Quick Start](#quick-start), then
+  [Known Gaps](#known-gaps-phase-2), then the ADR index at
+  [Design Documents](#design-documents). Every non-trivial design
+  decision has its own ADR under 300 lines with an
+  *Alternatives Considered* section.
+- **Cloud infrastructure evidence** — backend + platform architecture
+  lives in this repo; AWS deployment / compliance / DevOps evidence
+  lives in a companion `landing-zone` repo. Ask me for the link if
+  that side of the stack matters to your role.
+
+---
+
 ## Table of Contents
 
 - [Status](#status)

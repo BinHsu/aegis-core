@@ -33,7 +33,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -49,6 +48,7 @@ import (
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
 	gatewaygrpc "github.com/BinHsu/aegis-core/gateway_go/internal/grpc"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/logging"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
@@ -89,6 +89,21 @@ const (
 )
 
 func main() {
+	// Structured logger from env (AEGIS_LOG_FORMAT, AEGIS_LOG_LEVEL).
+	// SetDefault makes slog.Info/Warn/Error calls throughout the tree
+	// honor the configuration, which matters once internal/pipeline
+	// and the factory closure below use the package-level slog logger.
+	logger := logging.SetDefault().With("pkg", "gateway")
+
+	// die emits a structured Error record and terminates. We use this
+	// rather than log.Fatalf so startup failures appear in the same
+	// format as runtime failures — critical for ops tooling that greps
+	// for `"level":"ERROR"` to trigger on-call.
+	die := func(msg string, args ...any) {
+		logger.Error(msg, args...)
+		os.Exit(1)
+	}
+
 	listenAddr := defaultListenAddr
 	if env := os.Getenv("AEGIS_GATEWAY_ADDR"); env != "" {
 		listenAddr = env
@@ -118,7 +133,7 @@ func main() {
 		}),
 	)
 	if err != nil {
-		log.Fatalf("aegis-gateway: grpc.NewClient %q: %v", engineAddr, err)
+		die("grpc.NewClient", "engine_addr", engineAddr, "err", err)
 	}
 	defer func() { _ = conn.Close() }()
 	engine := aegisv1.NewEngineClient(conn)
@@ -129,7 +144,7 @@ func main() {
 	registry := session.NewRegistry()
 	issuer, err := token.NewIssuer()
 	if err != nil {
-		log.Fatalf("aegis-gateway: token.NewIssuer: %v", err)
+		die("token.NewIssuer", "err", err)
 	}
 
 	// Signal-driven process context. Shared between all long-lived
@@ -178,7 +193,7 @@ func main() {
 						// Single-frame decode/send errors are logged
 						// but not fatal — one corrupt Opus packet
 						// shouldn't kill an otherwise-healthy session.
-						log.Printf("aegis-gateway: pipeline write (session=%s): %v", sessionID, err)
+						logger.Warn("pipeline write", "session_id", sessionID, "err", err)
 					}
 				case state, ok := <-iceCh:
 					if !ok {
@@ -217,7 +232,7 @@ func main() {
 		EngineProbeTimeout: engineRPCTimeout,
 	})
 	if err != nil {
-		log.Fatalf("aegis-gateway: gatewaygrpc.New: %v", err)
+		die("gatewaygrpc.New", "err", err)
 	}
 
 	// Auth provider: Local mode uses NoOp (synthetic "local" Principal
@@ -259,7 +274,7 @@ func main() {
 	mux.HandleFunc("/ws/viewer", ws.Handler(ws.Config{
 		Registry: registry,
 		Issuer:   issuer,
-		Logger:   log.Default(),
+		Logger:   logger.With("pkg", "ws"),
 	}))
 
 	// gRPC-Web wrapper: same grpcSrv, spoken over HTTP/1.1 with
@@ -296,7 +311,7 @@ func main() {
 	}
 	grpcLis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
-		log.Fatalf("aegis-gateway: listen %s: %v", grpcAddr, err)
+		die("gRPC listen", "addr", grpcAddr, "err", err)
 	}
 
 	// Signal handling is rooted at processCtx (declared above). Pipelines
@@ -306,31 +321,34 @@ func main() {
 	// in here in a later phase once we have live sessions to drain.
 
 	go func() {
-		log.Printf("aegis-gateway: HTTP  listening on %s (/healthz, /ws/viewer, grpc-web)", listenAddr)
-		log.Printf("  engine_addr=%s", engineAddr)
-		log.Printf("  version=%s", version)
+		logger.Info("HTTP server listening",
+			"addr", listenAddr,
+			"endpoints", "/healthz,/ws/viewer,grpc-web",
+			"engine_addr", engineAddr,
+			"version", version,
+		)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("aegis-gateway: HTTP ListenAndServe: %v", err)
+			die("HTTP ListenAndServe", "err", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("aegis-gateway: gRPC  listening on %s", grpcAddr)
+		logger.Info("gRPC server listening", "addr", grpcAddr)
 		if err := grpcSrv.Serve(grpcLis); err != nil {
-			log.Fatalf("aegis-gateway: gRPC Serve: %v", err)
+			die("gRPC Serve", "err", err)
 		}
 	}()
 
 	<-processCtx.Done()
-	log.Printf("aegis-gateway: shutdown signal received; draining")
+	logger.Info("shutdown signal received; draining")
 
 	drainTimeout := defaultDrainTimeout
 	if env := os.Getenv("AEGIS_GATEWAY_DRAIN_TIMEOUT"); env != "" {
 		if d, err := time.ParseDuration(env); err == nil && d > 0 {
 			drainTimeout = d
 		} else {
-			log.Printf("aegis-gateway: invalid AEGIS_GATEWAY_DRAIN_TIMEOUT=%q; using default %s",
-				env, defaultDrainTimeout)
+			logger.Warn("invalid AEGIS_GATEWAY_DRAIN_TIMEOUT; using default",
+				"given", env, "default", defaultDrainTimeout)
 		}
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
@@ -340,7 +358,7 @@ func main() {
 	// paths don't participate in long-running sessions; their shutdown
 	// is bounded by shutdownCtx.
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("aegis-gateway: HTTP shutdown error: %v", err)
+		logger.Warn("HTTP shutdown error", "err", err)
 	}
 
 	// gRPC GracefulStop waits for in-flight streams to finish, which
@@ -357,11 +375,11 @@ func main() {
 	select {
 	case <-stopped:
 	case <-shutdownCtx.Done():
-		log.Printf("aegis-gateway: drain deadline (%s) exceeded; forcing Stop", drainTimeout)
+		logger.Warn("drain deadline exceeded; forcing Stop", "drain_timeout", drainTimeout)
 		grpcSrv.Stop()
 		<-stopped
 	}
-	log.Printf("aegis-gateway: bye")
+	logger.Info("bye")
 }
 
 // gatewayHealth is the JSON shape the /healthz endpoint emits.
