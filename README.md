@@ -438,6 +438,40 @@ fast-feedback path; CI is the belt-and-braces second pass. See
 [CONTRIBUTING.md §Development Setup](CONTRIBUTING.md#first-time-setup)
 for what each hook catches.
 
+### Cross-repo coordination ritual
+
+This repo coordinates with its companion infra repo
+[`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+via two paired standing GitHub issues, edited (never closed) as the
+contract evolves:
+
+| | aegis-core side | aegis-aws-landing-zone side |
+|---|---|---|
+| Issue | [#11](https://github.com/BinHsu/aegis-core/issues/11) | [#54](https://github.com/BinHsu/aegis-aws-landing-zone/issues/54) |
+| Lists | what aegis-core requires from the platform | what platform features aegis-core can assume |
+
+Three labels (defined on both repos):
+
+- `cross-repo` — umbrella; every coordination thread carries this.
+- `cross-repo/fyi` — informational; **no action required** on the
+  receiving side.
+- `cross-repo/blocking` — would break the receiving side's existing
+  assumptions; **must be PR'd on both repos** before either pulls the
+  change.
+
+**Session-start ritual** (run at the top of any agent / dev session
+that touches code expected to interact with the platform):
+
+```bash
+gh issue list -R BinHsu/aegis-aws-landing-zone -l cross-repo
+```
+
+If a `cross-repo/blocking` issue is open on the sibling and the
+matching change has not been PR'd here, do not pull the sibling change
+into this repo's assumptions until the alignment lands. Open new
+`cross-repo` issues (with `cross-repo/blocking` if it's a prerequisite
+for work here) on the sibling repo when this side needs something new.
+
 ---
 
 ## License & Machine-Friendly Notice
