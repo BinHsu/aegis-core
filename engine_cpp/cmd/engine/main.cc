@@ -55,7 +55,7 @@ int main(int /*argc*/, char ** /*argv*/) {
   ::grpc::ServerBuilder builder;
   // Session 3: insecure for local dev. Production uses mTLS via Istio
   // service mesh (ARCH §8 Zero Trust Networking) — that is an Istio /
-  // landing-zone concern, not a server-side cert config.
+  // aegis-aws-landing-zone concern, not a server-side cert config.
   builder.AddListeningPort(address, ::grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
 

@@ -105,7 +105,7 @@ build --remote_header=x-buildbuddy-api-key=$BB_KEY
 
 `https://github.com/buchgr/bazel-remote` is a single-binary HTTP/2
 cache backed by S3 or local disk. Run on a t4g.small in the
-landing-zone repo's VPC; point Bazel at it via:
+`aegis-aws-landing-zone` repo's VPC; point Bazel at it via:
 
 ```
 build --remote_cache=https://cache.aegis.internal
@@ -118,7 +118,7 @@ build --remote_upload_local_results=true
 - **Cons**: ops surface — single point of failure unless we run
   multi-AZ; certificate management; observability is rolled-our-own;
   total ownership of "is the cache poisoned?" question. The
-  landing-zone repo already runs ArgoCD + monitoring so adding one
+  `aegis-aws-landing-zone` repo already runs ArgoCD + monitoring so adding one
   more service is 1 day of work, not 1 week, but it IS work.
 
 ## Decision Outcome

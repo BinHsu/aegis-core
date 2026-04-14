@@ -623,7 +623,7 @@ path.
 - Incidents here cover **development-time** blockers, not a
   running production system. Once the system is in Phase 4+ with
   real users, this file will split: operational incidents go to a
-  separate `ops/incidents.md` on the landing-zone repo (customer
+  separate `ops/incidents.md` on the `aegis-aws-landing-zone` repo (customer
   impact is out of scope for the application repo).
 - Each postmortem links back to the commit(s) that resolved it;
   the commit messages themselves carry the nitty-gritty details

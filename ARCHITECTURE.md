@@ -172,10 +172,10 @@ This repository (`aegis-core`) is an Application Monorepo. However, it relies on
 *   **GitOps Conflict Prevention (Zero Overlap)**:
     - ArgoCD Server runs in the Infra repo's EKS cluster, but it polls the K8s manifests located in THIS Application repository.
     - Application engineers push K8s YAML changes here. ArgoCD detects the change and automatically syncs the EKS cluster.
-    - *Note to future Agents: Do not try to insert Terraform code to build an EKS cluster here. Direct the user to the landing-zone repository.*
+    - *Note to future Agents: Do not try to insert Terraform code to build an EKS cluster here. Direct the user to the `aegis-aws-landing-zone` repository.*
 
 ### 8. Enterprise Standards (Security & Observability)
-To pass strict compliance and enterprise security audits, this application enforces the following patterns. (The infrastructure for these is provisioned in the landing-zone repository).
+To pass strict compliance and enterprise security audits, this application enforces the following patterns. (The infrastructure for these is provisioned in the `aegis-aws-landing-zone` repository).
 *   **Zero Trust Networking (mTLS)**: Even within the EKS cluster, the communication between the Go Gateway and the C++ Engine is protected by a Service Mesh (e.g., Istio) enforcing Mutual TLS.
 *   **Identity First (EKS Pod Identity & Cognito)**: 
     - *Server-side*: No hardcoded AWS credentials or IAM static keys exist. The Go Gateway authenticates to DynamoDB/S3 using **EKS Pod Identity**, transparently assuming IAM roles. 
@@ -352,7 +352,7 @@ Per CLAUDE.md Rule 2, all tests must have legitimate inputs producing verifiable
 - **Tracing**: OpenTelemetry spans propagate from WebRTC ingress through Go Gateway and C++ Engine (per §8). Span attributes follow the ADR-0005 R4 allowlist; transcript and audio never appear as span attributes.
 - **Metrics**: RED (Rate / Errors / Duration) metrics on every gRPC method; USE (Utilization / Saturation / Errors) metrics on every pod; domain metrics include `aegis_host_transient_loss_total`, `aegis_questions_detected_total`, `aegis_hints_emitted_total`, `aegis_engine_budget_bytes_used`, `aegis_engine_sessions_active`, and others.
 - **Logging**: structured JSON logs with compile-time PII redaction (ADR-0005 R3). In Cloud mode, logs route to CloudWatch via FluentBit; in Local mode, logs go to stdout.
-- **Dashboards and alerts**: landing-zone repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
+- **Dashboards and alerts**: `aegis-aws-landing-zone` repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
 
 #### 10.7 Secrets and Credentials
 

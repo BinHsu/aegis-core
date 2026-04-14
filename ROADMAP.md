@@ -179,7 +179,8 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
   (IRSA's successor). **Why descoped:** Phase 2 has zero AWS callers —
   no DynamoDB, no S3, no SQS. Pod Identity's only value is when you're
   actually making AWS API calls. **How to close:** when Phase 4 OCI
-  packaging adds the EKS landing-zone deployment, wire
+  packaging adds the EKS deployment surface from the
+  `aegis-aws-landing-zone` repo, wire
   `github.com/aws/aws-sdk-go-v2/config.LoadDefaultConfig` — it picks up
   Pod Identity credentials via the service-account IAM role without any
   Go-side code changes. Tracking this as Phase 4 ops wiring, not a Go
@@ -265,7 +266,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] Checkov IaC scanner for K8s manifests + Dockerfile + Helm charts (complements kube-score/kube-bench from the misconfiguration / policy-as-code angle; see debrief discussion 2026-04-12)
 - [ ] CodeQL, Semgrep, gosec, govulncheck, clang-tidy in CI (ARCH §10.2)
 - [ ] Verify no binary contains `AEGIS_DEV_AUDIO_DUMP` symbol (ADR-0005 R7)
-- [ ] ECR push pipeline; ArgoCD in landing-zone repository polls the manifests in this repository
+- [ ] ECR push pipeline; ArgoCD in `aegis-aws-landing-zone` repository polls the manifests in this repository
 
 ### Phase 4c: Progressive Delivery
 - [ ] Argo Rollouts or Flagger integration in EKS manifests
@@ -281,7 +282,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [ ] OTLP exporter to X-Ray / Tempo in Cloud, stdout in Local (ARCH §8)
 - [ ] Custom `SpanProcessor` enforcing attribute allowlist (ADR-0005 R4)
 - [ ] Structured JSON logs via FluentBit in Cloud
-- [ ] Grafana dashboards and PagerDuty alerts provisioned by landing-zone repository
+- [ ] Grafana dashboards and PagerDuty alerts provisioned by `aegis-aws-landing-zone` repository
 - [ ] `aegis_host_transient_loss_total`, `aegis_questions_detected_total`, `aegis_hints_emitted_total`, and other domain metrics emitted
 
 ---

@@ -137,9 +137,9 @@ probably not the strongest candidate:
 
 - **Deep Kubernetes / cloud-operations work.** There *is* an ADR in
   this repo explaining how the system is meant to be deployed, but the
-  actual cloud-infrastructure evidence lives in a separate repo
-  (`landing-zone` — mention it to me and I can send the link and a
-  similar walkthrough).
+  actual cloud-infrastructure evidence lives in the companion
+  [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+  repo. That repo gets its own walkthrough on request.
 
 ---
 
@@ -162,7 +162,8 @@ multiplexing, graceful-degradation paths).
 - `aegis-core` (this repo) — **backend + platform** architecture. How
   services are designed, how the code is structured, how the build
   works, how contracts between languages are maintained.
-- `landing-zone` (separate repo) — **cloud infrastructure**
+- [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+  (separate repo) — **cloud infrastructure**
   architecture. How the above runs on AWS under strict compliance,
   deployment pipelines, cost visibility, incident response.
 

@@ -41,8 +41,10 @@ this V2 is a ground-up enterprise rewrite.
   *Alternatives Considered* section.
 - **Cloud infrastructure evidence** — backend + platform architecture
   lives in this repo; AWS deployment / compliance / DevOps evidence
-  lives in a companion `landing-zone` repo. Ask me for the link if
-  that side of the stack matters to your role.
+  lives in the companion
+  [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+  repo. That side of the stack maps to a different reviewer audience
+  (ops / SRE) and gets its own walkthrough on request.
 
 ---
 

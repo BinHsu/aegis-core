@@ -18,7 +18,7 @@
 //       "https://app.aegis.example/auth/callback" (prod)
 //       "http://localhost:5173/auth/callback"     (dev)
 //
-// The User Pool itself is provisioned in the `landing-zone` repo
+// The User Pool itself is provisioned in the `aegis-aws-landing-zone` repo
 // (separate session, see `docs/interview-notes.md`); this code only
 // needs the URL + client ID at build time.
 
