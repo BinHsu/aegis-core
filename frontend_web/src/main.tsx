@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import { App } from "./App";
+import { AuthCallbackPage } from "./pages/AuthCallback/AuthCallbackPage";
 import { HostPage } from "./pages/Host/HostPage";
 import { ViewerPage } from "./pages/Viewer/ViewerPage";
 
@@ -24,6 +25,11 @@ const router = createBrowserRouter([
       //   /view/<session_id>?token=<jwt>
       // per ADR-0001.
       { path: "view/:sessionId", element: <ViewerPage /> },
+      // OIDC redirect target for the Cloud-mode Cognito Hosted UI
+      // flow. Local mode reaches this path too (LocalAuthProvider's
+      // handleSignInCallback is a no-op) so the router config stays
+      // mode-agnostic.
+      { path: "auth/callback", element: <AuthCallbackPage /> },
     ],
   },
 ]);

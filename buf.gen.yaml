@@ -49,7 +49,7 @@ plugins:
     out: frontend_web/src/gen/proto
     opt:
       - target=ts
-      - import_extension=js
+      - import_extension=.js
 
   # Connect RPC client for TypeScript. We invoke it configured for the
   # grpc-web wire protocol (the Connect library supports three
@@ -64,4 +64,4 @@ plugins:
     out: frontend_web/src/gen/proto
     opt:
       - target=ts
-      - import_extension=js
+      - import_extension=.js

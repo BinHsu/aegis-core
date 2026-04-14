@@ -1,25 +1,59 @@
 // frontend_web/src/pages/Host/HostPage.tsx
 //
-// Phase 1 C4. Staff host UI minimum viable surface:
-//   - pick a capture mode (microphone / browser-tab / both)
-//   - start / stop capture via the AudioCaptureProvider abstraction
-//   - show capture state and any CaptureError surface message
+// Phase 3. Staff host UI — the operator's full meeting lifecycle:
 //
-// What's NOT here yet (Phase 2+):
-//   - calling the Gateway's CreateMeeting RPC + receiving the
-//     viewer JWT to display as a QR code (ADR-0001 / ADR-0007)
-//   - establishing the WebRTC peer connection that ships the
-//     captured stream to the Gateway
-//   - rendering the live transcript / prompter
-// All of those need the Gateway, which is Phase 2 work.
+//   signed-out  ─► [Sign in]                      (Cloud mode redirect / Local no-op)
+//   ready       ─► fill RAG ID + title, [Create]  (calls Gateway.CreateMeeting)
+//   active      ─► QR code for viewers + audio capture + WebRTC stream
+//                   to gateway + live transcript echo + [End meeting]
+//   ending      ─► (calls Gateway.EndMeeting) → ready
+//
+// The state shape is a discriminated union (see HostState below) so
+// the JSX render path branches once at the top and every branch
+// guards what it can touch — no nullable session sprinkled across the
+// component.
+//
+// The audio path:
+//
+//   WebAudioCaptureProvider → MediaStream (existing Phase 1 C2)
+//        │
+//        └► RTCPeerConnection.addTrack(audioTrack, stream)
+//             │
+//             └► createOffer → setLocalDescription
+//                  │
+//                  └► wait for ICE gathering complete (non-trickle —
+//                     the gateway's pion-side Negotiator does not
+//                     accept incremental candidates per ADR-0007 LAN
+//                     simplification)
+//                       │
+//                       └► Gateway.NegotiateWebRTC(offerSdp) → answerSdp
+//                            │
+//                            └► setRemoteDescription(answer) — peer up.
+//
+// The transcript echo:
+//
+//   We subscribe via TranscriptStreamProvider with the same viewer
+//   token we'd hand a viewer. The host watching their own session is
+//   effectively viewer #1 — useful for "is the engine actually
+//   transcribing?" sanity during a real meeting.
 
-import { useCallback, useMemo, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useReducer, type JSX } from "react";
+import { QRCodeSVG } from "qrcode.react";
+
+import { gatewayClient } from "@/lib/gateway-client";
+import { auth } from "@/lib/auth";
 import {
   CaptureError,
   type CaptureMode,
   type CaptureSession,
   WebAudioCaptureProvider,
 } from "@/providers/AudioCaptureProvider";
+import type { AuthPrincipal } from "@/providers/AuthProvider";
+import {
+  pickTranscriptStreamProvider,
+  type Subscription,
+  type ViewerEvent,
+} from "@/providers/TranscriptStreamProvider";
 
 const ALL_MODES: { readonly value: CaptureMode; readonly label: string }[] = [
   { value: "microphone", label: "Physical room (microphone)" },
@@ -27,121 +61,578 @@ const ALL_MODES: { readonly value: CaptureMode; readonly label: string }[] = [
   { value: "microphone-and-tab", label: "Both (mic + tab, mixed)" },
 ];
 
-export function HostPage(): JSX.Element {
-  const provider = useMemo(() => new WebAudioCaptureProvider(), []);
-  const [mode, setMode] = useState<CaptureMode>("microphone");
-  const [session, setSession] = useState<CaptureSession | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const TRANSCRIPT_TAIL = 8; // lines visible to the host
 
-  const start = useCallback(async () => {
-    setError(null);
-    try {
-      const s = await provider.start({ mode });
-      setSession(s);
-    } catch (e) {
-      setError(
-        e instanceof CaptureError
-          ? `[${e.code}] ${e.message}`
-          : e instanceof Error
-            ? e.message
-            : String(e),
-      );
+const DEPLOY_MODE = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
+  | "cloud"
+  | "local";
+const ENDPOINT =
+  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ?? "http://localhost:8080";
+
+/**
+ * The runtime data attached to an in-flight meeting. Mutable handles
+ * (capture, peer, subscription) live on the dispatch-managed action
+ * payloads rather than refs, so the cleanup in MEETING_ENDED can
+ * reach them deterministically without dancing around closure capture.
+ */
+interface ActiveMeeting {
+  readonly sessionId: string;
+  readonly viewerToken: string;
+  readonly capture: CaptureSession;
+  readonly peer: RTCPeerConnection;
+  readonly subscription: Subscription;
+  /** Rolling tail of transcript lines (oldest first). */
+  readonly transcript: readonly TranscriptLine[];
+}
+
+interface TranscriptLine {
+  readonly id: string; // stable key: `${segmentId}:${isFinal}`
+  readonly text: string;
+  readonly isFinal: boolean;
+  readonly speaker: string;
+}
+
+type HostState =
+  | { kind: "loading-auth" }
+  | { kind: "signed-out" }
+  | { kind: "ready"; principal: AuthPrincipal; ragId: string; title: string }
+  | { kind: "creating"; principal: AuthPrincipal }
+  | { kind: "active"; principal: AuthPrincipal; meeting: ActiveMeeting }
+  | { kind: "ending"; principal: AuthPrincipal; meeting: ActiveMeeting }
+  | { kind: "error"; principal: AuthPrincipal | null; message: string };
+
+type Action =
+  | { type: "AUTH_RESOLVED"; principal: AuthPrincipal | null }
+  | { type: "FORM_FIELD_CHANGED"; field: "ragId" | "title"; value: string }
+  | { type: "CREATE_REQUESTED" }
+  | {
+      type: "MEETING_STARTED";
+      meeting: Omit<ActiveMeeting, "transcript">;
     }
-  }, [provider, mode]);
+  | { type: "TRANSCRIPT_LINE"; line: TranscriptLine }
+  | { type: "END_REQUESTED" }
+  | { type: "MEETING_ENDED" }
+  | { type: "ERROR_RAISED"; message: string }
+  | { type: "ERROR_CLEARED" };
 
-  const stop = useCallback(async () => {
-    if (!session) return;
-    await session.stop();
-    setSession(null);
-  }, [session]);
+function reducer(state: HostState, action: Action): HostState {
+  switch (action.type) {
+    case "AUTH_RESOLVED": {
+      if (action.principal === null) return { kind: "signed-out" };
+      return {
+        kind: "ready",
+        principal: action.principal,
+        ragId: "",
+        title: "",
+      };
+    }
+    case "FORM_FIELD_CHANGED": {
+      if (state.kind !== "ready") return state;
+      return { ...state, [action.field]: action.value };
+    }
+    case "CREATE_REQUESTED": {
+      if (state.kind !== "ready") return state;
+      return { kind: "creating", principal: state.principal };
+    }
+    case "MEETING_STARTED": {
+      if (state.kind !== "creating") return state;
+      return {
+        kind: "active",
+        principal: state.principal,
+        meeting: { ...action.meeting, transcript: [] },
+      };
+    }
+    case "TRANSCRIPT_LINE": {
+      if (state.kind !== "active") return state;
+      // Replace-or-append: an interim segment with the same id is
+      // overwritten by its final form. The id contains isFinal so
+      // a finalized version naturally has a different key — handle
+      // that by pruning prior interims of the same numeric segmentId.
+      const numericId = action.line.id.split(":")[0];
+      const filtered = state.meeting.transcript.filter(
+        (l) => l.id.split(":")[0] !== numericId,
+      );
+      const next = [...filtered, action.line];
+      const trimmed =
+        next.length > TRANSCRIPT_TAIL
+          ? next.slice(next.length - TRANSCRIPT_TAIL)
+          : next;
+      return {
+        ...state,
+        meeting: { ...state.meeting, transcript: trimmed },
+      };
+    }
+    case "END_REQUESTED": {
+      if (state.kind !== "active") return state;
+      return {
+        kind: "ending",
+        principal: state.principal,
+        meeting: state.meeting,
+      };
+    }
+    case "MEETING_ENDED": {
+      const principal =
+        state.kind === "active" || state.kind === "ending"
+          ? state.principal
+          : state.kind === "ready" || state.kind === "creating"
+            ? state.principal
+            : null;
+      if (principal === null) return { kind: "signed-out" };
+      return { kind: "ready", principal, ragId: "", title: "" };
+    }
+    case "ERROR_RAISED": {
+      // Carry forward the principal if we have one so the user lands
+      // back on a sensible "ready" path, not signed-out.
+      const principal = "principal" in state ? state.principal : null;
+      return { kind: "error", principal, message: action.message };
+    }
+    case "ERROR_CLEARED": {
+      if (state.kind !== "error") return state;
+      if (state.principal === null) return { kind: "signed-out" };
+      return {
+        kind: "ready",
+        principal: state.principal,
+        ragId: "",
+        title: "",
+      };
+    }
+  }
+}
 
-  const isActive = session !== null;
+export function HostPage(): JSX.Element {
+  const [state, dispatch] = useReducer(reducer, { kind: "loading-auth" });
+
+  // Single AudioCaptureProvider for the page. Stateless across
+  // start/stop cycles; safe to memoize.
+  const captureProvider = useMemo(() => new WebAudioCaptureProvider(), []);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Auth subscription. Local mode fires once with the synthetic
+  // principal; Cloud mode fires on sign-in completion.
+  // ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const unsubscribe = auth.onChange((principal) => {
+      dispatch({ type: "AUTH_RESOLVED", principal });
+    });
+    return unsubscribe;
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────
+  // CreateMeeting + WebRTC negotiation + transcript subscription.
+  // Wraps everything in one async function so partial success cleans
+  // up the partials before propagating the error.
+  // ──────────────────────────────────────────────────────────────────
+  const startMeeting = useCallback(
+    async (ragId: string, title: string, mode: CaptureMode) => {
+      dispatch({ type: "CREATE_REQUESTED" });
+
+      let capture: CaptureSession | null = null;
+      let peer: RTCPeerConnection | null = null;
+      let subscription: Subscription | null = null;
+      try {
+        // 1. Audio first — if mic permission is denied, fail fast
+        //    before allocating a Gateway session that would just
+        //    sit idle.
+        capture = await captureProvider.start({ mode });
+        const audioTrack = capture.stream.getAudioTracks()[0];
+        if (!audioTrack) {
+          throw new Error("captured stream has no audio track");
+        }
+
+        // 2. CreateMeeting RPC.
+        const createResp = await gatewayClient.createMeeting({
+          ragId,
+          title,
+          languageHints: [],
+          allowedViewerAccountIds: [],
+        });
+
+        // 3. Build the RTCPeerConnection. No explicit ICE servers —
+        //    matches the gateway's pion-side Negotiator (ADR-0007 LAN
+        //    assumption). Add the audio transceiver as send-only.
+        peer = new RTCPeerConnection();
+        peer.addTransceiver(audioTrack, {
+          direction: "sendonly",
+          streams: [capture.stream],
+        });
+
+        // 4. Non-trickle SDP exchange: create offer, gather all ICE
+        //    candidates inline, send the complete SDP to NegotiateWebRTC.
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        await waitForIceGatheringComplete(peer);
+        if (!peer.localDescription) {
+          throw new Error("peer.localDescription unexpectedly null");
+        }
+
+        const negResp = await gatewayClient.negotiateWebRTC({
+          sessionId: createResp.sessionId,
+          offerSdp: peer.localDescription.sdp,
+        });
+        await peer.setRemoteDescription({
+          type: "answer",
+          sdp: negResp.answerSdp,
+        });
+
+        // 5. Subscribe to the transcript stream as if we were a
+        //    viewer. The host watching their own session catches
+        //    "engine isn't transcribing" instantly.
+        const streamProvider = pickTranscriptStreamProvider({
+          deployMode: DEPLOY_MODE,
+          endpoint: ENDPOINT,
+        });
+        subscription = streamProvider.subscribe(
+          {
+            sessionId: createResp.sessionId,
+            viewerToken: createResp.viewerJoinToken,
+          },
+          {
+            onEvent: (event) => {
+              const line = transcriptLineFromEvent(event);
+              if (line !== null) {
+                dispatch({ type: "TRANSCRIPT_LINE", line });
+              }
+            },
+            onError: (err) => {
+              // Non-fatal at this layer — the meeting can keep
+              // running even if the host's own echo subscription
+              // dies. Surface as an inline error log; viewers are
+              // unaffected.
+              console.warn("[host] transcript stream error:", err);
+            },
+          },
+        );
+
+        dispatch({
+          type: "MEETING_STARTED",
+          meeting: {
+            sessionId: createResp.sessionId,
+            viewerToken: createResp.viewerJoinToken,
+            capture,
+            peer,
+            subscription,
+          },
+        });
+      } catch (err) {
+        // Roll back partial state. Each handle is null until its
+        // corresponding step succeeded, so this is safe.
+        if (subscription) subscription.unsubscribe();
+        if (peer) peer.close();
+        if (capture) await capture.stop().catch(() => undefined);
+        const message =
+          err instanceof CaptureError
+            ? `Capture: [${err.code}] ${err.message}`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        dispatch({ type: "ERROR_RAISED", message });
+      }
+    },
+    [captureProvider],
+  );
+
+  const endMeeting = useCallback(async (active: ActiveMeeting) => {
+    dispatch({ type: "END_REQUESTED" });
+    // Best-effort cleanup, in shutdown order: viewer-facing
+    // subscription → audio capture → peer → server-side EndMeeting.
+    // Each step is independent; we don't want one failure to leak
+    // the others.
+    try {
+      active.subscription.unsubscribe();
+    } catch (err) {
+      console.warn("[host] subscription.unsubscribe:", err);
+    }
+    try {
+      active.peer.close();
+    } catch (err) {
+      console.warn("[host] peer.close:", err);
+    }
+    try {
+      await active.capture.stop();
+    } catch (err) {
+      console.warn("[host] capture.stop:", err);
+    }
+    try {
+      await gatewayClient.endMeeting({ sessionId: active.sessionId });
+    } catch (err) {
+      console.warn("[host] EndMeeting RPC:", err);
+    }
+    dispatch({ type: "MEETING_ENDED" });
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Render
+  // ──────────────────────────────────────────────────────────────────
+  if (state.kind === "loading-auth") {
+    return (
+      <main>
+        <h2>Host</h2>
+        <p style={{ color: "#666" }}>Resolving identity…</p>
+      </main>
+    );
+  }
+
+  if (state.kind === "signed-out") {
+    return (
+      <main>
+        <h2>Host</h2>
+        <p>You need to sign in to start a meeting.</p>
+        <button
+          type="button"
+          onClick={() => {
+            void auth.signIn();
+          }}
+        >
+          Sign in {DEPLOY_MODE === "cloud" ? "with Cognito" : "(local)"}
+        </button>
+      </main>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <main>
+        <h2>Host</h2>
+        <p style={{ color: "#c0392b" }}>
+          <strong>Error:</strong> {state.message}
+        </p>
+        <button
+          type="button"
+          onClick={() => dispatch({ type: "ERROR_CLEARED" })}
+        >
+          Dismiss
+        </button>
+      </main>
+    );
+  }
+
+  if (state.kind === "ready" || state.kind === "creating") {
+    const isCreating = state.kind === "creating";
+    const ragId = state.kind === "ready" ? state.ragId : "";
+    const title = state.kind === "ready" ? state.title : "";
+    return (
+      <main>
+        <Header principal={state.principal} />
+        <h3>New meeting</h3>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const mode = (fd.get("capture-mode") ??
+              "microphone") as CaptureMode;
+            void startMeeting(ragId.trim(), title.trim(), mode);
+          }}
+        >
+          <label style={{ display: "block", marginBottom: "0.5rem" }}>
+            RAG corpus ID:&nbsp;
+            <input
+              type="text"
+              value={ragId}
+              required
+              minLength={1}
+              disabled={isCreating}
+              onChange={(e) =>
+                dispatch({
+                  type: "FORM_FIELD_CHANGED",
+                  field: "ragId",
+                  value: e.target.value,
+                })
+              }
+            />
+          </label>
+          <label style={{ display: "block", marginBottom: "0.5rem" }}>
+            Meeting title:&nbsp;
+            <input
+              type="text"
+              value={title}
+              maxLength={200}
+              disabled={isCreating}
+              onChange={(e) =>
+                dispatch({
+                  type: "FORM_FIELD_CHANGED",
+                  field: "title",
+                  value: e.target.value,
+                })
+              }
+            />
+          </label>
+
+          <fieldset disabled={isCreating} style={{ marginBottom: "1rem" }}>
+            <legend>Audio source</legend>
+            {ALL_MODES.map((m) => {
+              const supported = captureProvider.isSupported(m.value);
+              return (
+                <label
+                  key={m.value}
+                  style={{
+                    display: "block",
+                    marginBottom: "0.25rem",
+                    color: supported ? "inherit" : "#aaa",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="capture-mode"
+                    value={m.value}
+                    defaultChecked={m.value === "microphone"}
+                    disabled={!supported}
+                  />{" "}
+                  {m.label}
+                  {!supported && (
+                    <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem" }}>
+                      (not supported in this browser)
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </fieldset>
+
+          <button type="submit" disabled={isCreating || ragId.trim() === ""}>
+            {isCreating ? "Creating…" : "Create meeting"}
+          </button>
+        </form>
+      </main>
+    );
+  }
+
+  // active or ending
+  const meeting = state.meeting;
+  const isEnding = state.kind === "ending";
+  const viewerUrl = `${window.location.origin}/view/${
+    meeting.sessionId
+  }?token=${encodeURIComponent(meeting.viewerToken)}`;
 
   return (
     <main>
-      <h2>Host</h2>
-
-      <fieldset disabled={isActive} style={{ marginBottom: "1rem" }}>
-        <legend>Audio source</legend>
-        {ALL_MODES.map((m) => {
-          const supported = provider.isSupported(m.value);
-          return (
-            <label
-              key={m.value}
-              style={{
-                display: "block",
-                marginBottom: "0.25rem",
-                color: supported ? "inherit" : "#aaa",
-              }}
-            >
-              <input
-                type="radio"
-                name="capture-mode"
-                value={m.value}
-                checked={mode === m.value}
-                disabled={!supported}
-                onChange={() => setMode(m.value)}
-              />{" "}
-              {m.label}
-              {!supported && (
-                <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem" }}>
-                  (not supported in this browser)
-                </span>
-              )}
-            </label>
-          );
-        })}
-      </fieldset>
-
-      {!isActive && (
-        <button type="button" onClick={start}>
-          Start capture
-        </button>
-      )}
-      {isActive && (
-        <button type="button" onClick={stop}>
-          Stop capture
-        </button>
-      )}
-
-      {error && (
-        <p style={{ color: "#c0392b", marginTop: "1rem" }}>
-          <strong>Capture error:</strong> {error}
-        </p>
-      )}
-
-      {isActive && (
-        <section style={{ marginTop: "1rem" }}>
-          <p>
-            Capture <strong>active</strong> in mode <code>{session?.mode}</code>
-            . Stream has{" "}
-            <code>{session?.stream.getAudioTracks().length ?? 0}</code> audio
-            track(s).
-          </p>
-          <p style={{ color: "#888", fontSize: "0.85rem" }}>
-            Phase 2 wires this MediaStream into a WebRTC PeerConnection and
-            ships frames to the Go Gateway.
-          </p>
-        </section>
-      )}
+      <Header principal={state.principal} />
+      <h3>Meeting active</h3>
 
       <section
-        style={{ marginTop: "2rem", color: "#666", fontSize: "0.85rem" }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "auto 1fr",
+          gap: "1.5rem",
+          alignItems: "start",
+        }}
       >
-        <p>
-          Audio captured here exists only in this browser tab&apos;s memory and,
-          when Phase 2 lands, is sent over WebRTC to the Aegis engine where it
-          is transcribed in process RAM and discarded — see{" "}
-          <a
-            href="https://github.com/BinHsu/aegis-core/blob/main/docs/adr/0005-audio-ephemeral-policy.md"
-            target="_blank"
-            rel="noreferrer"
+        <div>
+          <p style={{ marginTop: 0 }}>
+            <strong>Viewers scan to join:</strong>
+          </p>
+          <QRCodeSVG value={viewerUrl} size={180} includeMargin />
+          <p style={{ fontSize: "0.75rem", color: "#888", maxWidth: 220 }}>
+            Or share this link:
+            <br />
+            <code style={{ wordBreak: "break-all" }}>{viewerUrl}</code>
+          </p>
+        </div>
+
+        <div>
+          <p>
+            Session: <code>{meeting.sessionId}</code>
+            <br />
+            Audio track: <code>{meeting.capture.mode}</code> · WebRTC peer
+            state: <code>{meeting.peer.connectionState}</code>
+          </p>
+          <h4 style={{ marginBottom: "0.25rem" }}>Live transcript (echo)</h4>
+          {meeting.transcript.length === 0 ? (
+            <p style={{ color: "#888", fontStyle: "italic" }}>
+              Waiting for the first segment…
+            </p>
+          ) : (
+            <ul style={{ paddingLeft: "1rem" }}>
+              {meeting.transcript.map((line) => (
+                <li
+                  key={line.id}
+                  style={{
+                    color: line.isFinal ? "#000" : "#888",
+                    fontStyle: line.isFinal ? "normal" : "italic",
+                  }}
+                >
+                  <strong>{line.speaker}:</strong> {line.text}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void endMeeting(meeting)}
+            disabled={isEnding}
+            style={{ marginTop: "1rem" }}
           >
-            ADR-0005
-          </a>
-          .
-        </p>
+            {isEnding ? "Ending…" : "End meeting"}
+          </button>
+        </div>
       </section>
     </main>
   );
+}
+
+function Header({ principal }: { principal: AuthPrincipal }): JSX.Element {
+  return (
+    <header style={{ marginBottom: "1rem", color: "#666", fontSize: "0.9rem" }}>
+      Signed in as <code>{principal.userId}</code>
+      {principal.tenantId !== "" && (
+        <>
+          {" · tenant "}
+          <code>{principal.tenantId}</code>
+        </>
+      )}
+      {" · "}
+      <button
+        type="button"
+        style={{
+          background: "none",
+          border: "none",
+          color: "#3498db",
+          cursor: "pointer",
+          padding: 0,
+          font: "inherit",
+          textDecoration: "underline",
+        }}
+        onClick={() => {
+          void auth.signOut();
+        }}
+      >
+        sign out
+      </button>
+    </header>
+  );
+}
+
+/**
+ * Resolve once the RTCPeerConnection has finished gathering ICE
+ * candidates — required because the gateway's pion Negotiator does
+ * not accept trickle ICE per ADR-0007 LAN assumption. The peer has
+ * a `gatherstatechange` event but it can fire before we attach the
+ * listener; check the synchronous state first.
+ */
+function waitForIceGatheringComplete(peer: RTCPeerConnection): Promise<void> {
+  if (peer.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    const onChange = () => {
+      if (peer.iceGatheringState === "complete") {
+        peer.removeEventListener("icegatheringstatechange", onChange);
+        resolve();
+      }
+    };
+    peer.addEventListener("icegatheringstatechange", onChange);
+  });
+}
+
+/**
+ * Map a ViewerEvent (from the TranscriptStreamProvider abstraction)
+ * into the host-page TranscriptLine shape, or null for events the
+ * host UI doesn't render (state changes, hints).
+ */
+function transcriptLineFromEvent(event: ViewerEvent): TranscriptLine | null {
+  if (event.kind !== "transcript") return null;
+  return {
+    id: `${event.segmentId}:${event.isFinal ? "final" : "interim"}`,
+    text: event.text,
+    isFinal: event.isFinal,
+    speaker: event.speakerLabel ?? "Speaker",
+  };
 }
