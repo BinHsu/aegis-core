@@ -16,6 +16,7 @@ cc_library(
     hdrs = ["session.h"],
     deps = [
         ":resource_budget",
+        "//engine_cpp/src/audio:opus_decoder",
         "//engine_cpp/src/inference:whisper_engine",
         "//proto/aegis/v1:aegis_cc_grpc",
         "//proto/aegis/v1:aegis_cc_proto",

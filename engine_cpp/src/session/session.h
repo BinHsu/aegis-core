@@ -22,6 +22,13 @@
 //                               (batched transcription happens on
 //                               END_STREAM for Phase 1; incremental
 //                               emission is Session 5+)
+//     - OpusChunk             → lazy-init an OpusDecoder on first
+//                               packet, decode to 16 kHz mono float
+//                               PCM, append to ring buffer. Per
+//                               ADR-0016, codec work lives here, not
+//                               in the gateway. A single corrupt
+//                               frame is logged-and-dropped, not
+//                               fatal to the session.
 //     - ControlEvent PAUSE    → transition to Paused
 //     - ControlEvent RESUME   → no-op (already active)
 //     - ControlEvent END      → flush + emit TranscriptSegment(s)
@@ -29,7 +36,7 @@
 //     - SessionStart          → INVALID_ARGUMENT (duplicate)
 //
 //   [Paused]
-//     - PcmChunk              → drop (host's audio is frozen per
+//     - PcmChunk / OpusChunk  → drop (host's audio is frozen per
 //                               ADR-0006 WebRTC Disconnected state)
 //     - ControlEvent RESUME   → transition to Active
 //     - ControlEvent END      → flush what we have; return OK
