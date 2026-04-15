@@ -1,12 +1,29 @@
 # 🛡️ Aegis Core
 
-> **Turn every remote meeting into a strategic advantage.**
+> **A chief-of-staff's tool for the moment before the principal speaks.**
 
-Aegis Core is a real-time meeting intelligence system for enterprises.
-A staff operator captures meeting audio; a C++ engine transcribes and
-diarizes it on-device; a RAG-backed hint generator surfaces factual
-answers to any detected question — enabling executives to respond with
-authority in negotiations, press conferences, and depositions.
+Aegis Core is real-time meeting intelligence built for the person
+sitting next to the principal — the chief-of-staff whose job is to make
+sure the leader walks into the negotiation, the press conference, the
+board review with the right facts already at hand. Great leaders are
+great because of the people around them. This repository is a
+deliberate act of care for that work: a tool that respects the
+chief-of-staff's judgment, stays out of the principal's way, and keeps
+its promises about what it does with sensitive audio.
+
+A C++ engine transcribes meeting audio on-device; a Go gateway handles
+session boundaries, authentication, and WebRTC; a RAG-backed retriever
+surfaces the fact the chief-of-staff needs, in the language the room is
+speaking, the moment a question appears in the transcript. Nothing
+leaves the machine unless the chief-of-staff explicitly makes it leave.
+
+A codebase does not make a company — that takes a business model, a
+team, and a decade of judgment calls. But a codebase can make a
+promise: that what the README says is what the build system enforces,
+that the words "privacy," "sovereignty," and "local-first" describe the
+code rather than the marketing. Aegis Core is the bet that efficiency
+and readability can both be maximized at once, with the tension between
+them made visible rather than hidden.
 
 Design goals, from day one:
 
