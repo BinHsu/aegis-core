@@ -12,11 +12,15 @@ Modifications : minor — section headers added for chunking and human
                 readability; no source paragraphs altered.
 
 This file IS the corpus per ADR-0019 §Decision.5. The vector index
-built from it lives at .rag-index/ (gitignored). To rebuild after
-editing, see tools/rag/README.md.
+built from it lives at .rag-index/ (gitignored). The seed mechanism
+is unified into the engine per ADR-0020 (forthcoming): `engine
+--seed --corpus docs/rag/taiwan.md --target=local|cloud` produces
+the index using the same bge-m3 GGUF the query path uses — one
+embedder, one vector space.
 
-This is one bundled example. seed.py accepts --corpus PATH so any
-UTF-8 markdown file with paragraph-level structure substitutes in.
+This is one bundled example. `engine --seed` accepts any UTF-8
+markdown file with paragraph-level structure, so swapping in your
+own corpus is a matter of pointing `--corpus` at a different path.
 The Phase 3 demo persona is a foreign tourist preparing a trip to
 Taiwan, asking in their own language; this content set is sized for
 that scenario and to keep the example commit reviewable.

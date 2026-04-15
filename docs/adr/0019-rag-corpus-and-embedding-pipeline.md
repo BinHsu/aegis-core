@@ -2,11 +2,64 @@
 
 | Field    | Value                                                                   |
 | -------- | ----------------------------------------------------------------------- |
-| Status   | Accepted — skeleton landed, corpus + runtime query path follow-ups open |
+| Status   | **Superseded in part by ADR-0020** (2026-04-15, same day): implementation mechanism moves from Python (`tools/rag/seed.py` + `FlagEmbedding`) to engine-owned (`engine --seed` + bge-m3 GGUF on the existing ggml runtime). The six numbered decisions below (corpus, chunking, model, vector store, distribution boundary, language-match contract) **remain in force**; only the seed-pipeline runtime changes. See the supersession note directly below. |
 | Date     | 2026-04-15                                                              |
 | Deciders | Project author                                                          |
 | Context  | Phase 3 demo needs a concrete "who is this for?" story. The chosen persona — a foreign tourist asking questions about Taiwan, in their own language — forces decisions on corpus, chunking, embeddings, and the "local → cloud" distribution boundary. |
-| Related  | ADR-0005 (audio ephemeral policy — different sensitivity class from RAG corpus), ADR-0008 (monorepo layout), ADR-0016 (Opus on engine — prior example of "code lives where the domain lives"), ADR-0018 (polyglot rationale) |
+| Related  | ADR-0005 (audio ephemeral policy — different sensitivity class from RAG corpus), ADR-0008 (monorepo layout), ADR-0016 (Opus on engine — prior example of "code lives where the domain lives"), ADR-0018 (polyglot rationale), ADR-0020 (engine-owned inference — supersedes this ADR's implementation mechanism) |
+
+> ### Supersession note — 2026-04-15 (same-day revision)
+>
+> This ADR's original plan put the seed pipeline in Python
+> (`tools/rag/seed.py` using HuggingFace `FlagEmbedding` + PyTorch
+> FP16). Later the same day, sharpening the runtime architecture
+> for ADR-0020 (forthcoming) surfaced a structural bug in that
+> plan: the C++ engine's query-time embedding would use **ggml
+> bge-m3 at Q4_K_M quantization**, while Python-side seeding would
+> use **PyTorch FP16**. Cosine similarity between the two
+> encodings of the same text is typically ~0.97, not 1.0 —
+> meaning the corpus vectors and the query vectors would live in
+> **subtly different spaces**. Retrieval quality would silently
+> degrade, and §Decision.5's "immutable corpus, reproducible
+> index" guarantee would quietly fail to hold.
+>
+> The fix is unification, not patching. The engine already runs
+> ggml (for whisper.cpp); adding bge-m3 GGUF Q4_K_M (~400 MB
+> quantized) onto the same runtime is the same-stack extension.
+> The engine gains a `--seed` subcommand that calls the same
+> embedding code path the query handler uses, so **one embedder,
+> one vector space, one model version** — for both seed time and
+> query time, local and cloud.
+>
+> **In force, unchanged**:
+>
+> - §Decision.1 — corpus = zh-TW Wikipedia lead for Taiwan
+> - §Decision.2 — Chinese-aware chunking rules (`。！？，` etc.)
+> - §Decision.3 — `BAAI/bge-m3` as the embedding model
+> - §Decision.4 — Qdrant as vector store
+> - §Decision.5 — corpus in git, index as derivative artifact
+> - §Decision.6 — language match at the LLM prompt layer
+>
+> **Revised by ADR-0020**:
+>
+> - **Runtime binding**: C++ engine, not Python sidecar. `engine
+>   --seed` is the sole seed entry point; there is no `seed.py`
+>   anywhere in the repo.
+> - **Precision**: Q4_K_M via GGUF (throughout), not FP16 (seed)
+>   + Q4 (query). One precision, one vector space.
+> - **Toolchain impact**: Python is removed from the repo as a
+>   runtime or seed-time surface. It remains only as a dev-tier
+>   tool (pre-commit hooks), same category as `protoc`, `buf`,
+>   `pnpm`.
+> - **ADR-0018 thesis strengthened**: 2 runtime tiers (C++ engine,
+>   Go gateway) now holds for BOTH hot path AND offline seed
+>   path. Python never becomes a runtime tier.
+>
+> The numbered paragraphs below are retained as the decision
+> record of the choices that remain in force, with the
+> understanding that any code references to `tools/rag/seed.py`
+> or `requirements.txt` describe a plan that did not ship. For
+> the current seed mechanism, see ADR-0020 and the engine binary.
 
 ## Context
 
