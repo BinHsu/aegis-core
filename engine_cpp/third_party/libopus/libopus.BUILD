@@ -32,6 +32,17 @@ cmake(
         "OPUS_BUILD_PROGRAMS": "OFF",
         "OPUS_INSTALL_PKG_CONFIG_MODULE": "OFF",
         "OPUS_INSTALL_CMAKE_CONFIG_MODULE": "OFF",
+        # Pin to match Bazel's apple toolchain default (11.0). Without
+        # this, CMake picks up the host SDK (currently darwin 26.3) and
+        # ld then warns ~200 times per engine binary link with
+        # "object file was built for newer 'macOS' version (26.3) than
+        # being linked (11.0)". The warning is currently benign — no
+        # libopus code path uses a 26.3-only symbol — but a future
+        # libopus version that does would crash at runtime on a
+        # macOS 11 host. Lowering the build target preempts that class
+        # of incident. Keep this aligned with whatever
+        # MACOSX_DEPLOYMENT_TARGET Bazel's apple toolchain emits.
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
     },
     out_static_libs = ["libopus.a"],
     visibility = ["//visibility:public"],

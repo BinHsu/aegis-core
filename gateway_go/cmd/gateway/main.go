@@ -19,10 +19,10 @@
 // internal/grpc as AudioPipelineStart captures the process ctx, the
 // Negotiator, and the Engine client so internal/grpc stays free of
 // pion and pipeline imports. On NegotiateWebRTC success, the closure
-// pulls RTP payloads off negotiator.AudioChan(sid), decodes them via
-// pion/opus, and sends them as PcmChunks to the engine's
-// StreamTranscribe stream; transcript egress is fanned out via
-// session.Broadcast to viewers on both transports.
+// pulls RTP payloads off negotiator.AudioChan(sid) and forwards them
+// to the engine as OpusChunks via Pipeline.WriteRTPPayload — codec
+// work lives on the engine side per ADR-0016. Transcript egress is
+// fanned out via session.Broadcast to viewers on both transports.
 //
 // The binary is built via Bazel:
 //
