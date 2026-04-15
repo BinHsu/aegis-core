@@ -1,16 +1,15 @@
 // Package pipeline wires the live audio path from a WebRTC RTP stream
-// through the Opus decoder to the C++ engine's StreamTranscribe gRPC
-// stream, and fans transcript egress out to viewers via
-// session.Session.Broadcast.
+// to the C++ engine's StreamTranscribe gRPC stream, and fans transcript
+// egress out to viewers via session.Session.Broadcast.
 //
-// Data flow (Phase 2 A4):
+// Data flow (Phase 2 A4, post ADR-0016):
 //
 //	OnTrack (pion)                ↓ []byte Opus payload
 //	Negotiator.AudioChan()        ↓
 //	cmd/gateway factory closure   ↓ (calls pipeline.WriteRTPPayload)
-//	Pipeline.WriteRTPPayload      ↓ Opus → int16 PCM (pion/opus, 16 kHz mono)
-//	StreamTranscribe.Send         ↓ IngestMessage{Pcm}
-//	  (engine processes)          ↓
+//	Pipeline.WriteRTPPayload      ↓ forwards Opus verbatim, no decode
+//	StreamTranscribe.Send         ↓ IngestMessage{Opus}
+//	  (engine decodes + transcribes — ADR-0016)
 //	StreamTranscribe.Recv         ↓ EgressMessage{Transcript}
 //	Pipeline.runEgress            ↓ ViewerEvent{Transcript}
 //	Session.Broadcast             ↓ fan-out
@@ -19,15 +18,18 @@
 //
 // Architectural notes:
 //
-//   - This package depends on aegisv1 (proto), session, and pion/opus;
-//     it does NOT depend on internal/grpc or internal/webrtc. The
+//   - This package depends on aegisv1 (proto) and session; it does
+//     NOT depend on internal/grpc or internal/webrtc. The
 //     factory-injection pattern (internal/grpc.Config.AudioPipelineStart)
 //     keeps the gRPC service free of this dependency graph, which in
 //     turn keeps its test binary tiny.
 //
-//   - pion/opus can emit 16 kHz mono PCM directly via its internal
-//     resampler (NewDecoderWithOutput(16000, 1)), so we avoid a manual
-//     48 kHz stereo → 16 kHz mono downmix path.
+//   - Opus decoding was previously done here via pion/opus. Per
+//     ADR-0016 it moved to the C++ engine (libopus) after Phase 3
+//     live-phone testing revealed pion/opus's mode-3 gap against real
+//     WebRTC traffic. The gateway now forwards the RTP payload
+//     verbatim; codec work lives where the audio-processing domain
+//     lives, not in the BFF.
 //
 //   - The send side is mutex-protected because WriteRTPPayload and
 //     SendControl are called concurrently from the factory-closure
@@ -47,7 +49,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pion/opus"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
@@ -55,22 +56,14 @@ import (
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 )
 
-// Audio format constants — the canonical MVP format per ADR-0011. Any
-// divergence here must also be reflected in the engine-side validation
-// and the pion/opus decoder initialization.
+// Audio format constants — the canonical MVP format per ADR-0011. These
+// describe the engine's *post-decode* format; the on-wire chunk over
+// gRPC is Opus (via OpusChunk) on the live WebRTC path and int16 LE
+// PCM (via PcmChunk) on the fixture-replay / push-to-talk path.
 const (
 	sampleRateHz  = 16000
 	channels      = 1
 	bitsPerSample = 16
-
-	// pcmDecodeBufSamples sizes the reusable int16 buffer passed into
-	// opus.DecodeToInt16. An Opus packet carries at most 120 ms of
-	// audio; at 48 kHz stereo that's 120*48*2 = 11 520 samples. We
-	// allocate a generous 12 288 to avoid any tight-fit reallocation
-	// risk. (NewDecoderWithOutput(16000, 1) makes the actual output
-	// smaller, but the underlying buffers inside pion/opus use the
-	// pre-resample sample count.)
-	pcmDecodeBufSamples = 12288
 )
 
 // Pipeline owns one engine StreamTranscribe bidi stream for the lifetime
@@ -81,24 +74,17 @@ type Pipeline struct {
 	stream    aegisv1.Engine_StreamTranscribeClient
 	startedAt time.Time
 
-	// dec is NOT safe for concurrent use; all WriteRTPPayload calls
-	// run on the single pump goroutine in main.go's factory closure.
-	// We do not guard dec with a mutex because that goroutine is the
-	// sole caller of WriteRTPPayload. Stored by value because pion's
-	// method set uses pointer receivers and *Pipeline makes &p.dec
-	// trivially addressable.
-	dec opus.Decoder
-
-	// Reusable decode scratch — avoids per-packet allocation on the hot
-	// path. Only touched by WriteRTPPayload (single goroutine).
-	pcmScratch []int16
-
 	// sendMu guards the gRPC stream's Send method. gRPC requires
 	// Send/CloseSend to be serialized but concurrent with Recv.
 	sendMu sync.Mutex
 
-	// chunkSeq is the monotonic PcmChunk chunk_id (see aegis.proto).
-	// Touched only by WriteRTPPayload (single goroutine).
+	// chunkSeq is the monotonic audio-chunk sequence number shared by
+	// WriteRTPPayload (OpusChunk) and WritePCM (PcmChunk). The proto
+	// (aegis.proto) permits independent counters per variant, but a
+	// single session only uses one audio source in practice, so a
+	// shared counter keeps the sequence monotonic across whatever
+	// path is active. Touched only by the send path (serialized by
+	// sendMu).
 	chunkSeq uint64
 
 	// done is closed by runEgress when it exits; Close waits on it so
@@ -135,11 +121,6 @@ func New(
 		return nil, fmt.Errorf("pipeline: sessionID required")
 	}
 
-	dec, err := opus.NewDecoderWithOutput(sampleRateHz, channels)
-	if err != nil {
-		return nil, fmt.Errorf("pipeline: opus decoder init: %w", err)
-	}
-
 	stream, err := engine.StreamTranscribe(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: StreamTranscribe open: %w", err)
@@ -167,53 +148,53 @@ func New(
 	}
 
 	p := &Pipeline{
-		sess:       sess,
-		sessionID:  sessionID,
-		stream:     stream,
-		startedAt:  time.Now(),
-		dec:        dec,
-		pcmScratch: make([]int16, pcmDecodeBufSamples),
-		done:       make(chan struct{}),
+		sess:      sess,
+		sessionID: sessionID,
+		stream:    stream,
+		startedAt: time.Now(),
+		done:      make(chan struct{}),
 	}
 	go p.runEgress()
 	return p, nil
 }
 
-// WriteRTPPayload decodes an Opus-encoded RTP payload (as produced by
-// Negotiator.AudioChan) into 16 kHz mono int16 PCM and sends it as a
-// PcmChunk to the engine.
+// WriteRTPPayload forwards an Opus-encoded RTP payload (as produced by
+// Negotiator.AudioChan) to the engine as an OpusChunk. Per ADR-0016,
+// the gateway does NOT decode: codec work lives in the C++ engine
+// alongside whisper.cpp. An empty payload is a no-op.
 //
-// Must be called from a single goroutine — the decoder and chunk
-// sequencer are not concurrency-safe. The factory closure in main.go
-// is the sole caller in production.
+// Safe to call concurrently with SendControl / Close; sendMu serializes
+// the underlying gRPC Send calls.
 //
-// An empty payload is a no-op. A decode error is returned to the caller
-// but does NOT tear down the stream — a single corrupt Opus frame
-// should not kill an otherwise-healthy session.
+// ADR-0005 R3 / ADR-0016 note on wrapper types: Opus frames carry
+// voice that reconstructs to an audible signal, so they ARE sensitive
+// data. We do NOT wrap them in a `sensitive.RedactedOpus` type
+// (matching the PcmChunk pattern) because the gateway's audit surface
+// is a single call site — this function. A Semgrep rule on
+// IngestMessage_Opus accesses outside this file is cheaper and clearer
+// than a wrapper type whose unwrap-on-proto-Send boundary would be
+// identical to the one below. See aegis.proto's OpusChunk comment.
 func (p *Pipeline) WriteRTPPayload(payload []byte) error {
 	if len(payload) == 0 {
 		return nil
 	}
-	// p.dec is a value; method has a pointer receiver — Go auto-takes
-	// the address via &p.dec since p is *Pipeline.
-	n, err := p.dec.DecodeToInt16(payload, p.pcmScratch)
-	if err != nil {
-		return fmt.Errorf("pipeline: opus decode: %w", err)
+	offset := time.Since(p.startedAt).Milliseconds()
+	msg := &aegisv1.IngestMessage{
+		Payload: &aegisv1.IngestMessage_Opus{
+			Opus: &aegisv1.OpusChunk{
+				Opus:     payload,
+				ChunkId:  p.chunkSeq,
+				OffsetMs: offset,
+			},
+		},
 	}
-	if n <= 0 {
-		return nil
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
+	p.chunkSeq++
+	if err := p.stream.Send(msg); err != nil {
+		return fmt.Errorf("pipeline: send Opus: %w", err)
 	}
-	// DecodeToInt16 returns samples-per-channel. Output is mono, so
-	// total samples == n.
-	pcmBytes := make([]byte, n*2)
-	for i := 0; i < n; i++ {
-		s := p.pcmScratch[i]
-		pcmBytes[i*2] = byte(s)
-		pcmBytes[i*2+1] = byte(s >> 8)
-	}
-	// Wrap as RedactedPCM immediately at the decode boundary so a
-	// plain []byte can't flow further — ADR-0005 R3 enforcement.
-	return p.WritePCM(sensitive.RedactedPCM(pcmBytes))
+	return nil
 }
 
 // WritePCM sends a PCM chunk (already 16 kHz mono 16-bit little-endian,
@@ -228,9 +209,8 @@ func (p *Pipeline) WriteRTPPayload(payload []byte) error {
 // leak point — any .Bytes() call elsewhere in this tree is a review
 // flag.
 //
-// Same single-goroutine contract as WriteRTPPayload: the chunk
-// sequence counter is not atomic. sendMu handles concurrency with
-// SendControl / Close only.
+// Safe to call concurrently with WriteRTPPayload / SendControl / Close;
+// sendMu serializes the underlying gRPC Send calls.
 func (p *Pipeline) WritePCM(pcm sensitive.RedactedPCM) error {
 	if pcm.Len() == 0 {
 		return nil
@@ -248,10 +228,10 @@ func (p *Pipeline) WritePCM(pcm sensitive.RedactedPCM) error {
 			},
 		},
 	}
-	p.chunkSeq++
 
 	p.sendMu.Lock()
 	defer p.sendMu.Unlock()
+	p.chunkSeq++
 	if err := p.stream.Send(msg); err != nil {
 		return fmt.Errorf("pipeline: send PCM: %w", err)
 	}

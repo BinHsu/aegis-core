@@ -15,6 +15,7 @@ go 1.24.0
 toolchain go1.24.12
 
 require (
+	github.com/bazelbuild/rules_go v0.60.0
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -22,7 +23,6 @@ require (
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/desertbit/timer v1.0.1 // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/pion/datachannel v1.6.0 // indirect
 	github.com/pion/dtls/v3 v3.1.2 // indirect
@@ -50,7 +50,6 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/improbable-eng/grpc-web v0.15.0
-	github.com/pion/opus v0.0.0-20260408170506-085f78c96784
 	github.com/pion/webrtc/v4 v4.2.11
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
