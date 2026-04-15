@@ -20,13 +20,19 @@ import {
 const PROMPTER_WINDOW = 5;
 
 // Deploy mode + endpoint are normally injected at build time via Vite
-// env vars. The defaults here are the Local mode fallback so the
-// dev server experience works out of the box.
+// env vars. The default for ENDPOINT falls back to same-host:8080
+// (not hardcoded `localhost`) so the LAN-scan-QR-code viewer flow
+// works out of the box — a phone loading this page from
+// `http://192.168.x.y:5173/view/...` automatically points at
+// `http://192.168.x.y:8080` for the gateway.
 const DEPLOY_MODE = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
   | "cloud"
   | "local";
 const ENDPOINT =
-  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ?? "http://localhost:8080";
+  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ??
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8080`
+    : "http://localhost:8080");
 
 export function ViewerPage(): JSX.Element {
   const { sessionId } = useParams<{ sessionId: string }>();

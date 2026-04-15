@@ -39,5 +39,10 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Bind on all interfaces (0.0.0.0) so devices on the same LAN
+    // can reach the dev server — required for the "host-scans-QR,
+    // boss-scans-QR-on-phone" flow per ADR-0007. Vite prints the
+    // first non-loopback IPv4 under "Network:" when this is on.
+    host: true,
   },
 });

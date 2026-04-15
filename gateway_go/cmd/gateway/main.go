@@ -119,13 +119,29 @@ func main() {
 
 	// Dial the engine. grpc.NewClient (the 1.64+ preferred form) does
 	// NOT block on a live TCP connection — the RPC at call time drives
-	// the dial. Keepalive settings match ADR-0006 so a dead engine
-	// (pod crash, cable pull) is detected within 40 s on any open
-	// StreamTranscribe bidi stream and the pipeline errors out instead
-	// of hanging forever.
+	// the dial.
+	//
+	// Keepalive settings match ADR-0006: a dead engine (pod crash,
+	// cable pull) is detected within 40 s on any open StreamTranscribe
+	// bidi stream and the pipeline errors out instead of hanging
+	// forever.
+	//
+	// WithDefaultServiceConfig(round_robin) is ADR-0017 topology
+	// N:N-readiness. When `engineAddr` is a single host:port (Phase 2
+	// local demo), round_robin is a no-op — there's one endpoint to
+	// pick from. When Phase 4+ Cloud deployment points at a resolver
+	// target like `dns:///engine.aegis.svc.cluster.local:50051`
+	// (Kubernetes Headless Service), gRPC's DNS resolver expands to
+	// N pod IPs and round-robin picks one per new StreamTranscribe
+	// stream. Each bidi stream is then automatically session-pinned
+	// to the chosen engine for its lifetime (gRPC stream semantics,
+	// no extra code). NEVER remove this line to "simplify" — it's a
+	// ~free one-time cost that makes horizontal engine scaling a
+	// deployment concern, not a code refactor.
 	conn, err := grpc.NewClient(
 		engineAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                keepaliveTime,
 			Timeout:             keepaliveTimeout,
@@ -271,6 +287,7 @@ func main() {
 	// a single token works on either transport.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", makeHealthHandler(engine, engineAddr, registry))
+	mux.HandleFunc("/lan-ip", corsPermissive(makeLANIPHandler()))
 	mux.HandleFunc("/ws/viewer", ws.Handler(ws.Config{
 		Registry: registry,
 		Issuer:   issuer,
@@ -444,4 +461,94 @@ func writeJSON(w http.ResponseWriter, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+// lanIPResponse is the /lan-ip JSON shape — consumed by HostPage to
+// build a LAN-reachable QR code URL for viewers scanning from a
+// phone. `best` is the first-usable candidate; `candidates` is the
+// full list in case the host's machine has multiple LAN interfaces
+// (Wi-Fi + wired, or multiple docks) and the first guess is wrong.
+type lanIPResponse struct {
+	Best       string   `json:"best"`
+	Candidates []string `json:"candidates"`
+}
+
+// makeLANIPHandler introspects the host's network interfaces for
+// non-loopback IPv4 addresses — the addresses a LAN-local viewer's
+// phone can reach. Browser JS cannot query this directly (same-
+// origin + no local-network API); the gateway is the authoritative
+// source because it's the thing binding on 0.0.0.0:8080 that the
+// phone would connect to.
+//
+// Scope (all deliberate):
+//   - IPv4 only. Most consumer Wi-Fi routers don't serve IPv6 on the
+//     LAN segment, and QR codes with v6 addresses encode poorly at the
+//     scannable-from-a-foot-away density.
+//   - Skip loopback (127.0.0.1), link-local (169.254.0.0/16 APIPA),
+//     and interfaces that are administratively down.
+func makeLANIPHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		candidates := detectLANIPv4s()
+		resp := lanIPResponse{Candidates: candidates}
+		if len(candidates) > 0 {
+			resp.Best = candidates[0]
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = writeJSON(w, resp)
+	}
+}
+
+func detectLANIPv4s() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			out = append(out, ip4.String())
+		}
+	}
+	return out
+}
+
+// corsPermissive wraps a handler with permissive CORS headers — lets
+// the Vite dev server (cross-origin at http://*:5173) fetch
+// /lan-ip from the gateway at :8080 without preflight surprises.
+// Mirrors the grpc-web wrapper's permissive posture for Local mode;
+// Cloud mode will replace this with an origin allowlist alongside
+// the Cognito wiring (Phase 2 Known Gaps).
+func corsPermissive(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "content-type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h(w, r)
+	}
 }

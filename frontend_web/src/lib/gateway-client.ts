@@ -28,12 +28,28 @@ import { Gateway } from "@/gen/proto/aegis/v1/aegis_connect.js";
 
 /**
  * Resolved at module-load time so the rest of the app holds a stable
- * reference. Falls back to `http://localhost:8080` for the dev server
- * inner loop; production builds set `VITE_AEGIS_GATEWAY_ENDPOINT`
- * via env at `vite build` time.
+ * reference. Production builds set `VITE_AEGIS_GATEWAY_ENDPOINT` via
+ * env at `vite build` time.
+ *
+ * Dev-default falls back to the SAME HOST the frontend was served from
+ * (not hard-coded `localhost`), port 8080. This matters for the
+ * LAN-viewer demo flow: when the host-laptop user opens
+ * `http://192.168.x.y:5173/host` and the QR code lands a phone on
+ * `http://192.168.x.y:5173/view/...`, the phone's bundle computes
+ * `http://192.168.x.y:8080` for the gateway — reachable because the
+ * gateway binds on 0.0.0.0 (ADR-0007 LAN bind). Hard-coding
+ * `localhost` would break the phone case silently (CORS-block or
+ * ERR_CONNECTION_REFUSED).
  */
+function defaultGatewayBaseURL(): string {
+  if (typeof window === "undefined") {
+    return "http://localhost:8080";
+  }
+  return `${window.location.protocol}//${window.location.hostname}:8080`;
+}
+
 const GATEWAY_BASE_URL: string =
-  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ?? "http://localhost:8080";
+  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ?? defaultGatewayBaseURL();
 
 /**
  * Per-request auth-header thunk. Mutable so the AuthProvider layer can

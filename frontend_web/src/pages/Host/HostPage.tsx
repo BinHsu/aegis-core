@@ -37,7 +37,14 @@
 //   effectively viewer #1 — useful for "is the engine actually
 //   transcribing?" sanity during a real meeting.
 
-import { useCallback, useEffect, useMemo, useReducer, type JSX } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useState,
+  type JSX,
+} from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { gatewayClient } from "@/lib/gateway-client";
@@ -60,6 +67,22 @@ const ALL_MODES: { readonly value: CaptureMode; readonly label: string }[] = [
   { value: "browser-tab", label: "Remote meeting (capture browser tab)" },
   { value: "microphone-and-tab", label: "Both (mic + tab, mixed)" },
 ];
+
+// Preset RAG corpora. Keep the list short and curated — a live system
+// would populate this from a per-tenant ListCorpora RPC (ADR-0004
+// future work). The `value` is what the Gateway's CreateMeeting RPC
+// sees (its `rag_id` proto field); the `label` is the human-friendly
+// dropdown text.
+//
+// The first entry is the dropdown default — cheap demo that exercises
+// the pipeline end-to-end without caring which corpus responds.
+const RAG_CORPORA: { readonly value: string; readonly label: string }[] = [
+  { value: "demo-rag-general", label: "General demo corpus" },
+  { value: "demo-rag-engineering", label: "Engineering knowledge base" },
+  { value: "demo-rag-sales", label: "Sales deck library" },
+  { value: "demo-rag-support", label: "Customer support knowledge" },
+];
+const DEFAULT_RAG_ID = RAG_CORPORA[0]!.value;
 
 const TRANSCRIPT_TAIL = 8; // lines visible to the host
 
@@ -122,7 +145,7 @@ function reducer(state: HostState, action: Action): HostState {
       return {
         kind: "ready",
         principal: action.principal,
-        ragId: "",
+        ragId: DEFAULT_RAG_ID,
         title: "",
       };
     }
@@ -202,6 +225,12 @@ function reducer(state: HostState, action: Action): HostState {
 export function HostPage(): JSX.Element {
   const [state, dispatch] = useReducer(reducer, { kind: "loading-auth" });
 
+  // LAN IP for building QR-code URLs that viewers on other devices
+  // (phones) can actually reach. Browser JS can't query OS interfaces
+  // itself — the Go gateway exposes `/lan-ip` for this. `null` while
+  // fetching; empty string if the fetch failed; LAN IP string on success.
+  const [lanIP, setLanIP] = useState<string | null>(null);
+
   // Single AudioCaptureProvider for the page. Stateless across
   // start/stop cycles; safe to memoize.
   const captureProvider = useMemo(() => new WebAudioCaptureProvider(), []);
@@ -215,6 +244,32 @@ export function HostPage(): JSX.Element {
       dispatch({ type: "AUTH_RESOLVED", principal });
     });
     return unsubscribe;
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Fetch LAN IP once at mount. Used to build a QR URL that's
+  // reachable from phones on the same LAN. Falls back to empty string
+  // on any failure — the QR section degrades to "access the host via
+  // your LAN IP to share a working QR" hint.
+  // ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${ENDPOINT}/lan-ip`);
+        if (!res.ok) throw new Error(`/lan-ip returned ${res.status}`);
+        const json = (await res.json()) as { best?: string };
+        if (!cancelled) {
+          setLanIP(json.best ?? "");
+        }
+      } catch (err) {
+        console.warn("[host] failed to fetch /lan-ip:", err);
+        if (!cancelled) setLanIP("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ──────────────────────────────────────────────────────────────────
@@ -408,28 +463,25 @@ export function HostPage(): JSX.Element {
 
   if (state.kind === "ready" || state.kind === "creating") {
     const isCreating = state.kind === "creating";
-    const ragId = state.kind === "ready" ? state.ragId : "";
+    const ragId = state.kind === "ready" ? state.ragId : DEFAULT_RAG_ID;
     const title = state.kind === "ready" ? state.title : "";
     return (
       <main>
         <Header principal={state.principal} />
-        <h3>New meeting</h3>
+        <h3>Start a new meeting</h3>
         <form
           onSubmit={(e) => {
             e.preventDefault();
             const fd = new FormData(e.currentTarget);
             const mode = (fd.get("capture-mode") ??
               "microphone") as CaptureMode;
-            void startMeeting(ragId.trim(), title.trim(), mode);
+            void startMeeting(ragId, title.trim(), mode);
           }}
         >
           <label style={{ display: "block", marginBottom: "0.5rem" }}>
-            RAG corpus ID:&nbsp;
-            <input
-              type="text"
+            RAG corpus:&nbsp;
+            <select
               value={ragId}
-              required
-              minLength={1}
               disabled={isCreating}
               onChange={(e) =>
                 dispatch({
@@ -438,7 +490,13 @@ export function HostPage(): JSX.Element {
                   value: e.target.value,
                 })
               }
-            />
+            >
+              {RAG_CORPORA.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label style={{ display: "block", marginBottom: "0.5rem" }}>
             Meeting title:&nbsp;
@@ -488,8 +546,8 @@ export function HostPage(): JSX.Element {
             })}
           </fieldset>
 
-          <button type="submit" disabled={isCreating || ragId.trim() === ""}>
-            {isCreating ? "Creating…" : "Create meeting"}
+          <button type="submit" disabled={isCreating}>
+            {isCreating ? "Creating…" : "New meeting"}
           </button>
         </form>
       </main>
@@ -499,9 +557,26 @@ export function HostPage(): JSX.Element {
   // active or ending
   const meeting = state.meeting;
   const isEnding = state.kind === "ending";
-  const viewerUrl = `${window.location.origin}/view/${
+
+  // Build the viewer URL. Prefer the LAN IP from /lan-ip so a phone
+  // scanning the QR can actually reach the dev server (which binds
+  // on 0.0.0.0 per vite.config.ts `server.host: true`). Fall back to
+  // `window.location.origin` while the fetch is in flight / failed —
+  // that still works for same-machine verification, just not for
+  // off-device viewers.
+  const isLoopback =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+  const viewerOrigin =
+    lanIP !== null && lanIP !== "" && isLoopback
+      ? `${window.location.protocol}//${lanIP}:${
+          window.location.port || "5173"
+        }`
+      : window.location.origin;
+  const viewerUrl = `${viewerOrigin}/view/${
     meeting.sessionId
   }?token=${encodeURIComponent(meeting.viewerToken)}`;
+  const lanQRReady = !isLoopback || (lanIP !== null && lanIP !== "");
 
   return (
     <main>
@@ -526,6 +601,22 @@ export function HostPage(): JSX.Element {
             <br />
             <code style={{ wordBreak: "break-all" }}>{viewerUrl}</code>
           </p>
+          {!lanQRReady && (
+            <p
+              style={{
+                fontSize: "0.75rem",
+                color: "#c0392b",
+                maxWidth: 220,
+                marginTop: "0.5rem",
+              }}
+            >
+              ⚠️ QR encodes <code>localhost</code> because the gateway
+              didn&apos;t report a LAN IP (interfaces down?). Phones scanning it
+              will fail. Open this page via your LAN IP (e.g.{" "}
+              <code>http://192.168.x.y:5173/host</code>) or restart the gateway
+              with a working network.
+            </p>
+          )}
         </div>
 
         <div>
