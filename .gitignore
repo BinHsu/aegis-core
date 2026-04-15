@@ -63,6 +63,15 @@ MODULE.bazel.lock
 .venv/
 venv/
 env/
+
+# --- RAG vector index (ADR-0019) -----------------------------------------
+# Built from docs/rag/*.md by tools/rag/seed.py. The index is a
+# derivative artifact: bumping the embedding model regenerates it,
+# committing it would diff-noise every rebuild and lie about reality
+# when the model version drifts. Cloud deploys re-seed from the corpus
+# at deploy time; reviewers re-seed locally by running seed.py.
+.rag-index/
+
 __pycache__/
 *.py[cod]
 *$py.class
