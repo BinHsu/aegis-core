@@ -71,6 +71,31 @@ updates:
       - bazel
 
   # ---------------------------------------------------------------------------
+  # Python (tools/rag/). The ML ecosystem (torch, FlagEmbedding,
+  # langchain-*) iterates fast; a weekly cadence here would drown the
+  # review queue with patch-level releases. Monthly + grouped, so the
+  # entire RAG seed stack comes in as a single PR per month. Security
+  # alerts (separate channel, immediate) catch CVEs regardless.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: pip
+    directory: "/tools/rag"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - python
+      - rag
+    groups:
+      rag-stack:
+        patterns:
+          - "torch*"
+          - "FlagEmbedding"
+          - "qdrant-client"
+          - "langchain-*"
+          - "langdetect"
+
+  # ---------------------------------------------------------------------------
   # Docker (Dockerfile) — Phase 4a adds Dockerfiles. Enabling this
   # stanza before any Dockerfile exists produces a hard Dependabot job
   # failure rather than a no-op (Incident #07 — see docs/incidents.md).
