@@ -66,6 +66,19 @@ http_archive(
     urls = ["https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.4.tar.gz"],
 )
 
+# libopus — ADR-0016. The engine decodes Opus frames received over
+# the wire (gRPC StreamTranscribe's new OpusChunk variant) before
+# feeding PCM into whisper.cpp. Same http_archive + rules_foreign_cc
+# + cmake pattern as whisper_cpp above; see
+# engine_cpp/third_party/libopus/libopus.BUILD for the cmake target.
+http_archive(
+    name = "libopus",
+    build_file = "//engine_cpp/third_party/libopus:libopus.BUILD",
+    sha256 = "65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1",
+    strip_prefix = "opus-1.5.2",
+    urls = ["https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"],
+)
+
 # -----------------------------------------------------------------------------
 # Go toolchain — Phase 1 Session 5. rules_go pulls in a hermetic Go SDK
 # (download extension below) and the go_proto_library codegen rules that

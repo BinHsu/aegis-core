@@ -10,3 +10,15 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "opus_decoder_test",
+    srcs = ["opus_decoder_test.cc"],
+    size = "small",
+    deps = [
+        "//engine_cpp/src/audio:opus_decoder",
+        "//engine_cpp/third_party/libopus:libopus",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

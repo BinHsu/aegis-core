@@ -1241,7 +1241,11 @@ export class IngestMessage extends Message<IngestMessage> {
       }
     | {
         /**
-         * Audio data. Sent zero or more times after SessionStart.
+         * Audio data, in raw 16-bit PCM. Sent zero or more times after
+         * SessionStart. Used by tooling that already has decoded audio
+         * (WAV fixture replay in integration tests, future push-to-talk
+         * WebSocket source); the Gateway's live WebRTC path prefers
+         * `opus` below to keep the codec work on the engine side.
          *
          * @generated from field: aegis.v1.PcmChunk pcm = 2;
          */
@@ -1256,6 +1260,20 @@ export class IngestMessage extends Message<IngestMessage> {
          */
         value: ControlEvent;
         case: "control";
+      }
+    | {
+        /**
+         * Audio data, in raw Opus codec frames (ADR-0016). The Gateway
+         * peels Opus payloads out of RTP packets on the WebRTC ingress
+         * path and forwards them here verbatim — the engine owns the
+         * decode because codec-work belongs with the audio-processing
+         * binary (whisper.cpp), not the transport-layer BFF. Sent zero
+         * or more times after SessionStart.
+         *
+         * @generated from field: aegis.v1.OpusChunk opus = 4;
+         */
+        value: OpusChunk;
+        case: "opus";
       }
     | { case: undefined; value?: undefined } = { case: undefined };
 
@@ -1282,6 +1300,7 @@ export class IngestMessage extends Message<IngestMessage> {
       T: ControlEvent,
       oneof: "payload",
     },
+    { no: 4, name: "opus", kind: "message", T: OpusChunk, oneof: "payload" },
   ]);
 
   static fromBinary(
@@ -1565,6 +1584,92 @@ export class PcmChunk extends Message<PcmChunk> {
     b: PcmChunk | PlainMessage<PcmChunk> | undefined,
   ): boolean {
     return proto3.util.equals(PcmChunk, a, b);
+  }
+}
+
+/**
+ * @generated from message aegis.v1.OpusChunk
+ */
+export class OpusChunk extends Message<OpusChunk> {
+  /**
+   * A single Opus codec frame as it came off the wire (stripped of
+   * the RTP header by the Gateway, nothing more). Typical sizes are
+   * 40–400 bytes for 20 ms of speech at common WebRTC bitrates;
+   * hard upper bound is 1275 bytes (RFC 6716 §3.2).
+   *
+   * SAME privacy posture as PcmChunk.pcm — Opus is lossy but
+   * reversible to a voice signal, so it remains sensitive audio
+   * data and MUST NOT appear in logs, traces, metrics labels, or
+   * durable storage. Language-specific wrapper types (C++
+   * `SensitiveBytes`, Go `sensitive.RedactedOpus` if added) enforce
+   * this at compile time per ADR-0005 R3. The Go side currently
+   * does not wrap this type because Gateway is the only Go consumer
+   * and it forwards the bytes through a single `WriteRTPPayload`
+   * call site — the audit surface is small enough that a Semgrep
+   * rule on `OpusChunk.Opus` accesses outside that call site covers
+   * the risk without needing a wrapper type. See ADR-0016 for the
+   * domain-boundary rationale.
+   *
+   * @generated from field: bytes opus = 1;
+   */
+  opus = new Uint8Array(0);
+
+  /**
+   * Monotonic chunk sequence number. 0-based. Independent of
+   * PcmChunk.chunk_id even when both variants occur in the same
+   * session (unusual but legal).
+   *
+   * @generated from field: uint64 chunk_id = 2;
+   */
+  chunkId = protoInt64.zero;
+
+  /**
+   * Wall-clock offset from the beginning of the session, in
+   * milliseconds.
+   *
+   * @generated from field: int64 offset_ms = 3;
+   */
+  offsetMs = protoInt64.zero;
+
+  constructor(data?: PartialMessage<OpusChunk>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.OpusChunk";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "opus", kind: "scalar", T: 12 /* ScalarType.BYTES */ },
+    { no: 2, name: "chunk_id", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 3, name: "offset_ms", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): OpusChunk {
+    return new OpusChunk().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): OpusChunk {
+    return new OpusChunk().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): OpusChunk {
+    return new OpusChunk().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: OpusChunk | PlainMessage<OpusChunk> | undefined,
+    b: OpusChunk | PlainMessage<OpusChunk> | undefined,
+  ): boolean {
+    return proto3.util.equals(OpusChunk, a, b);
   }
 }
 

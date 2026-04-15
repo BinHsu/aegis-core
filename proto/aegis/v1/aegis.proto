@@ -429,11 +429,23 @@ message IngestMessage {
     // The first message on every stream. Sent exactly once.
     SessionStart session_start = 1;
 
-    // Audio data. Sent zero or more times after SessionStart.
+    // Audio data, in raw 16-bit PCM. Sent zero or more times after
+    // SessionStart. Used by tooling that already has decoded audio
+    // (WAV fixture replay in integration tests, future push-to-talk
+    // WebSocket source); the Gateway's live WebRTC path prefers
+    // `opus` below to keep the codec work on the engine side.
     PcmChunk pcm = 2;
 
     // Control event (pause / resume / end). Sent zero or more times.
     ControlEvent control = 3;
+
+    // Audio data, in raw Opus codec frames (ADR-0016). The Gateway
+    // peels Opus payloads out of RTP packets on the WebRTC ingress
+    // path and forwards them here verbatim — the engine owns the
+    // decode because codec-work belongs with the audio-processing
+    // binary (whisper.cpp), not the transport-layer BFF. Sent zero
+    // or more times after SessionStart.
+    OpusChunk opus = 4;
   }
 }
 
@@ -481,6 +493,36 @@ message PcmChunk {
   bytes pcm = 1;
 
   // Monotonic chunk sequence number. 0-based.
+  uint64 chunk_id = 2;
+
+  // Wall-clock offset from the beginning of the session, in
+  // milliseconds.
+  int64 offset_ms = 3;
+}
+
+message OpusChunk {
+  // A single Opus codec frame as it came off the wire (stripped of
+  // the RTP header by the Gateway, nothing more). Typical sizes are
+  // 40–400 bytes for 20 ms of speech at common WebRTC bitrates;
+  // hard upper bound is 1275 bytes (RFC 6716 §3.2).
+  //
+  // SAME privacy posture as PcmChunk.pcm — Opus is lossy but
+  // reversible to a voice signal, so it remains sensitive audio
+  // data and MUST NOT appear in logs, traces, metrics labels, or
+  // durable storage. Language-specific wrapper types (C++
+  // `SensitiveBytes`, Go `sensitive.RedactedOpus` if added) enforce
+  // this at compile time per ADR-0005 R3. The Go side currently
+  // does not wrap this type because Gateway is the only Go consumer
+  // and it forwards the bytes through a single `WriteRTPPayload`
+  // call site — the audit surface is small enough that a Semgrep
+  // rule on `OpusChunk.Opus` accesses outside that call site covers
+  // the risk without needing a wrapper type. See ADR-0016 for the
+  // domain-boundary rationale.
+  bytes opus = 1;
+
+  // Monotonic chunk sequence number. 0-based. Independent of
+  // PcmChunk.chunk_id even when both variants occur in the same
+  // session (unusual but legal).
   uint64 chunk_id = 2;
 
   // Wall-clock offset from the beginning of the session, in
