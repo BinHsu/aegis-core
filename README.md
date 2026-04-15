@@ -359,6 +359,7 @@ understand *why* something is designed a particular way, start here:
 | [0016](docs/adr/0016-opus-decode-on-engine.md) | Opus decode moves from gateway (pion/opus) to engine (libopus) |
 | [0017](docs/adr/0017-gateway-engine-topology.md) | Gateway–Engine topology: N:N-ready by design, realized by deployment |
 | [0018](docs/adr/0018-language-choice-rationale.md) | Language choice per component — polyglot for portfolio, all-Go for product |
+| [0019](docs/adr/0019-rag-corpus-and-embedding-pipeline.md) | RAG corpus + multilingual embedding pipeline (bge-m3, Qdrant, immutable-corpus-reproducible-index) |
 
 Other primary references:
 
