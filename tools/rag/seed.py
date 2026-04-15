@@ -39,7 +39,7 @@ from typing import Iterable
 # --- Paths ------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORPUS_PATH = REPO_ROOT / "docs" / "rag" / "taiwan.md"
+DEFAULT_CORPUS_PATH = REPO_ROOT / "docs" / "rag" / "taiwan.md"
 COLLECTION_NAME = "aegis_taiwan_zh_tw"
 
 
@@ -138,20 +138,27 @@ def upsert(target: str, chunks: list[Chunk], vectors: list[list[float]]) -> None
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Seed the RAG corpus into a vector index.")
     parser.add_argument("--target", choices=["local", "cloud"], default="local")
+    parser.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"Path to a UTF-8 markdown corpus file. Default: {DEFAULT_CORPUS_PATH.relative_to(REPO_ROOT)}",
+    )
     parser.add_argument("--dry-run", action="store_true", help="chunk only; skip embed + upsert")
     args = parser.parse_args(argv)
 
-    if not CORPUS_PATH.exists():
+    corpus_path: Path = args.corpus
+    if not corpus_path.exists():
         sys.stderr.write(
-            f"corpus not found: {CORPUS_PATH}\n"
-            f"see ADR-0019 implementation checklist — the zh-TW Wikipedia "
-            f"Taiwan page lands in a follow-up commit.\n"
+            f"corpus not found: {corpus_path}\n"
+            f"pass --corpus PATH to point at your own UTF-8 markdown file, "
+            f"or land it at the default location.\n"
         )
         return 1
 
-    text = CORPUS_PATH.read_text(encoding="utf-8")
+    text = corpus_path.read_text(encoding="utf-8")
     chunks = chunk_text(text)
-    print(f"chunked {len(text):,} chars into {len(chunks)} chunks", file=sys.stderr)
+    print(f"chunked {len(text):,} chars into {len(chunks)} chunks from {corpus_path.relative_to(REPO_ROOT)}", file=sys.stderr)
 
     if args.dry_run:
         return 0
