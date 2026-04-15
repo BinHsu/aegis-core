@@ -356,6 +356,7 @@ understand *why* something is designed a particular way, start here:
 | [0013](docs/adr/0013-proto-codegen-distribution.md) | Proto codegen distribution — Bazel-authoritative + checked-in `.pb.go` for IDE |
 | [0014](docs/adr/0014-bazel-build-cache-strategy.md) | Bazel build cache strategy — trade-offs locked, decision deferred to Phase 4 trigger conditions |
 | [0017](docs/adr/0017-gateway-engine-topology.md) | Gateway–Engine topology: N:N-ready by design, realized by deployment |
+| [0018](docs/adr/0018-language-choice-rationale.md) | Language choice per component — polyglot for portfolio, all-Go for product |
 
 Other primary references:
 
