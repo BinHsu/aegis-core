@@ -151,6 +151,7 @@ To satisfy both "beginner-friendly local execution" and "EKS Cloud Deployment", 
 *   **Process Supervisor Pattern**: 
     - In `CLOUD` mode, Go GW and C++ Engine run in separate K8s Pods communicating via Istio/Envoy.
     - In `LOCAL` mode, a user simply runs `bazel run //:app_local`. The Go GW acts as a local supervisor, programmatically spinning up the C++ binary as a child background process (`exec.Command`) to simulate the microservice network internally, without requiring the user to open multiple terminals.
+*   **Gateway ↔ Engine Topology (N:N-ready by design)**: The code is written to support 1:1, 1:N, and M:N deployments without change — deployment realizes the actual topology, not application code. See [ADR-0017](docs/adr/0017-gateway-engine-topology.md) for the invariants (round-robin gRPC LB, per-replica session state, stream-auto-pinning), the "never hardcode a single engine" review rule, and the cross-repo split between this repo (code N-ready) and `aegis-aws-landing-zone` (Headless Service + ALB session affinity).
 
 ### 6. AI Models & Hardware Resource Optimization
 The system targets an absolute physical ceiling of **16GB Unified Memory** (e.g., MacBook Air M4 base-high tier) to guarantee successful `LOCAL` mode deployments without crashing.
