@@ -22,3 +22,16 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "embedder_test",
+    srcs = ["embedder_test.cc"],
+    size = "small",
+    deps = [
+        "//engine_cpp/src/inference:embedder",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
