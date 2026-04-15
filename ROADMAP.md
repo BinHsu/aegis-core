@@ -213,27 +213,19 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 
 **Scope change from original roadmap**: Phase 3 delivers **pure web only**. Tauri is deferred per ADR-0002 and ADR-0003.
 
-### Frontend Scaffolding
+**Sub-phase split (2026-04-15)**: platform foundations (3a) outgrew the original frontend-only scope once Phase 3 live-phone testing surfaced ADR-0016 and the engine's inference story sharpened through ADRs 0017–0020. Host UI + cross-WebView acceptance move to 3c, gated by 3b's engine inference implementation. Same a/b/c/d convention as Phase 4.
+
+### Phase 3a: Platform + architecture foundations ✅ (2026-04-13 → 2026-04-15)
+
+#### Frontend scaffolding (shipped)
 - [x] Scaffold `frontend_web/` with React 19 + Vite 6 + TypeScript 5.7 strict — Phase 1 C1; **Phase 3 promoted from local-npm to hermetic Node + pnpm via `aspect_rules_js`** (ADR-0015). Wrapper script `./tools/scripts/frontend.sh {install|dev|build|typecheck}` is the single entry point; no system `node` required.
 - [x] Configure generated Protobuf JS/TS bindings — Phase 3 kickoff. `buf.gen.yaml` adds `protobuf-es` v1 + `connectrpc/es` v1 plugins; output checked in to `frontend_web/src/gen/proto/aegis/v1/{aegis_pb.ts,aegis_connect.ts}` per ADR-0013 distribution model. Connect's grpc-web transport speaks to the gateway's `improbable-eng/grpc-web` wrapper. (v2 migration deferred — see plugin-version comment in buf.gen.yaml.)
 - [x] `AudioCaptureProvider` interface + `WebAudioCaptureProvider` impl (getUserMedia, getDisplayMedia, Web Audio mixing for the three capture modes per ADR-0003) — Phase 1 C2
 - [x] `TranscriptStreamProvider` interface + `GrpcWebTranscriptStreamProvider` (Cloud) + `WebSocketTranscriptStreamProvider` (Local) stubs per ADR-0007 — Phase 1 C3
-- [ ] `AuthProvider`, `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` stubs — Phase 2+
-- [ ] Respect all ADR-0002 Phase 3 Constraints 1–6 (no `chrome.*`, no Service Worker dependency, etc.)
-
-### Host UI (Staff)
-- [ ] Login flow (Cognito Cloud / dummy Local) — Phase 2
-- [ ] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display — Phase 2
 - [x] Audio source picker: "Physical room (microphone)" vs "Remote meeting (browser tab)" vs both — Phase 1 C4
 - [x] `getUserMedia` and `getDisplayMedia` calls with clear privacy copy (ADR-0003) — Phase 1 C4 (via WebAudioCaptureProvider)
-- [ ] One-time audio-processing consent capture on first use (ARCH §9.3; no biometric consent needed — see ADR-0012)
-- [ ] Speaker label tagging UI — curated choice list, **no free-text name input** (ARCH §9.2)
-- [ ] Live prompter display with rolling 5-line window
-- [ ] Export flow: Markdown + JSON download
-- [ ] "End Meeting" button
-- [ ] QR code display for LAN viewer join (Local mode only) (ADR-0007)
 
-### Viewer UI (Boss)
+#### Viewer UI (Boss) — complete
 - [x] Join via invite URL → token parsing → `TranscriptStreamProvider` subscription — Phase 1 C4
 - [x] Rolling 5-line prompter display — Phase 1 C4 (PROMPTER_WINDOW=5)
 - [x] "Host reconnecting..." banner on transient host loss (ADR-0006 Disconnected state) — Phase 1 C4
@@ -241,10 +233,60 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] **No export UI** (L3) — Phase 1 C4 (intentionally absent)
 - [x] No history rendering for late joiners (L4 is a feature, not a bug) — Phase 1 C4 (rolling window only)
 
-### Cross-WebView Testing
+#### Platform + architecture (2026-04-13 → 2026-04-15)
+- [x] LAN demo reach + gateway N:N dial wiring — commit `69c92bd`
+- [x] **ADR-0015** Hermetic Node.js via `aspect_rules_js`
+- [x] **ADR-0016** Opus decode moves from gateway (pion/opus) to engine (libopus) — 4 commits (day 1 infra + day 2a engine `kOpus` + day 2b gateway emits `OpusChunk` + day 2c docs & `libopus` macOS deployment target). **Incident 09** postmortem captures the pion/opus mode-3 → domain-boundary refactor.
+- [x] **ADR-0017** Gateway–Engine topology: N:N-ready by design, realized by deployment
+- [x] **ADR-0018** Language choice rationale — polyglot for portfolio, all-Go for product
+- [x] **ADR-0019** RAG corpus + multilingual embedding pipeline (Python-seed impl mechanism **same-day superseded** by ADR-0020; six numbered decisions remain in force)
+- [x] **ADR-0020** Engine owns inference — unified runtime for seed, query, ASR, future LLM; Python stays off-runtime tier
+- [x] Taiwan zh-TW corpus bundled at `docs/rag/taiwan.md` (CC BY-SA 4.0, Wikipedia REST API extract)
+- [x] README chief-of-staff positioning reframe — commit `e8f166e`
+- [x] **Incident 08** (app_local fan-in channel drain) + **Incident 09** (pion/opus mode-3 refactor)
+
+### Phase 3b: Engine inference implementation 🚧
+
+> *"Make `engine --seed` produce real vectors; make the engine query against them."*
+
+Driven by ADR-0020. Out-of-3b exit criterion: `engine --seed --corpus docs/rag/taiwan.md --target=local` writes a working Qdrant collection, and an in-engine query returns semantically relevant chunks for an English / Japanese / Chinese test query against the zh-TW corpus.
+
+- [ ] `engine_cpp/src/inference/embedder.h` — abstract `Embedder` interface (Embed(text) → vector)
+- [ ] `engine_cpp/src/inference/ggml_embedder.{h,cc}` — default impl loading `BAAI/bge-m3` Q4_K_M GGUF via the existing ggml runtime
+- [ ] `engine_cpp/third_party/bge_m3/` — `http_archive` wrapper pinning the GGUF upstream (sha256 + mirror per ADR-0009 pattern)
+- [ ] C++ markdown chunker with the ADR-0019 §Decision.2 separator list (`\n\n`, `\n`, `。`, `！`, `？`, `，`, space); target chunk size ~450 chars, overlap ~80
+- [ ] Qdrant C++ client wired (via [qdrant-cpp](https://github.com/qdrant/qdrant-cpp) or direct gRPC stubs from Qdrant's proto)
+- [ ] `engine --seed --corpus PATH --target={local|cloud}` subcommand in `engine_cpp/cmd/engine/`; cloud target reads `QDRANT_URL` + `QDRANT_API_KEY` from env
+- [ ] **Validation experiment**: load the Taiwan corpus via FlagEmbedding reference (scratch Python, not committed) + `GGMLEmbedder`; assert mean cos-sim ≥ 0.95 across all chunks. Scratch Python deleted after validation.
+- [ ] **ADR-0010 revision**: split `ResourceBudget` into `ModelBudget` (process-global, ~500 MB for whisper + bge-m3 Q4_K_M) and `SessionBudget` (per-session, existing `kDefaultReservationBytes`). Update the ADR with the split + rationale.
+- [ ] **whisper.cpp deployment-target fix** (incident-09 Prevention follow-up): mirror what libopus did in commit `51835b1` — add `CMAKE_OSX_DEPLOYMENT_TARGET=11.0` to `whisper_cpp.BUILD` cache_entries, silencing the ~18 libggml-cpu warnings on the engine link.
+
+### Phase 3c: Frontend Host UI + cross-WebView acceptance 📋
+
+> *"Make the chief-of-staff actually able to run a meeting, see hints, and export the transcript."*
+
+Gated by 3b — prompter display needs real transcript data; corpus selector needs a real vector collection; consent + export flows need a real artifact to produce.
+
+#### Frontend scaffolding (remaining)
+- [ ] `AuthProvider`, `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` stubs
+- [ ] Respect all ADR-0002 Phase 3 Constraints 1–6 (no `chrome.*`, no Service Worker dependency, etc.)
+
+#### Host UI (Staff)
+- [ ] Login flow (Cognito Cloud / dummy Local)
+- [ ] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display
+- [ ] One-time audio-processing consent capture on first use (ARCH §9.3; no biometric consent needed — see ADR-0012)
+- [ ] **Transcript consent — two-phase flow**: meeting-start toggle (default off; GDPR notice citing Art. 6(1)(f) + Art. 9(2)(a) on toggle-on; gates the transcript panel UI mode) + export-time confirmation modal (responsibility transfer + audit log with user id + timestamp + IP + session id). **DO NOT** apply `user-select: none` to transcript text — screenshots bypass it and it breaks screen readers. If leak traceability matters, use on-screen watermarking (user id + timestamp, low contrast) instead.
+- [ ] Speaker label tagging UI — curated choice list, **no free-text name input** (ARCH §9.2)
+- [ ] Live prompter display with rolling 5-line window (matches Viewer UI PROMPTER_WINDOW=5)
+- [ ] Export flow: Markdown + JSON download — triggers transcript-consent phase-2 modal above
+- [ ] "End Meeting" button
+- [ ] QR code display for LAN viewer join (Local mode only) (ADR-0007)
+
+#### Cross-WebView acceptance
 - [ ] Chrome / Edge primary testing
 - [ ] WKWebView sanity check on macOS (ensures Phase 4 Tauri wrap will not be blocked)
 - [ ] Firefox / Safari explicitly NOT supported for host role (L6); document in README
+- [ ] **Live-browser WebRTC smoke test harness** (incident-09 Prevention item): automate a real-browser (Playwright or Puppeteer) host → gateway → engine → transcript pipeline. Catches pion/opus-class "works on loopback, breaks on real browsers" regressions in CI rather than in production.
 
 ---
 
