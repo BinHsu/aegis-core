@@ -35,3 +35,14 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "chunker_test",
+    srcs = ["chunker_test.cc"],
+    size = "small",
+    data = ["//docs/rag:taiwan.md"],
+    deps = [
+        "//engine_cpp/src/rag:chunker",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

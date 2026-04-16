@@ -1,0 +1,7 @@
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+cc_library(
+    name = "chunker",
+    srcs = ["chunker.cc"],
+    hdrs = ["chunker.h"],
+)
