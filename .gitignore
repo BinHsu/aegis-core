@@ -197,6 +197,21 @@ coverage/
 .Spotlight-V100
 .Trashes
 
+# --- Local Qdrant service (docs/runbooks/qdrant-local-setup.md) ----------
+# Developers stand up a local Qdrant for integration tests. The binary
+# and its data dir live inside the repo per CLAUDE.md Rule 6 but are
+# per-machine state, never committed. `config` and `LICENSE_BSL_4.0.txt`
+# ship inside Qdrant's release tarball and land at the repo root on
+# extraction. `storage/` + `.qdrant-initialized` are created when
+# Qdrant runs without `--config-path` (its default storage location
+# is ./storage/), so guard those too.
+/qdrant
+/.qdrant-data/
+/.qdrant-initialized
+/config
+/LICENSE_BSL_4.0.txt
+/storage/
+
 # --- Author-personal files (NOT for repo consumers) ---------------------
 # Private interview-prep reference maintained by the author. Contains
 # portfolio positioning, likely interviewer questions, and suggested
