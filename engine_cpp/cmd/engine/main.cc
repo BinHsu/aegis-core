@@ -1,10 +1,15 @@
 // engine_cpp/cmd/engine/main.cc
 //
-// Aegis Core engine process entrypoint. Phase 1 Session 3: minimal
-// gRPC server that accepts connections and responds to Health. Real
-// whisper.cpp inference wiring lands in Session 4.
+// Aegis Core engine process entrypoint. Two modes:
 //
-// Startup order per ADR-0010 §Revision (2026-04-15):
+//   engine              → start the gRPC server (default)
+//   engine seed ...     → run the RAG seed subcommand (Phase 3b Slice 6)
+//
+// Future subcommands (Phase 4+ ideas: migrate, repair-index, validate)
+// slot in with the same dispatch pattern — strip argv[1] and hand off
+// to the subcommand's entry point.
+//
+// Server-mode startup order per ADR-0010 §Revision (2026-04-15):
 //   1. Load all models (each registers with ModelBudget)
 //   2. Compute session pool = pod_limit - ModelBudget::TotalUsedBytes()
 //   3. Construct SessionBudget with the session pool
@@ -12,12 +17,15 @@
 
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "grpcpp/grpcpp.h"
 
+#include "engine_cpp/cmd/engine/seed.h"
 #include "engine_cpp/src/grpc/aegis_engine_service.h"
 #include "engine_cpp/src/inference/whisper_engine.h"
 #include "engine_cpp/src/session/model_budget.h"
@@ -42,7 +50,16 @@ void HandleShutdown(int /*signum*/) {
 
 } // namespace
 
-int main(int /*argc*/, char ** /*argv*/) {
+int main(int argc, char **argv) {
+  // Subcommand dispatch: if argv[1] is a known subcommand, strip it
+  // and hand off. absl::flags (used by seed) expects argv[0] to be
+  // the binary name — passing argv+1 effectively makes the subcommand
+  // name the new argv[0], which absl's parser ignores, so the flag
+  // parsing inside the subcommand sees a clean set of tokens.
+  if (argc >= 2 && std::string_view(argv[1]) == "seed") {
+    return aegis::engine_cmd::RunSeed(argc - 1, argv + 1);
+  }
+
   std::signal(SIGINT, HandleShutdown);
   std::signal(SIGTERM, HandleShutdown);
 

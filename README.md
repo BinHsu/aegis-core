@@ -1,5 +1,7 @@
 # 🛡️ Aegis Core
 
+<!-- session-close-review: status + narrative -->
+
 > **A chief-of-staff's tool for the moment before the principal speaks.**
 
 Aegis Core is real-time meeting intelligence built for the person
@@ -81,68 +83,21 @@ this V2 is a ground-up enterprise rewrite.
 
 ## Status
 
-**Pre-release.** Architecture and governance complete; Phase 1
-implementation in progress.
+**Pre-release.** Phases 0–1 complete; Phase 2 shipped in full;
+Phase 3a (platform foundations) done; Phase 3b (engine RAG inference)
+substantially landed through Slice 6 with only the validation
+experiment remaining; Phase 3c (host UI) gated on 3b.
 
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
 | **Phase 1** | Bazel monorepo, proto contracts, C++ engine + whisper.cpp + StreamTranscribe, Go Gateway skeleton, Vite/React frontend with provider abstractions | ✅ Done |
 | **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1–A5 shipped; a few items deliberately descoped — see [Known Gaps](#known-gaps-phase-2) below |
-| **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
+| **Phase 3a** | Platform foundations (hermetic Node via `aspect_rules_js`, Opus-on-engine, gateway N:N topology, RAG corpus pipeline, engine-owned inference) | ✅ Done |
+| **Phase 3b** | Engine RAG inference: shared ggml runtime, GGMLEmbedder (bge-m3), Qdrant C++ client, `engine seed` subcommand, cloud-cache strategy (ADR-0014 β/δ) | 🚧 Slices 1–6 landed; validation experiment (Slice 7, FP16 cos-sim ≥ 0.95) pending |
+| **Phase 3c** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed; gated on Phase 3b |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
-
-What runs today:
-
-- **`proto/aegis/v1/aegis.proto`** — full gRPC contract, generates C++
-  bindings (Go + TypeScript bindings in Phase 2/3).
-- **C++ engine binary** — starts a gRPC server on `:50051`, responds
-  to `aegis.v1.Engine.Health` with budget + version metadata.
-- **whisper.cpp v1.8.4** — statically linked, `WhisperEngine::Create`
-  loads a ggml model and `Transcribe` returns real text. End-to-end
-  integration test (`//engine_cpp/tests/integration:whisper_transcribe_test`)
-  proves this by transcribing JFK's inaugural address fixture and
-  asserting "ask not" appears in the output — ~370 ms on Apple
-  Silicon CPU with ggml-tiny.en.
-- **StreamTranscribe** — full gRPC bidi stream handler with Session
-  state machine (SessionStart → Active → Paused/Resumed → END_STREAM)
-  per ADR-0006 and ADR-0010. `//engine_cpp/tests/integration:stream_transcribe_test`
-  drives the real service over an in-process gRPC channel and verifies
-  transcribed text arrives on the wire. `ResourceBudget` reservation
-  is paired with session lifetime — the second test case confirms
-  the budget returns to zero even when the first message is malformed
-  and the session is rejected with `INVALID_ARGUMENT`.
-- **Go Gateway skeleton** — `//gateway_go/cmd/gateway:gateway` builds
-  via rules_go + a hermetic Go 1.24.12 SDK and starts a net/http
-  server on `:8080` with a `/healthz` endpoint and SIGINT/SIGTERM
-  drain. Phase 2 layers in Pion WebRTC, gRPC client to the C++
-  engine, session registry, and JWT middleware.
-- **Polyglot proto codegen verified** — `//proto/aegis/v1:aegis_go_proto`
-  produces Go message types + gRPC stubs alongside the C++ counterparts
-  from Session 2. Per [ADR-0013](docs/adr/0013-proto-codegen-distribution.md),
-  `.pb.go` files are also checked-in under `gateway_go/gen/go/` for IDE
-  / `gopls` consumption; Bazel remains the authoritative producer and CI
-  enforces the two stay in sync.
-- **Gateway → Engine gRPC client (Phase 2 A1)** — `gateway_go` is now a
-  real gRPC client of `engine_cpp`. `/healthz` calls
-  `aegis.v1.Engine.Health` over gRPC and returns aggregated JSON with
-  both layers' status (model path, backend, version), or
-  `engine.reachable=false` if the engine is down — gateway stays `ready:true`
-  so monitors distinguish the two failure modes.
-- **frontend_web/ scaffold + provider abstractions** — Vite 6 + React 19 +
-  TypeScript 5.7. `WebAudioCaptureProvider` (getUserMedia +
-  getDisplayMedia + Web Audio mixing per ADR-0003), and
-  `TranscriptStreamProvider` with Cloud (gRPC-Web) vs Local (WebSocket
-  per ADR-0007) implementations selected at build time. HostPage drives
-  capture; ViewerPage renders a rolling 5-line prompter with
-  Reconnecting / Meeting ended banners. Backend wire-up is Phase 2;
-  pages depend only on provider interfaces (ADR-0002 Constraint 2).
-- **Hermetic Bazel build** — `./tools/bazelisk/bazelisk` downloads a
-  local Bazel 7.4.1, all external deps fetched via `MODULE.bazel`
-  bzlmod, nothing leaks into `~/.cache` or `/opt`.
-- **Model provenance** — `/models/manifest.json` + SHA-256 verified
-  `./tools/scripts/download_models.sh`.
 
 See [ROADMAP.md](ROADMAP.md) for the full phase-by-phase checklist.
 
@@ -378,8 +333,9 @@ Per-component boundaries are declared in
 
 ## Design Documents
 
-Aegis Core's architecture is driven by **12 Architecture Decision
-Records** that capture every material trade-off. If you want to
+Aegis Core's architecture is driven by **Architecture Decision
+Records** (under `docs/adr/`, and growing) that capture every
+material trade-off. If you want to
 understand *why* something is designed a particular way, start here:
 
 | ADR | Topic |

@@ -45,6 +45,12 @@ bazel_dep(name = "abseil-cpp", version = "20250127.2", repo_name = "com_google_a
 # xcode_configuration gracefully degrades to the Command Line Tools.
 bazel_dep(name = "apple_support", version = "1.21.0", repo_name = "build_bazel_apple_support")
 
+# boringssl — primarily exposed to our own C++ code for SHA-256 (RAG seed's
+# content-hash UUID derivation, future Cosign / SLSA attestation work).
+# Already pulled transitively by grpc; declaring it at top level lets us
+# depend on `@boringssl//:crypto` directly with a stable repo name.
+bazel_dep(name = "boringssl", version = "0.20250114.0")
+
 # -----------------------------------------------------------------------------
 # whisper.cpp — ADR-0009 Sub-decision 3 — vendored via http_archive + SHA256
 # and built via rules_foreign_cc's `cmake` rule. Upstream moved from Makefile

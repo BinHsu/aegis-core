@@ -1,5 +1,7 @@
 # Interview Notes — Aegis Core
 
+<!-- session-close-review: recruiter-facing narrative -->
+
 > **Who this document is for.** Recruiters, hiring managers, and HR
 > partners evaluating me for a role. It is deliberately written without
 > jargon; if you can read a business email, you can read this. A
@@ -66,10 +68,10 @@ Each bullet below is backed by something concrete in the repo that your
 technical team can verify.
 
 - **I make decisions and write them down.** The `docs/adr/` folder
-  contains 14 architecture decision records. Each one names the
-  problem, the options considered, the choice made, and the reasoning.
-  When I change my mind, I write a new ADR — I don't quietly rewrite
-  history.
+  contains the architecture decision record log, growing as the
+  project evolves. Each ADR names the problem, the options considered,
+  the choice made, and the reasoning. When I change my mind, I write
+  a new ADR — I don't quietly rewrite history.
 
 - **I ship end-to-end, not component-by-component.** The project
   spans three programming languages (C++ for the speech-recognition

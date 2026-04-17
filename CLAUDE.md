@@ -17,6 +17,21 @@
    * Before writing code, you MUST read `ARCHITECTURE.md` and `ROADMAP.md`.
    * After completing a task, you MUST update `ROADMAP.md` (to check off progress) and `ARCHITECTURE.md` (if a systemic decision was made).
    * Update `README.md` if any user-facing steps (like local execution commands) change. The core philosophy of this project is identical to V1: **"Anyone downloading this must be able to compile and run it locally with minimal struggle."**
+   * **Before ending any session, discover + update every `session-close-review`-marked doc.** These files self-register via a `<!-- session-close-review: <axis> -->` HTML comment near their top, which states the axis that needs re-verification (status, narrative, trust-surface, incidents, etc.). Discover the full set with:
+
+     ```bash
+     grep -rIln "session-close-review:" . --include='*.md'
+     ```
+
+     For each hit, re-read the declared axis and confirm the doc still reflects reality after this session's commits. Common axes today: `README.md` Status table + narrative, `docs/interview-notes.md` recruiter-facing narrative, `docs/threat-model.md` trust-surface list, `docs/incidents.md` postmortem entries per Rule 7. The list grows by adding markers to new docs — CLAUDE.md does NOT enumerate the filenames, so there is no hardcoded list to drift out of date.
+   * Also run a cheap placeholder-drift check before closing:
+
+     ```bash
+     grep -rIn "TODO\|WIP\|coming soon\|Slice [0-9]\+ — TODO" . --include='*.md'
+     ```
+
+     Hits mean some doc carries a promise the session just made real — resolve in place rather than letting the stale language linger.
+   * ROADMAP.md checklist updates are necessary but not sufficient; the marker-discovered docs are the public-facing face and have to keep up.
 
 4. **Tech Boundaries (Enforce System Architecture)**
    * Frontend: TypeScript/React/Svelte, Tauri (Rust).
