@@ -50,7 +50,12 @@
    * Trivial bugs (typo in a BUILD file fixed in 60 seconds, clang-format whitespace) do NOT warrant a postmortem — don't pollute the file.
    * This rule is a portfolio-grade **learning-culture signal**. Treat it with the same seriousness as Rule 2 Testing Integrity.
 
-8. **Environment Pre-flight (Trust the Handbook, Verify the Machine)**
+8. **Root-Cause Fixes Over Workarounds**
+   * When something fails (CI, build, test, merge), **investigate the actual root cause and fix it**. Do NOT bypass with flags like `--admin`, `--no-verify`, or skip logic.
+   * Workarounds are acceptable ONLY when the effort to fix properly is disproportionately high (e.g., requires upstream changes, multi-day refactor). In that case, present BOTH the proper fix AND the workaround with effort estimates, and let the human decide.
+   * The default is always "fix it right." Discuss the tradeoff with the human before acting — never silently choose the shortcut.
+
+9. **Environment Pre-flight (Trust the Handbook, Verify the Machine)**
    * Before you start committing work on a fresh clone, run a one-shot pre-flight check: confirm the repo's own tooling is wired up for THIS machine. Specifically:
      - `ls .git/hooks/pre-commit .git/hooks/commit-msg` — both must exist. If not, run `pre-commit install && pre-commit install --hook-type commit-msg` exactly as `CONTRIBUTING.md` §Development Setup mandates.
      - `git config --get user.signingkey && git config --get commit.gpgsign` — signing must be live. If not, follow `docs/github-setup.md` §0.5.
