@@ -271,27 +271,38 @@ that revises ADR-0020's "one binary" constraint.
 
 ## Implementation checklist
 
-- [ ] Add `ggml-org/ggml` v0.9.8 as `http_archive` in
+- [x] Add `ggml-org/ggml` as `http_archive` in `MODULE.bazel` with
+      SHA256. Initial pin v0.9.8; bumped to v0.9.9 in Phase 3b Slice 4
+      to cover llama.cpp b8595's `gguf_*_ptr` symbols (incident-10).
+- [x] Add `ggml-org/llama.cpp` b8595 as `http_archive` in
       `MODULE.bazel` with SHA256
-- [ ] Add `ggml-org/llama.cpp` b8595 as `http_archive` in
-      `MODULE.bazel` with SHA256
-- [ ] Write `engine_cpp/third_party/ggml/ggml.BUILD` — cmake
+- [x] Write `engine_cpp/third_party/ggml/ggml.BUILD` — cmake
       target producing `libggml.a` + friends
-- [ ] Write `engine_cpp/third_party/llama_cpp/llama_cpp.BUILD`
-      — cmake target with `LLAMA_USE_SYSTEM_GGML=ON`
-- [ ] Update `engine_cpp/third_party/whisper_cpp/whisper_cpp.BUILD`
-      — add `WHISPER_USE_SYSTEM_GGML=ON`, remove bundled ggml
-      from the whisper build
-- [ ] Verify `bazel build //engine_cpp/cmd/engine:engine`
+- [x] Write `engine_cpp/third_party/llama_cpp/llama_cpp.BUILD`
+      — cmake target depending on `@ggml//:ggml_cmake`
+- [x] Update `engine_cpp/third_party/whisper_cpp/whisper_cpp.BUILD`
+      — depend on `@ggml//:ggml_cmake` so the bundled ggml is not
+      rebuilt separately
+- [x] Verify `bazel build //engine_cpp/cmd/engine:engine`
       links without duplicate symbols
-- [ ] Verify existing whisper tests still pass
-- [ ] Add coupling comment block to `MODULE.bazel` (P1)
-- [ ] Add Dependabot ignore rules (P2)
-- [ ] Add CI ggml-version-match check (P3)
-- [ ] Add upgrade SOP to `CONTRIBUTING.md` (P4)
-- [ ] `GGMLEmbedder` implementation using llama.cpp C API
-- [ ] Update `models/manifest.json` with bge-m3 Q4_K_M entry
-      (source: `lm-kit/bge-m3-gguf`, 438 MB, SHA256)
+- [x] Verify existing whisper tests still pass (against the shared
+      ggml runtime, and across the v0.9.8 → v0.9.9 bump)
+- [x] Add coupling comment block to `MODULE.bazel` (P1)
+- [x] Add Dependabot ignore rules (P2) — `.github/dependabot.yml`
+- [x] Add CI ggml-version-match check (P3) — implemented as a
+      two-layer check: `tools/scripts/check_ggml_versions.sh` (grep
+      `GGML_VERSION_*` from each archive, fail on wrong-direction
+      drift) + `bazel build //engine_cpp/tests/integration/...` in
+      CI (authoritative link-compatibility gate, catches same-number
+      / divergent-source drift per incident-10)
+- [x] Add upgrade SOP to `CONTRIBUTING.md` (P4) — §Upgrading the
+      ggml triple
+- [x] `GGMLEmbedder` implementation using llama.cpp C API
+- [x] Update `models/manifest.json` with bge-m3 Q4_K_M entry
+      (source: `lm-kit/bge-m3-gguf`, 438 MB, SHA256) —
+      manifest-driven rather than `third_party/bge_m3/` http_archive,
+      consistent with the Phase 1 runtime-model pattern used for
+      whisper weights
 
 ## Related
 

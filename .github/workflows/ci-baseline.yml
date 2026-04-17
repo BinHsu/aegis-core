@@ -158,6 +158,27 @@ jobs:
             //engine_cpp/cmd/engine:engine \
             //gateway_go/cmd/gateway:gateway
 
+      # ADR-0021 P3 — shared ggml runtime drift check.
+      #
+      # Layer 1: a cheap grep of GGML_VERSION_* from each archive's
+      # ggml/CMakeLists.txt. Catches the easy case (someone bumped one of
+      # the triple without the others) and the dangerous-direction case
+      # (standalone @ggml older than a consumer's bundled ggml, which
+      # will cause undefined-symbol link failures).
+      #
+      # Layer 2: build (not run) the integration test targets. These
+      # link whisper + llama + shared ggml into a single binary, so the
+      # link step fails if the three archives' ggml symbol tables don't
+      # align — catches the "same version string, divergent source"
+      # drift that Layer 1 by itself cannot detect (incident-10).
+      - name: ggml version-string drift check
+        run: ./tools/scripts/check_ggml_versions.sh
+
+      - name: Build integration tests (shared ggml link check)
+        run: |
+          ./tools/bazelisk/bazelisk build \
+            //engine_cpp/tests/integration/...
+
       - name: Run unit tests (excludes requires-model)
         run: |
           ./tools/bazelisk/bazelisk test \
