@@ -50,6 +50,19 @@ folder.
   one-time BuildBuddy Personal free-tier signup + API key + GHA
   secret wiring (ADR-0014 Option β, Phase A demo horizon).
   **Audience**: upstream repo operator; fork operator (optional).
+- [`qdrant-cloud-setup.md`](qdrant-cloud-setup.md) — Qdrant Cloud
+  free-tier signup + cluster creation + API key + `QDRANT_URL` /
+  `QDRANT_API_KEY` GHA secrets (ADR-0020 vector DB, demo horizon).
+  **Audience**: upstream repo operator; fork operator (optional).
+
+### Local development (any developer)
+
+- [`qdrant-local-setup.md`](qdrant-local-setup.md) — stand up a
+  local Qdrant instance for integration tests and the
+  `engine --seed --target=local` path (Slice 6+). Binary preferred
+  (~150 MB RSS); Docker documented as alternative.
+  **Audience**: any developer running integration tests or the seed
+  CLI. Not needed for unit tests or a plain `bazel build`.
 
 ### Local development troubleshooting
 

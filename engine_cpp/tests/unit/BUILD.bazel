@@ -56,3 +56,14 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "qdrant_client_test",
+    srcs = ["qdrant_client_test.cc"],
+    size = "small",
+    deps = [
+        "//engine_cpp/src/vectordb:qdrant_client",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

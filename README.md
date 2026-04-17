@@ -198,7 +198,7 @@ For the full 11-section specification see
 
 | Always required          | Why                                                      | Notes                                                                |
 | ------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------- |
-| `bash` ≥ 4               | wrapper scripts in `tools/`                              | macOS / Linux ship one                                               |
+| `bash` ≥ 4               | wrapper scripts in `tools/`                              | macOS / Linux ship one; **Windows: use WSL2** (see below)            |
 | `git`                    | obvious                                                  | any modern version                                                   |
 | `curl` or `wget`         | `tools/bazelisk/bazelisk` and `tools/buf/buf` downloads  | macOS ships `curl`, Linux ships both                                 |
 | C++ toolchain            | hermetic Bazel build still uses the system C/C++ compiler| macOS: Xcode CLT (`xcode-select --install`); Linux: `build-essential`|
@@ -222,6 +222,16 @@ opt-in Bazel remote cache purely to shorten cold runs; forks can
 keep it, disable it, or repoint it at their own infra. Full details
 in [CONTRIBUTING.md §Remote cache](CONTRIBUTING.md#remote-cache-optional-ci-only)
 and [ADR-0014](docs/adr/0014-bazel-build-cache-strategy.md).
+
+**Windows users**: use **WSL2**. Inside WSL2, Ubuntu-style commands
+above work 1:1 (WSL2 is Linux from Bazel's perspective). Native
+Windows (cmd / PowerShell without WSL) is **not tested and not on
+the roadmap** — the bazelisk wrapper is a bash script, Bazel on
+Windows has symlink / path quirks that would need dedicated work,
+and CI does not cover `windows-latest`. Native Windows support is
+welcome as a community contribution — see
+[CONTRIBUTING.md §Native Windows support](CONTRIBUTING.md#native-windows-support-known-gap)
+for the specific known gaps before you start.
 
 > **Hit an error on the first command?** Check
 > [`docs/runbooks/`](docs/runbooks/) — it's where we keep the

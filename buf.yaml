@@ -17,6 +17,18 @@ version: v2
 
 modules:
   - path: proto
+    # Vendored third-party protos are lint-excluded. We own neither
+    # the style nor the backward-compatibility contract of upstream
+    # projects' .proto files; linting them with our STANDARD config
+    # produces noise on unrelated (upstream) choices. `buf breaking`
+    # also does not apply — API breakage is upstream's choice, we
+    # track it by bumping the pinned version.
+    #
+    # Upgrade procedure for any vendored proto directory is the
+    # version-dir's PROVENANCE.md (e.g. proto/qdrant/v1.17.1/
+    # PROVENANCE.md).
+    excludes:
+      - proto/qdrant
 
 lint:
   use:

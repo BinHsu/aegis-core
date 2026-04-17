@@ -117,6 +117,16 @@ http_archive(
     urls = ["https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"],
 )
 
+# Qdrant proto — ADR-0020 §Decision.5 (engine as Qdrant client for the
+# RAG seed + query path). We check in the proto files under
+# proto/qdrant/v1.17.1/ rather than vendoring the full Qdrant source
+# via http_archive because the grpc cc_grpc_library rule has a known
+# strip_import_prefix + external-repo path resolution quirk that
+# fights the `import "qdrant_common.proto";` bare-filename imports
+# used by Qdrant's own proto tree. Upstream provenance is recorded in
+# proto/qdrant/v1.17.1/PROVENANCE.md (source tag + tarball SHA-256).
+# Upstream license: Apache-2.0.
+
 # -----------------------------------------------------------------------------
 # Go toolchain — Phase 1 Session 5. rules_go pulls in a hermetic Go SDK
 # (download extension below) and the go_proto_library codegen rules that
