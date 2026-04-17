@@ -1,7 +1,7 @@
 # 🗺️ Aegis Core (V2) — Roadmap
 
 **Current Status**: Architecture design complete; implementation bootstrapping pending.
-**Last Updated**: 2026-04-17 (Slice 6 landed)
+**Last Updated**: 2026-04-17 (Phase 3b exited — Slice 7 cos-sim validation PASS, mean 0.9659)
 
 This roadmap reflects the architectural decisions captured in
 `ARCHITECTURE.md` and the ADRs in `docs/adr/`. Before working on any
@@ -262,7 +262,7 @@ Driven by ADR-0020. Out-of-3b exit criterion: `engine --seed --corpus docs/rag/t
 - [x] **ggml triple bump** to v0.9.9 to unblock llama.cpp b8595's `gguf_*_ptr` symbols (incident-10 resolution) — Slice 4
 - [x] Qdrant C++ client wired — Slice 5 (`dfadf5d`). Direct gRPC stubs generated from Qdrant v1.17.1 protos checked in at `proto/qdrant/v1.17.1/` (see `PROVENANCE.md` for the http_archive-vs-checked-in trade-off per incident-11). Surface is scoped to `CreateCollection` / `UpsertPoints` / `Search` — full API wrapper is YAGNI until a caller needs more.
 - [x] `engine seed --corpus PATH --target={local|cloud}` subcommand in `engine_cpp/cmd/engine/` — Slice 6 (`a0e32be`). Subcommand dispatch (not flag-mode) per 2026-04-17 design decision; content-hash UUID-5-style point IDs via SHA-256; `aegis_<stem>` collection naming; payload = `{text, source_path, chunk_index}`; cloud target reads `QDRANT_URL` + `QDRANT_API_KEY` from env. Verified end-to-end against Taiwan corpus + local Qdrant v1.17.1: 10 chunks → `aegis_taiwan` collection, idempotent re-run. Multi-tenancy payload extension deferred to Phase 4 Cognito wiring (ADR-0022).
-- [ ] **Validation experiment**: load the Taiwan corpus via FlagEmbedding reference (scratch Python, not committed) + `GGMLEmbedder`; assert mean cos-sim ≥ 0.95 across all chunks. Scratch Python deleted after validation.
+- [x] **Validation experiment (Slice 7)**: Taiwan corpus through `engine seed` into Qdrant, then scratch Python (`sentence-transformers` with `BAAI/bge-m3` FP reference, `qdrant-client` pulling the Q4_K_M vectors back out) compared per-chunk cosine similarity. **Result 2026-04-17**: N=10, **mean=0.9659**, median=0.9654, min=0.9591, max=0.9742 — all chunks individually above the 0.95 threshold, mean passes with ~1.6% margin. Phase 3b exit criterion met; no need to upgrade Q4_K_M → Q8_0 or revisit chunker params. Scratch script + `.venv` deleted post-validation per the scratch-Python-tool-tier discipline (ADR-0020 / `feedback_inference` memory).
 - [x] **ADR-0010 revision**: split `ResourceBudget` into `ModelBudget` (process-global, ~500 MB for whisper + bge-m3 Q4_K_M) and `SessionBudget` (per-session, existing `kDefaultReservationBytes`). ADR updated in Slice 1 (`e61b192`); code landed in Slice 3.
 - [x] **whisper.cpp deployment-target fix** (incident-09 Prevention follow-up): mirror what libopus did in commit `51835b1` — add `CMAKE_OSX_DEPLOYMENT_TARGET=11.0` to `whisper_cpp.BUILD` cache_entries, silencing the ~18 libggml-cpu warnings on the engine link — Slice 1 (`0d2bdb8`).
 
