@@ -67,12 +67,13 @@ cmake(
     # Backend selection (metal/cuda flags) is deferred to the consumer
     # wrapper in the root module, which has access to
     # @aegis_core//engine_cpp:backend_* config_setting targets.
+    # Use the shared ggml build (ADR-0021) instead of the bundled copy.
+    # rules_foreign_cc propagates @ggml's install dir into CMAKE_PREFIX_PATH
+    # so whisper.cpp's add_subdirectory(ggml) finds the pre-built libraries.
+    deps = ["@ggml//:ggml_cmake"],
     lib_source = ":all_srcs",
     out_static_libs = [
         "libwhisper.a",
-        "libggml.a",
-        "libggml-base.a",
-        "libggml-cpu.a",
     ],
     visibility = ["//visibility:public"],
 )

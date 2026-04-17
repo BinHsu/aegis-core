@@ -14,7 +14,10 @@ exports_files(["whisper_cpp.BUILD"])
 # the engine binary fails to link with "undefined symbol _vDSP_*".
 cc_library(
     name = "whisper_cpp",
-    deps = ["@whisper_cpp//:whisper_cpp_cmake"],
+    deps = [
+        "//engine_cpp/third_party/ggml",
+        "@whisper_cpp//:whisper_cpp_cmake",
+    ],
     linkopts = select({
         "@platforms//os:macos": [
             "-framework",

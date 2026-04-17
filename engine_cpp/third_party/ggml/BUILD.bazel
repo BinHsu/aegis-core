@@ -1,0 +1,24 @@
+# engine_cpp/third_party/ggml/BUILD.bazel
+#
+# Consumer-facing wrapper for the standalone ggml runtime (ADR-0021).
+# Adds platform-specific linkopts (Apple Accelerate) that the external
+# @ggml BUILD cannot emit.
+
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+exports_files(["ggml.BUILD"])
+
+cc_library(
+    name = "ggml",
+    deps = ["@ggml//:ggml_cmake"],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework",
+            "Accelerate",
+            "-framework",
+            "Foundation",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)

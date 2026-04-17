@@ -69,6 +69,13 @@ updates:
     labels:
       - dependencies
       - bazel
+    # ggml / whisper_cpp / llama_cpp are a version-coupled triple
+    # (ADR-0021). Dependabot bumps deps independently, which would
+    # break the build. These three are upgraded manually as a unit.
+    ignore:
+      - dependency-name: "ggml"
+      - dependency-name: "whisper_cpp"
+      - dependency-name: "llama_cpp"
 # Python pip stanza removed alongside tools/rag/ deletion — the engine
 # will own both seed-time and query-time bge-m3 embedding per
 # ADR-0020 (forthcoming), so the repo no longer has a Python runtime

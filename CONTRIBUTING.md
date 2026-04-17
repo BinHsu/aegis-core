@@ -238,6 +238,151 @@ wanting to install something globally (e.g., `brew install`,
 `pip install` without `--user`), **stop** — find a way to do it inside
 the repo, or raise an issue asking how.
 
+## Upgrading the ggml triple (ADR-0021)
+
+The three `http_archive` entries in `MODULE.bazel` — `ggml`,
+`whisper_cpp`, `llama_cpp` — form a **version-coupled triple** per
+[ADR-0021](docs/adr/0021-shared-ggml-runtime.md). They share one ggml
+runtime and must be bumped together. Dependabot is excluded from them
+(see `.github/dependabot.yml`) because automated independent bumps
+break the build.
+
+### When to upgrade
+
+- A security advisory lands on any of the three upstreams.
+- You need a ggml/whisper/llama feature only in a newer release
+  (new quantization format, new model architecture, perf fix).
+- Routine hygiene, scoped to a single PR, at most monthly.
+
+### Procedure
+
+1. **Check upstream tags.** The canonical source for all three:
+   - `ggml`          — <https://github.com/ggml-org/ggml/tags>
+   - `whisper.cpp`   — <https://github.com/ggml-org/whisper.cpp/tags>
+   - `llama.cpp`     — <https://github.com/ggml-org/llama.cpp/tags>
+
+2. **Pick a compatible triple.** Open each consumer's bundled
+   `ggml/CMakeLists.txt` at the tag you want, read the
+   `GGML_VERSION_MAJOR/MINOR/PATCH` values, and confirm:
+   - Standalone `@ggml` version **≥** the version declared by
+     `whisper.cpp`'s bundled ggml, **AND ≥** the version declared by
+     `llama.cpp`'s bundled ggml.
+   - `ggml-org/whisper.cpp` and `ggml-org/llama.cpp` occasionally
+     cherry-pick ggml patches **ahead** of the standalone release (see
+     [`docs/incidents.md`](docs/incidents.md) #10). The standalone
+     `@ggml` must be new enough that every symbol the consumers
+     reference is exported. When in doubt, pick the newest standalone
+     ggml tag with a release date ≥ both consumers' release dates.
+
+3. **Compute SHA-256s.** For each of the three tarballs:
+
+   ```bash
+   curl -sL https://github.com/ggml-org/<repo>/archive/refs/tags/<TAG>.tar.gz \
+     | shasum -a 256
+   ```
+
+4. **Update `MODULE.bazel`.** Edit all three `http_archive` entries in
+   a single commit: `sha256`, `strip_prefix`, and `urls`. Update the
+   banner comment's `Current pin` lines to match.
+
+5. **Run the drift check + full build locally.**
+
+   ```bash
+   ./tools/scripts/check_ggml_versions.sh
+   ./tools/bazelisk/bazelisk build //engine_cpp/tests/integration/...
+   ./tools/bazelisk/bazelisk test //engine_cpp/...
+   ```
+
+   The first command parses each archive's `GGML_VERSION_*` and fails
+   if the standalone is older than a consumer's bundled ggml. The
+   integration build is the authoritative link-compatibility gate; it
+   catches the "same version number, divergent source" drift that the
+   version-string check alone cannot (ADR-0021 P3, incident-10).
+
+6. **PR conventions.**
+   - Title prefix: `deps(ggml-triple):` to signal the coupled upgrade.
+   - Body must state the selected triple, the reason (security / perf /
+     feature), and confirm the integration-build gate passed.
+   - A single commit is preferred; revert must bump all three back in
+     lockstep.
+
+### What to do when the drift check fails
+
+If `check_ggml_versions.sh` reports standalone `@ggml` **older** than a
+consumer's bundled ggml, **do not** downgrade the consumer — that path
+loses upstream features and security fixes. Instead, bump standalone
+`@ggml` to a newer tag that covers both consumers' expected API. If no
+such tag exists (the consumer was cut from a ggml master SHA that
+hasn't been tagged yet), pin `@ggml` at a specific commit SHA rather
+than a tag, and note the deviation in the MODULE.bazel banner.
+
+Typical effort: 20–40 minutes for a routine bump; longer if an upstream
+API break requires patching engine code.
+
+## Remote cache (optional, CI only)
+
+Local `bazel build` does not use any remote cache. The committed
+`.bazelrc` has no `--remote_cache` directive — cloning and building
+from source works with zero cloud signup, reading from and writing
+to `./.bazel_cache/` on your own disk, with all dependencies
+downloaded hermetically per CLAUDE.md Rule 6. A developer-local
+override is possible via `.bazelrc.user` (gitignored; the
+`.bazelrc:90` `try-import` picks it up).
+
+### What CI does
+
+CI layers an opt-in Bazel remote cache on top of `actions/cache`
+(the latter remains as the no-internet fallback). The full cache
+strategy — including the trade-off analysis and migration triggers
+— is in [ADR-0014](docs/adr/0014-bazel-build-cache-strategy.md).
+
+**Current (demo horizon)**: Option β — BuildBuddy Personal free tier.
+An API key lives in GitHub Actions secrets as `BUILDBUDDY_API_KEY`;
+the CI workflow passes it via
+`--remote_header=x-buildbuddy-api-key=…`. The one-time signup +
+key + secret wiring is a manual-human-action procedure captured in
+[`docs/runbooks/buildbuddy-cache-setup.md`](docs/runbooks/buildbuddy-cache-setup.md)
+— upstream operators follow it once; fork operators follow it only
+if they want their own cache namespace.
+
+**Planned (production)**: Option δ — S3 direct via Bazel 7.4+
+`--credential_helper`, short-lived AWS creds via GitHub Actions OIDC
+federation. β→δ migration triggers are in ADR-0014 §Decision
+Outcome.
+
+### If you fork this repo
+
+Remote cache is an optimization, never a correctness dependency.
+Three common postures for a fork:
+
+- **Use your own BuildBuddy cache** — follow
+  [`docs/runbooks/buildbuddy-cache-setup.md`](docs/runbooks/buildbuddy-cache-setup.md)
+  against your fork's GitHub repository; the existing workflow
+  will use your namespace automatically.
+- **Disable remote cache entirely** — remove the `--remote_cache`
+  / `--bes_backend` / `--remote_header` flags from
+  `.github/workflows/ci-baseline.yml`. `actions/cache` stays; you
+  only lose the cross-PR cache tier.
+- **Bring your own S3 + OIDC** — follow ADR-0014 §"δ prerequisites"
+  for the IAM role / OIDC trust policy / bucket config spec. Swap
+  the `--remote_cache` flag to your S3 URL and wire the credential
+  helper.
+
+### β→δ migration is a cross-repo event
+
+When this repo migrates β→δ, it is a coordinated change with the
+sibling `aegis-aws-landing-zone` repo per
+[README §Cross-repo coordination ritual](README.md#cross-repo-coordination-ritual):
+the sibling owns the S3 bucket, the dedicated
+`github-actions-aegis-core` IAM role, and the OIDC trust policy
+(full spec in ADR-0014 §"δ prerequisites — what
+`aegis-aws-landing-zone` must provide"). The migration opens a
+`cross-repo/blocking` issue on `aegis-aws-landing-zone` first,
+waits for the sibling to provision resources, then swaps the CI
+flag in a single PR here. Do not self-migrate before the sibling
+confirms the resources exist; CI will fail on every run until
+credentials resolve.
+
 ## Getting Help
 
 - **Technical questions**: open a Discussion in the "Q&A" category.

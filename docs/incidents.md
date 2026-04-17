@@ -891,6 +891,155 @@ intuitive "patch pion/opus or fork it" path was rejected after
 
 ---
 
+## Incident 10 — ggml "0.9.8" ≠ "0.9.8": llama.cpp b8595's cherry-picked symbols
+
+**Date**: 2026-04-17  **Severity**: S3  **Duration**: ~40 min end-to-end (discovery → root cause → triple bump → CI guard)
+**Related commit**: Phase 3b Slice 4 (this session)
+
+### Symptom
+
+Landing the first GGMLEmbedder integration test against real bge-m3 Q4_K_M
+weights — `//engine_cpp/tests/integration:bge_m3_embed_test` — died at the
+link step:
+
+```
+Undefined symbols for architecture arm64:
+  "_gguf_init_from_file_ptr", referenced from:
+      llama_model_loader::llama_model_loader(...) in libllama.a[21](llama-model-loader.cpp.o)
+  "_gguf_write_to_file_ptr", referenced from:
+      llama_model_saver::save(...) in libllama.a[22](llama-model-saver.cpp.o)
+ld: symbol(s) not found for architecture arm64
+```
+
+The `GGMLEmbedder` library target alone (`:ggml_embedder`) built fine —
+static libraries defer undefined-symbol errors to the final link. The
+error surfaced only when linking the test binary that combines
+`libllama.a`, `libwhisper.a`, and the shared `libggml*.a`.
+
+### Root cause
+
+Same version number, divergent source.
+
+`MODULE.bazel` pinned the three-way triple with a confident banner:
+
+```
+║ Current pin: ggml v0.9.8
+║   whisper.cpp v1.8.4 — bundles ggml 0.9.8
+║   llama.cpp b8595    — bundles ggml 0.9.8
+```
+
+All three tarballs' `ggml/CMakeLists.txt` did declare
+`GGML_VERSION 0.9.8`. The claim was self-consistent by the version
+string. The actual source was not.
+
+Checking each tarball's `ggml/include/gguf.h`:
+
+- Standalone `ggml-0.9.8`: declares `gguf_init_from_file` (path-based).
+- Whisper `whisper.cpp-1.8.4`/ggml: same — declares only
+  `gguf_init_from_file`.
+- Llama `llama.cpp-b8595`/ggml: declares **both**
+  `gguf_init_from_file` AND `gguf_init_from_file_ptr` (FILE-pointer
+  variant), plus `gguf_write_to_file_ptr`.
+
+The `_ptr` variants were added to ggml upstream between v0.9.8 and
+v0.9.9. `ggml-org/llama.cpp`'s `b8595` tag was cut after a cherry-pick
+of those variants into its vendored ggml tree — **but the cherry-pick
+did not bump `GGML_VERSION_PATCH`**. The version string stayed at
+0.9.8; the symbol table quietly grew.
+
+Building `libllama.a` against the llama-bundled ggml headers produces
+object files that reference `gguf_*_ptr`. Linking that `libllama.a`
+against the standalone `@ggml` v0.9.8 (which does NOT export the `_ptr`
+symbols) is therefore guaranteed to fail — except we never tried the
+link in CI until today. `bazel build //engine_cpp/cmd/engine:engine` in
+the existing CI only linked whisper + ggml; it did not pull in llama,
+so the drift was dormant.
+
+### Detection
+
+Three signals lined up:
+
+1. The linker named the exact missing symbols — `_gguf_init_from_file_ptr`,
+   `_gguf_write_to_file_ptr`.
+2. `grep -n 'gguf_init_from_file' <each tarball>/ggml/include/gguf.h`
+   immediately showed the asymmetry: llama's bundled header had the
+   `_ptr` declaration; the other two did not.
+3. ggml upstream tag list confirmed v0.9.9 exists and introduces the
+   `_ptr` functions.
+
+The red herring worth flagging: the first instinct was "all three are
+at 0.9.8, so this is a build-configuration issue, not a version
+issue." That instinct is what ADR-0021 P3's grep-based check was
+originally designed to validate. Had we implemented P3 that way before
+hitting this, the check would have been *green* and the link would
+still have failed — the check was measuring the wrong thing.
+
+### Resolution
+
+Single minimal change: bump standalone `@ggml` from v0.9.8 → v0.9.9.
+v0.9.9 is the first upstream tag that exports the `_ptr` variants, so
+it covers llama.cpp b8595's references. ggml API evolution in the
+0.9.x line is additive; whisper.cpp v1.8.4's bundled ggml 0.9.8 uses
+a strict subset of v0.9.9's symbols, so the bump is backward-compatible
+for whisper. Verified by re-running
+`//engine_cpp/tests/integration:whisper_transcribe_test` after the bump.
+
+`MODULE.bazel`'s banner comment was rewritten to explain the asymmetric
+pin: standalone ggml is intentionally ahead of the consumers' vendored
+version numbers, because llama.cpp ships its own cherry-pick that
+effectively requires a post-0.9.8 ggml.
+
+### Prevention
+
+Both layers of ADR-0021 P3 landed in the same session:
+
+1. **Grep-based drift script** (`tools/scripts/check_ggml_versions.sh`):
+   fetches each archive and compares `GGML_VERSION_*`. Fails ONLY when
+   standalone `@ggml` is **older** than a consumer's bundled ggml —
+   the wrong-direction drift that breaks the link. Does not hard-fail
+   on the compatible "standalone ahead of consumers" state that this
+   incident resolved into.
+2. **Integration-test link step in CI** (`.github/workflows/ci-baseline.yml`):
+   `bazel build //engine_cpp/tests/integration/...`. This is the
+   authoritative gate — the link step either succeeds or fails
+   regardless of what the version string claims. Catches "same number,
+   divergent source" drift that Layer 1 provably cannot.
+
+`CONTRIBUTING.md §Upgrading the ggml triple` documents the procedure
+and explicitly calls out this incident so future maintainers know
+version-string parity is *not* sufficient.
+
+### Lessons
+
+1. **Upstream version numbers are suggestions, not contracts.** Cherry-
+   picks into vendored subtrees routinely preserve the old version
+   string. When a library embeds a dependency, the embedded dep's
+   declared version tells you what the embedder *started from*, not
+   what the embedded source currently contains.
+2. **"Check the version numbers" is a drift signal, not a drift proof.**
+   A useful CI check for version-coupled deps MUST include a step that
+   exercises the actual integration (here: linking whisper + llama
+   against the shared ggml). If the check is cheaper than the real
+   thing, it measures something cheaper than correctness.
+3. **The ADR was right about the pattern, wrong about the
+   implementation.** ADR-0021 correctly identified that the three deps
+   form a coupled triple needing a P3 check. The ADR's sketched
+   implementation ("grep for GGML_VERSION_MAJOR/MINOR/PATCH and assert
+   equality") would have been green through this incident. The
+   incident forced the P3 implementation to grow a second, authoritative
+   layer. ADRs that predict patterns are load-bearing; ADRs that
+   prescribe mechanisms should be re-read at implementation time, not
+   copied verbatim.
+4. **Static-linking errors show up at the combined binary, not the
+   component library.** Building `//engine_cpp/src/inference:ggml_embedder`
+   was green the whole time. Building `//engine_cpp/cmd/engine:engine`
+   was green because it did not yet depend on the embedder. The first
+   place the link actually exercised both consumers of shared ggml was
+   an integration test target — which is exactly why the new CI step
+   targets integration-test builds, not library builds.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a
