@@ -215,6 +215,14 @@ and every model file (with SHA-256 verification) — is downloaded
 into `.bazel_cache/`, `.bazelisk/`, `.bufsk/`, and `models/` per
 [CLAUDE.md Rule 6](CLAUDE.md). Nothing escapes the repo tree.
 
+**No cloud signup required to build locally.** `bazel build` reads
+from and writes to `./.bazel_cache/` on your own disk — the
+committed `.bazelrc` has no `--remote_cache` directive. CI uses an
+opt-in Bazel remote cache purely to shorten cold runs; forks can
+keep it, disable it, or repoint it at their own infra. Full details
+in [CONTRIBUTING.md §Remote cache](CONTRIBUTING.md#remote-cache-optional-ci-only)
+and [ADR-0014](docs/adr/0014-bazel-build-cache-strategy.md).
+
 ```bash
 git clone https://github.com/BinHsu/aegis-core.git
 cd aegis-core

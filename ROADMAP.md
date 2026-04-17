@@ -325,7 +325,7 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 
 ### Phase 4d: Observability Wiring + Build Cache Decision
 
-- [ ] Pick a Bazel remote cache strategy per ADR-0014 (Option α `actions/cache` only / β BuildBuddy SaaS / γ self-hosted bazel-remote). Decision deferred to whichever of T1–T6 trigger conditions fires first; this checklist item flips to checked once the chosen ADR-0014 option is wired and the ADR is updated with the resolving commit.
+- [~] Pick a Bazel remote cache strategy per ADR-0014. **Strategy DECIDED 2026-04-17** — two-phase plan: Option β (BuildBuddy Personal free tier) for the demo horizon, Option δ (S3 direct via Bazel 7.4+ `--credential_helper` + GHA OIDC → AWS IAM) for production. See ADR-0014 §Decision Outcome. **Wiring still pending**: β needs user to sign up for BuildBuddy + add API key as GHA secret before CI flag can be added; δ needs `aegis-aws-landing-zone` to publish its AWS OIDC trust policy (trigger T1). Checkbox flips to `[x]` when β is actually wired into `.github/workflows/ci-baseline.yml`.
 - [ ] OTLP exporter to X-Ray / Tempo in Cloud, stdout in Local (ARCH §8)
 - [ ] Custom `SpanProcessor` enforcing attribute allowlist (ADR-0005 R4)
 - [ ] Structured JSON logs via FluentBit in Cloud

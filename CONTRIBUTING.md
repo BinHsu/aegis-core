@@ -319,6 +319,66 @@ than a tag, and note the deviation in the MODULE.bazel banner.
 Typical effort: 20–40 minutes for a routine bump; longer if an upstream
 API break requires patching engine code.
 
+## Remote cache (optional, CI only)
+
+Local `bazel build` does not use any remote cache. The committed
+`.bazelrc` has no `--remote_cache` directive — cloning and building
+from source works with zero cloud signup, reading from and writing
+to `./.bazel_cache/` on your own disk, with all dependencies
+downloaded hermetically per CLAUDE.md Rule 6. A developer-local
+override is possible via `.bazelrc.user` (gitignored; the
+`.bazelrc:90` `try-import` picks it up).
+
+### What CI does
+
+CI layers an opt-in Bazel remote cache on top of `actions/cache`
+(the latter remains as the no-internet fallback). The full cache
+strategy — including the trade-off analysis and migration triggers
+— is in [ADR-0014](docs/adr/0014-bazel-build-cache-strategy.md).
+
+**Current (demo horizon)**: Option β — BuildBuddy Personal free tier.
+An API key lives in GitHub Actions secrets as `BUILDBUDDY_API_KEY`;
+the CI workflow passes it via
+`--remote_header=x-buildbuddy-api-key=…`.
+
+**Planned (production)**: Option δ — S3 direct via Bazel 7.4+
+`--credential_helper`, short-lived AWS creds via GitHub Actions OIDC
+federation. β→δ migration triggers are in ADR-0014 §Decision
+Outcome.
+
+### If you fork this repo
+
+Remote cache is an optimization, never a correctness dependency.
+Three common postures for a fork:
+
+- **Use your own BuildBuddy cache** — sign up at
+  <https://app.buildbuddy.io/>, create an API key, add it as the
+  `BUILDBUDDY_API_KEY` GitHub Actions secret in your fork; the
+  existing workflow will use your namespace automatically.
+- **Disable remote cache entirely** — remove the `--remote_cache`
+  / `--bes_backend` / `--remote_header` flags from
+  `.github/workflows/ci-baseline.yml`. `actions/cache` stays; you
+  only lose the cross-PR cache tier.
+- **Bring your own S3 + OIDC** — follow ADR-0014 §"δ prerequisites"
+  for the IAM role / OIDC trust policy / bucket config spec. Swap
+  the `--remote_cache` flag to your S3 URL and wire the credential
+  helper.
+
+### β→δ migration is a cross-repo event
+
+When this repo migrates β→δ, it is a coordinated change with the
+sibling `aegis-aws-landing-zone` repo per
+[README §Cross-repo coordination ritual](README.md#cross-repo-coordination-ritual):
+the sibling owns the S3 bucket, the dedicated
+`github-actions-aegis-core` IAM role, and the OIDC trust policy
+(full spec in ADR-0014 §"δ prerequisites — what
+`aegis-aws-landing-zone` must provide"). The migration opens a
+`cross-repo/blocking` issue on `aegis-aws-landing-zone` first,
+waits for the sibling to provision resources, then swaps the CI
+flag in a single PR here. Do not self-migrate before the sibling
+confirms the resources exist; CI will fail on every run until
+credentials resolve.
+
 ## Getting Help
 
 - **Technical questions**: open a Discussion in the "Q&A" category.
