@@ -1,5 +1,7 @@
 # Aegis Core — Threat Model
 
+<!-- session-close-review: trust-surface list — only if session added a new external dep / SaaS / storage tier -->
+
 - **Status**: Draft (STRIDE skeleton for MVP / Phase 1–4)
 - **Last reviewed**: 2026-04-11
 - **Scope**: Aegis Core application architecture. Infrastructure-level
@@ -209,6 +211,23 @@ introducing one should be rejected regardless of its other merits.
 - LINDDUN privacy threat modeling as a complement to STRIDE — Phase 5.
 - Privacy Engineering review with external counsel for BIPA, CCPA,
   GDPR — before any regulated-industry customer onboarding.
+- **Cloud-mode multi-tenancy isolation in the RAG vector store is not
+  yet implemented.** Phase 3b Slice 6 ships `engine seed` writing
+  corpus chunks to Qdrant with payload `{text, source_path,
+  chunk_index}` — deliberately WITHOUT `user_id` / `tenant_id` fields
+  — because there is no Cognito JWT source yet to populate them
+  honestly (Phase 2 only has a `StaticJWTProvider` scaffold, not a
+  live Cognito User Pool). The design decision is captured in
+  [ADR-0022 — Cloud-mode multi-tenancy isolation in vector store](adr/0022-cloud-multi-tenancy-isolation.md)
+  at Proposed status: **hard tenant boundary = Qdrant collection per
+  tenant**, **soft user boundary = payload filter on `user_id`**.
+  Threat model implication: until ADR-0022 is implemented (Phase 4
+  alongside Cognito wiring), a hypothetical multi-tenant demo deploy
+  would have ALL uploaded corpora visible to every authenticated
+  user. Acceptable for the demo horizon (single-tenant or
+  pre-Cognito anyway); **blocker for any real multi-tenant
+  production deployment**. See ADR-0022 §"Deferred decision +
+  demo-horizon posture" for the full reasoning.
 
 ## Related
 
