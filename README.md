@@ -27,22 +27,98 @@ code rather than the marketing. Aegis Core is the bet that efficiency
 and readability can both be maximized at once, with the tension between
 them made visible rather than hidden.
 
-Design goals, from day one:
-
-- **Privacy as a structural property, not a policy** — audio never
-  leaves the engine process RAM; transcripts never touch server-side
-  durable storage; no biometric data is processed at any layer
-  ([ADR-0012](docs/adr/0012-remove-voiceprint-matching.md)).
-- **Clone it, build it, it just works** — hermetic polyglot Bazel
-  monorepo, no global tool installs required
-  ([CLAUDE.md Rule 6](CLAUDE.md)).
-- **Dual-mode from day one** — same codebase runs as a single-machine
-  local build (offline-capable) or as an EKS microservice cluster
-  ([ARCHITECTURE.md §5](ARCHITECTURE.md#5-dual-mode-parity-local-monolith-vs-cloud-microservices)).
-
 The first-generation Python/macOS prototype lives at
 [BinHsu/Aegis-Prompter](https://github.com/BinHsu/Aegis-Prompter);
 this V2 is a ground-up enterprise rewrite.
+
+## Features at a Glance
+
+- **Real-time meeting transcription** — whisper.cpp large-v3-turbo Q4
+  via a `StreamTranscribe` gRPC bidi pipeline; sub-second latency on
+  Apple Silicon / x86_64 CPU
+  ([ADR-0006](docs/adr/0006-liveness-disconnect-handling.md),
+  [ADR-0010](docs/adr/0010-cpp-engine-runtime-architecture.md))
+- **Multilingual RAG retrieval** — bge-m3 Q4_K_M embedder + Qdrant
+  vector DB; `engine seed --corpus PATH` populates collections
+  idempotently, content-hash UUID IDs
+  ([ADR-0019](docs/adr/0019-rag-corpus-and-embedding-pipeline.md),
+  [ADR-0020](docs/adr/0020-engine-owns-inference.md))
+- **Privacy by construction** — audio never leaves engine RAM; seven
+  mechanical enforcement requirements (no swap, no PVCs, no core
+  dumps, compile-time log allowlist, tmpfs-only temp, debug dumps
+  compiled out, OTLP attribute allowlist) turn policy into a
+  CI-verifiable property
+  ([ADR-0005](docs/adr/0005-audio-ephemeral-policy.md),
+  [ADR-0012](docs/adr/0012-remove-voiceprint-matching.md))
+- **Local + Cloud dual-mode** — same codebase, same proto contracts,
+  different deployment shape; `bazel run //:app_local` brings up the
+  entire stack offline-capable
+  ([ARCHITECTURE.md §5](ARCHITECTURE.md#5-dual-mode-parity-local-monolith-vs-cloud-microservices),
+  [ADR-0007](docs/adr/0007-local-mode-lan-topology.md))
+- **Hermetic polyglot build** — C++ / Go / TypeScript / Rust all
+  under one Bazel 7.4.1 monorepo (bzlmod); no global `brew install`
+  for any toolchain; hermetic Node via `aspect_rules_js`
+  ([ADR-0008](docs/adr/0008-monorepo-folder-structure.md),
+  [ADR-0015](docs/adr/0015-hermetic-nodejs-via-aspect-rules-js.md))
+- **Shared ggml runtime** — whisper.cpp and llama.cpp both link
+  against one ggml build, no symbol collision; the upgrade SOP plus
+  a two-layer CI drift check prevents the version skew that bit us
+  in Incident 10
+  ([ADR-0021](docs/adr/0021-shared-ggml-runtime.md))
+- **Cache strategy decoupled from core** — opt-in Bazel remote cache
+  (BuildBuddy Personal for demo, S3 + `--credential_helper` + GHA
+  OIDC for production) never touches `bazel build` locally; forks can
+  swap providers in one workflow file
+  ([ADR-0014](docs/adr/0014-bazel-build-cache-strategy.md))
+- **Cross-repo coordination** — standing-issue protocol with
+  [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone):
+  three `cross-repo/*` labels, two standing issues, one session-start
+  ritual that catches drift before it reaches code
+
+## Design Principles
+
+These are the load-bearing rules every trade-off in the ADRs traces
+back to. If a future decision conflicts with one of these, the
+principle wins and the decision needs a new ADR documenting the
+departure.
+
+1. **Privacy as a structural property, not a policy.** Audio never
+   leaves the engine process RAM; transcripts never touch server-side
+   durable storage; no biometric data is processed at any layer.
+   Enforced by seven mechanical requirements the CI can actually
+   verify, not by a written policy an auditor has to trust
+   ([ADR-0005](docs/adr/0005-audio-ephemeral-policy.md),
+   [ADR-0012](docs/adr/0012-remove-voiceprint-matching.md)).
+2. **Clone it, build it, it just works.** Hermetic polyglot Bazel
+   monorepo. No global `brew install` required for any toolchain.
+   Every compiler, runtime, SDK, and model is fetched into the repo
+   tree; nothing leaks into `~/.cache` or `/opt`
+   ([CLAUDE.md Rule 6](CLAUDE.md)).
+3. **Dual-mode from day one.** Same source tree runs as a
+   single-machine local binary (offline-capable, LAN viewer support
+   via QR code) or as an EKS microservice deployment. Behavior
+   divergence between modes is a bug; both modes are exercised in CI
+   ([ARCHITECTURE.md §5](ARCHITECTURE.md#5-dual-mode-parity-local-monolith-vs-cloud-microservices),
+   [ADR-0007](docs/adr/0007-local-mode-lan-topology.md)).
+4. **Engine owns inference.** One C++ process hosts all model work
+   (ASR + RAG embedding + query + future LLM). Python stays at the
+   tool tier — experiments, validation scripts, data wrangling — and
+   never becomes a runtime dependency
+   ([ADR-0020](docs/adr/0020-engine-owns-inference.md)).
+5. **Document decisions, not just code.** Every load-bearing choice
+   has an ADR with *Context / Decision / Alternatives Considered /
+   Consequences*. When the code and an ADR disagree, the ADR wins and
+   the code gets fixed. Superseded ADRs become new ADRs — no silent
+   rewrites
+   ([CLAUDE.md Rule 3](CLAUDE.md), `docs/adr/`).
+6. **Infrastructure / application split.** AWS platform + compliance
+   + GitOps evidence lives in the companion
+   [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+   repo; this repo stays focused on application logic, proto
+   contracts, and engine internals. Coordination happens via two
+   standing `cross-repo` issues, not shared build state
+   ([ADR-0007](docs/adr/0007-local-mode-lan-topology.md),
+   README §Contributing).
 
 ---
 
@@ -69,6 +145,8 @@ this V2 is a ground-up enterprise rewrite.
 
 ## Table of Contents
 
+- [Features at a Glance](#features-at-a-glance)
+- [Design Principles](#design-principles)
 - [Status](#status)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
@@ -77,16 +155,15 @@ this V2 is a ground-up enterprise rewrite.
 - [Security & Privacy](#security--privacy)
 - [Tech Stack](#tech-stack)
 - [Contributing](#contributing)
-- [License](#license)
+- [License & Machine-Friendly Notice](#license--machine-friendly-notice)
 
 ---
 
 ## Status
 
-**Pre-release.** Phases 0–1 complete; Phase 2 shipped in full;
-Phase 3a (platform foundations) done; Phase 3b (engine RAG inference)
-substantially landed through Slice 6 with only the validation
-experiment remaining; Phase 3c (host UI) gated on 3b.
+**Pre-release.** Phase status lives in the table below; the full
+phase-by-phase checklist lives in [ROADMAP.md](ROADMAP.md). Avoid
+citing phase progress in prose elsewhere — it drifts.
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -142,7 +219,7 @@ flowchart LR
   rules do not apply by construction
   ([ADR-0012](docs/adr/0012-remove-voiceprint-matching.md)).
 
-For the full 11-section specification see
+For the full specification see
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
@@ -360,22 +437,26 @@ understand *why* something is designed a particular way, start here:
 | [0018](docs/adr/0018-language-choice-rationale.md) | Language choice per component — polyglot for portfolio, all-Go for product |
 | [0019](docs/adr/0019-rag-corpus-and-embedding-pipeline.md) | RAG corpus + multilingual embedding pipeline (bge-m3, Qdrant, immutable-corpus-reproducible-index) — impl mechanism superseded by 0020 |
 | [0020](docs/adr/0020-engine-owns-inference.md) | Engine owns inference — unified runtime for seed, query, ASR, future LLM; Python stays off-runtime |
+| [0021](docs/adr/0021-shared-ggml-runtime.md) | Shared ggml runtime — one ggml build, consumed by whisper.cpp + llama.cpp (P1–P4 diamond-dep protections) |
+| [0022](docs/adr/0022-cloud-multi-tenancy-isolation.md) | Cloud-mode multi-tenancy isolation in the RAG vector store — hybrid (tenant = collection, user = payload filter); deferred to Phase 4 Cognito wiring |
 
 Other primary references:
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 11-section specification including
   data governance (§9), secure SDLC (§10), and known limitations (§11).
 - [docs/threat-model.md](docs/threat-model.md) — STRIDE threat model
-  with 7 attacker profiles and 41 identified threats.
+  covering attacker profiles, asset list, and the Open Items that
+  block regulated-industry customer onboarding.
 - [docs/github-setup.md](docs/github-setup.md) — reproducible
   `gh` CLI commands for every admin operation applied to this repo
   (ruleset, private vuln reporting, SSH commit signing, etc.).
 - [docs/incidents.md](docs/incidents.md) — development-time incident
   postmortems (what broke, root cause, resolution, lessons). Written
-  as they happen during Phase 1. Currently covers: macOS CLT-only
-  Bazel crash, boringssl `-Werror` flag-ordering, whisper.cpp
-  `_vDSP_` link failure, buf v1/v2 config mismatch, GitHub ruleset
-  silent no-op on private Free repos.
+  as each blocker hits; never softened retroactively. See the file
+  itself for the current incident index.
+- [docs/runbooks/](docs/runbooks/) — manual-human-action procedures
+  (third-party account signups, local Qdrant setup, local-dev
+  troubleshooting); marker-discovered per CLAUDE.md Rule 3.
 
 ---
 
@@ -498,3 +579,18 @@ please forgive our shared automated zeal. See the `Co-Authored-By`
 trailer on every commit for the receipts.
 
 > *"Infrastructure as Logic, Strategy as Code."*
+
+---
+
+**Documentation drift policy.** This README reflects the state of
+`main`. If you find content that does not match reality — stale phase
+status, removed commands, broken links, hardcoded counts that have
+grown past the written number — open a PR titled `docs: fix README
+drift — <area>`. The same policy applies to `ARCHITECTURE.md`,
+`docs/interview-notes.md`, `docs/threat-model.md`, and
+`docs/incidents.md` (all four carry a `session-close-review:` marker
+so their drift risk is audited at the close of every session per
+CLAUDE.md Rule 3). Drift-prone phrasing — enumerated ADR counts,
+enumerated incident lists, phase-state prose — is actively avoided
+in the canonical docs; flag any regression toward that pattern in
+PR review.
