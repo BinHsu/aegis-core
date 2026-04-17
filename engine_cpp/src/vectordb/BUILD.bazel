@@ -1,0 +1,22 @@
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+cc_library(
+    name = "qdrant_client",
+    srcs = ["qdrant_client.cc"],
+    hdrs = ["qdrant_client.h"],
+    # Qdrant's own points.proto v1.17.1 marks Vector.data as deprecated
+    # while still requiring it at the Vectors{oneof{Vector vector}}
+    # edge of the UpsertPoints API — the deprecation signals a planned
+    # migration to DenseVector, but the migration is not complete
+    # upstream. We legitimately must use the annotated field, so
+    # suppress the noise at file scope rather than per-call.
+    copts = ["-Wno-deprecated-declarations"],
+    deps = [
+        "//proto/qdrant/v1.17.1:qdrant_cc_grpc",
+        "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)

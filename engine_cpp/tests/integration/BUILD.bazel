@@ -63,3 +63,26 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "qdrant_client_test",
+    srcs = ["qdrant_client_test.cc"],
+    size = "medium",
+    # Gated on QDRANT_URL env. GTEST_SKIPs in CI (no Qdrant server
+    # stood up); runs locally via:
+    #   QDRANT_URL=localhost:6334 \
+    #   ./tools/bazelisk/bazelisk test \
+    #     //engine_cpp/tests/integration:qdrant_client_test \
+    #     --test_env=QDRANT_URL
+    # See docs/runbooks/qdrant-local-setup.md for standing up Qdrant.
+    tags = [
+        "exclusive",        # tests share a Qdrant instance; don't parallelize
+        "requires-qdrant",  # documentation tag for filtering in CI
+    ],
+    deps = [
+        "//engine_cpp/src/vectordb:qdrant_client",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
