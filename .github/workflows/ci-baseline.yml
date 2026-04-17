@@ -237,3 +237,6 @@ jobs:
           use-verbose-mode: "no"
           check-modified-files-only: "yes"
           base-branch: main
+          # Allowlist for GitHub / BuildBuddy settings URLs that 404
+          # anonymously by design (see config file header for rationale).
+          config-file: .github/workflows/mlc_config.json

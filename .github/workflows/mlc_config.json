@@ -1,0 +1,12 @@
+{
+  "ignorePatterns": [
+    {
+      "pattern": "^https://github\\.com/[^/]+/[^/]+/settings(/.*)?$",
+      "_comment": "GitHub repository settings pages (including Actions secrets, branch protection, etc.) require authentication + repo admin access. Anonymous GET returns 404 by design to avoid leaking settings-page existence. Our runbooks legitimately link to these URLs as click paths for the repo operator — the 404 is the action's misread, not a dead link. Scoped to github.com/owner/repo/settings/... so non-settings links on github.com (issues, PRs, releases) keep getting checked."
+    },
+    {
+      "pattern": "^https://app\\.buildbuddy\\.io/settings/",
+      "_comment": "BuildBuddy UI settings pages are similarly auth-gated — the app's landing page exists but deep settings routes 404 anonymously."
+    }
+  ]
+}
