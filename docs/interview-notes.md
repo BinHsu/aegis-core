@@ -1,5 +1,7 @@
 # Interview Notes — Aegis Core
 
+<!-- session-close-review: recruiter-facing narrative -->
+
 > **Who this document is for.** Recruiters, hiring managers, and HR
 > partners evaluating me for a role. It is deliberately written without
 > jargon; if you can read a business email, you can read this. A

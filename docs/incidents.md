@@ -1,5 +1,7 @@
 # Incident Postmortems — Aegis Core
 
+<!-- session-close-review: incidents since prior session — add a postmortem if Rule 7 criteria fired (≥15min blocker, ≥2 failed fix attempts, root cause >1 layer below surface) -->
+
 Field notes from real debugging during Phase 0–1. These are not
 crashes in production (the project is pre-release); they are
 **development-time incidents** that blocked progress long enough to
