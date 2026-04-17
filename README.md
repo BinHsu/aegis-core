@@ -223,6 +223,14 @@ keep it, disable it, or repoint it at their own infra. Full details
 in [CONTRIBUTING.md §Remote cache](CONTRIBUTING.md#remote-cache-optional-ci-only)
 and [ADR-0014](docs/adr/0014-bazel-build-cache-strategy.md).
 
+> **Hit an error on the first command?** Check
+> [`docs/runbooks/`](docs/runbooks/) — it's where we keep the
+> platform-specific, third-party-account, and admin-only procedures
+> that would otherwise bloat this Quick Start into a decision tree.
+> If your problem isn't covered there, open an issue; issues that
+> resolve to "here's the dance" earn a runbook entry for the next
+> person.
+
 ```bash
 git clone https://github.com/BinHsu/aegis-core.git
 cd aegis-core
