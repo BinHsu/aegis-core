@@ -59,6 +59,9 @@ gets stored where.
 2. A real microphone recording goes in; a real transcript comes out.
 3. The automated test suite proves it end-to-end against a reference
    audio clip.
+4. A text corpus goes in via `engine seed`; the retrieved embeddings
+   are within a validated margin of the floating-point reference, so
+   retrieval quality is quantified, not asserted.
 
 ---
 
