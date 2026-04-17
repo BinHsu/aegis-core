@@ -67,3 +67,13 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "engine_seed_util_test",
+    srcs = ["engine_seed_util_test.cc"],
+    size = "small",
+    deps = [
+        "//engine_cpp/cmd/engine:seed_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

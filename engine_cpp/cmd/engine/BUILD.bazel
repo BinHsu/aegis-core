@@ -1,9 +1,31 @@
 package(default_visibility = ["//visibility:public"])
 
+# Seed subcommand lib — split out of the binary so unit tests can
+# depend on the pure helpers (ContentHashUuid, DeriveCollectionName)
+# without linking the gRPC server stack.
+cc_library(
+    name = "seed_lib",
+    srcs = ["seed.cc"],
+    hdrs = ["seed.h"],
+    deps = [
+        "//engine_cpp/src/inference:ggml_embedder",
+        "//engine_cpp/src/rag:chunker",
+        "//engine_cpp/src/vectordb:qdrant_client",
+        "@boringssl//:crypto",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
 cc_binary(
     name = "engine",
     srcs = ["main.cc"],
     deps = [
+        ":seed_lib",
         "//engine_cpp/src/grpc:aegis_engine_service",
         "//engine_cpp/src/inference:whisper_engine",
         "//engine_cpp/src/session:model_budget",

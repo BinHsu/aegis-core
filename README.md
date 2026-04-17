@@ -329,8 +329,9 @@ Per-component boundaries are declared in
 
 ## Design Documents
 
-Aegis Core's architecture is driven by **12 Architecture Decision
-Records** that capture every material trade-off. If you want to
+Aegis Core's architecture is driven by **Architecture Decision
+Records** (under `docs/adr/`, and growing) that capture every
+material trade-off. If you want to
 understand *why* something is designed a particular way, start here:
 
 | ADR | Topic |

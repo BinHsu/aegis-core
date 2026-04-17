@@ -86,3 +86,26 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "engine_seed_test",
+    srcs = ["engine_seed_test.cc"],
+    size = "medium",
+    # Requires BOTH the bge-m3 model (AEGIS_MODEL_DIR) and a running
+    # Qdrant (QDRANT_URL). GTEST_SKIPs cleanly in either absence. Run:
+    #   AEGIS_MODEL_DIR=/path/to/models QDRANT_URL=localhost:6334 \
+    #   ./tools/bazelisk/bazelisk test \
+    #     //engine_cpp/tests/integration:engine_seed_test \
+    #     --test_env=AEGIS_MODEL_DIR --test_env=QDRANT_URL
+    tags = [
+        "exclusive",
+        "requires-model",
+        "requires-qdrant",
+    ],
+    deps = [
+        "//engine_cpp/cmd/engine:seed_lib",
+        "//engine_cpp/src/vectordb:qdrant_client",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
