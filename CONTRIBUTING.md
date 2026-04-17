@@ -383,6 +383,48 @@ flag in a single PR here. Do not self-migrate before the sibling
 confirms the resources exist; CI will fail on every run until
 credentials resolve.
 
+## Native Windows support (known gap)
+
+Tier-1 development environments are **macOS** and **Linux**. Windows
+users: **use WSL2** — from Bazel's perspective WSL2 is Linux, and every
+Ubuntu command in this doc works 1:1 inside it. Native Windows (cmd or
+PowerShell without WSL) is not tested, CI does not cover it, and we
+will not merge a PR that claims Windows support without the concrete
+changes below.
+
+Native Windows support is welcome as a community contribution. Before
+you start, know what would need to change:
+
+1. **`tools/bazelisk/bazelisk` is a bash script** — Windows needs a
+   `bazelisk.ps1` or `bazelisk.bat` sibling preserving the same
+   contract: pin Bazel 7.4.1, route `--output_user_root` inside the
+   repo tree (CLAUDE.md Rule 6), handle paths with spaces.
+2. **Shell scripts under `tools/scripts/`** — `download_models.sh`,
+   `check_ggml_versions.sh`, `proto_gen.sh`, `frontend.sh`. Each
+   needs a Windows-compatible counterpart or a PowerShell rewrite.
+3. **rules_foreign_cc + MSVC** — whisper.cpp / ggml / llama.cpp have
+   upstream Windows CMake configs but our `*.BUILD` files bake in
+   `CMAKE_OSX_DEPLOYMENT_TARGET=11.0` and Apple-framework linkopts.
+   Windows needs a `select()` branch. First build is likely to cold-
+   build BoringSSL + gRPC + Abseil on MSVC, which often surfaces
+   new warnings / failures upstream has not triaged.
+4. **Bazel on Windows symlink behavior** — Bazel's sandbox wants
+   symlinks; Windows requires Developer Mode or admin to create them.
+   Document the Developer Mode toggle in a runbook rather than in
+   PR changelog.
+5. **`.github/workflows/ci-baseline.yml`** — add a `windows-latest`
+   matrix entry to the `bazel-unit-tests` job so the support is
+   validated on every PR, not a one-off "works on my machine."
+6. **pre-commit hooks** — Python-based so Windows-compatible in
+   principle, but several hooks shell out (`gitleaks` behaves; some
+   `buf-breaking` paths assume POSIX). Run `pre-commit run
+   --all-files` on Windows as the acceptance bar.
+
+If you want to take this on, open an issue first so we can scope it
+together — the work naturally lands in 2–3 PRs (wrapper script,
+BUILD `select()` branches, CI matrix + a first-run stabilization
+pass) rather than one giant bundle.
+
 ## Getting Help
 
 - **Technical questions**: open a Discussion in the "Q&A" category.
