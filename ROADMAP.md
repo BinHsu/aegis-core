@@ -255,7 +255,7 @@ Driven by ADR-0020. Out-of-3b exit criterion: `engine --seed --corpus docs/rag/t
 - [ ] `engine_cpp/src/inference/ggml_embedder.{h,cc}` — default impl loading `BAAI/bge-m3` Q4_K_M GGUF via the existing ggml runtime
 - [ ] `engine_cpp/third_party/bge_m3/` — `http_archive` wrapper pinning the GGUF upstream (sha256 + mirror per ADR-0009 pattern)
 - [x] C++ markdown chunker with the ADR-0019 §Decision.2 separator list (`\n\n`, `\n`, `。`, `！`, `？`, `，`, space); target chunk size ~450 chars, overlap ~80 — Slice 2 (`e1d23f0`)
-- [ ] Qdrant C++ client wired (via [qdrant-cpp](https://github.com/qdrant/qdrant-cpp) or direct gRPC stubs from Qdrant's proto)
+- [ ] Qdrant C++ client wired (direct gRPC stubs generated from [Qdrant's proto](https://github.com/qdrant/qdrant/tree/master/lib/api/src/grpc/proto))
 - [ ] `engine --seed --corpus PATH --target={local|cloud}` subcommand in `engine_cpp/cmd/engine/`; cloud target reads `QDRANT_URL` + `QDRANT_API_KEY` from env
 - [ ] **Validation experiment**: load the Taiwan corpus via FlagEmbedding reference (scratch Python, not committed) + `GGMLEmbedder`; assert mean cos-sim ≥ 0.95 across all chunks. Scratch Python deleted after validation.
 - [x] **ADR-0010 revision**: split `ResourceBudget` into `ModelBudget` (process-global, ~500 MB for whisper + bge-m3 Q4_K_M) and `SessionBudget` (per-session, existing `kDefaultReservationBytes`). ADR updated in Slice 1 (`e61b192`); code landed in Slice 3.

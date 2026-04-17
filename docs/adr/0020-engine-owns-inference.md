@@ -393,8 +393,8 @@ demand it."
 - [ ] C++ markdown chunker with the same separator list
       ADR-0019 §Decision.2 defined
       (`\n\n`, `\n`, `。`, `！`, `？`, `，`, space).
-- [ ] Qdrant C++ client via the [qdrant-cpp](https://github.com/qdrant/qdrant-cpp)
-      crate or direct gRPC stubs from Qdrant's proto.
+- [ ] Qdrant C++ client via direct gRPC stubs generated from
+      [Qdrant's proto](https://github.com/qdrant/qdrant/tree/master/lib/api/src/grpc/proto).
 
 **ResourceBudget revision (ADR-0010 follow-up):**
 
