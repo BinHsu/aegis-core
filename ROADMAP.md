@@ -251,15 +251,15 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 
 Driven by ADR-0020. Out-of-3b exit criterion: `engine --seed --corpus docs/rag/taiwan.md --target=local` writes a working Qdrant collection, and an in-engine query returns semantically relevant chunks for an English / Japanese / Chinese test query against the zh-TW corpus.
 
-- [ ] `engine_cpp/src/inference/embedder.h` — abstract `Embedder` interface (Embed(text) → vector)
+- [x] `engine_cpp/src/inference/embedder.h` — abstract `Embedder` interface (Embed(text) → vector) — Slice 1 (`0a9b4a7`)
 - [ ] `engine_cpp/src/inference/ggml_embedder.{h,cc}` — default impl loading `BAAI/bge-m3` Q4_K_M GGUF via the existing ggml runtime
 - [ ] `engine_cpp/third_party/bge_m3/` — `http_archive` wrapper pinning the GGUF upstream (sha256 + mirror per ADR-0009 pattern)
-- [ ] C++ markdown chunker with the ADR-0019 §Decision.2 separator list (`\n\n`, `\n`, `。`, `！`, `？`, `，`, space); target chunk size ~450 chars, overlap ~80
+- [x] C++ markdown chunker with the ADR-0019 §Decision.2 separator list (`\n\n`, `\n`, `。`, `！`, `？`, `，`, space); target chunk size ~450 chars, overlap ~80 — Slice 2 (`e1d23f0`)
 - [ ] Qdrant C++ client wired (via [qdrant-cpp](https://github.com/qdrant/qdrant-cpp) or direct gRPC stubs from Qdrant's proto)
 - [ ] `engine --seed --corpus PATH --target={local|cloud}` subcommand in `engine_cpp/cmd/engine/`; cloud target reads `QDRANT_URL` + `QDRANT_API_KEY` from env
 - [ ] **Validation experiment**: load the Taiwan corpus via FlagEmbedding reference (scratch Python, not committed) + `GGMLEmbedder`; assert mean cos-sim ≥ 0.95 across all chunks. Scratch Python deleted after validation.
-- [ ] **ADR-0010 revision**: split `ResourceBudget` into `ModelBudget` (process-global, ~500 MB for whisper + bge-m3 Q4_K_M) and `SessionBudget` (per-session, existing `kDefaultReservationBytes`). Update the ADR with the split + rationale.
-- [ ] **whisper.cpp deployment-target fix** (incident-09 Prevention follow-up): mirror what libopus did in commit `51835b1` — add `CMAKE_OSX_DEPLOYMENT_TARGET=11.0` to `whisper_cpp.BUILD` cache_entries, silencing the ~18 libggml-cpu warnings on the engine link.
+- [x] **ADR-0010 revision**: split `ResourceBudget` into `ModelBudget` (process-global, ~500 MB for whisper + bge-m3 Q4_K_M) and `SessionBudget` (per-session, existing `kDefaultReservationBytes`). ADR updated in Slice 1 (`e61b192`); code landed in Slice 3.
+- [x] **whisper.cpp deployment-target fix** (incident-09 Prevention follow-up): mirror what libopus did in commit `51835b1` — add `CMAKE_OSX_DEPLOYMENT_TARGET=11.0` to `whisper_cpp.BUILD` cache_entries, silencing the ~18 libggml-cpu warnings on the engine link — Slice 1 (`0d2bdb8`).
 
 ### Phase 3c: Frontend Host UI + cross-WebView acceptance 📋
 

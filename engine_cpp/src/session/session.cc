@@ -14,7 +14,7 @@
 #include "absl/strings/str_cat.h"
 #include "engine_cpp/src/audio/opus_decoder.h"
 #include "engine_cpp/src/inference/whisper_engine.h"
-#include "engine_cpp/src/session/resource_budget.h"
+#include "engine_cpp/src/session/session_budget.h"
 #include "proto/aegis/v1/aegis.pb.h"
 
 namespace aegis::session {
@@ -74,7 +74,7 @@ absl::Status EmitTranscriptSegments(
 
 } // namespace
 
-Session::Session(ResourceBudget *budget, const std::string &model_path) noexcept
+Session::Session(SessionBudget *budget, const std::string &model_path) noexcept
     : budget_(budget), model_path_(model_path) {}
 
 absl::Status

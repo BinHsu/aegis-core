@@ -5,7 +5,7 @@
 // 1-session-1-thread — the grpc-cpp sync server dispatches each
 // bidi stream onto its own thread, and the Session object lives on
 // that thread's stack. When the stream closes, ~Session runs, which
-// releases the ResourceBudget reservation and tears down the
+// releases the SessionBudget reservation and tears down the
 // WhisperEngine. No shared state, no reference counting.
 //
 // The state machine is driven from the IngestMessage oneof per
@@ -58,11 +58,11 @@
 
 namespace aegis::session {
 
-class ResourceBudget;
+class SessionBudget;
 
 class Session {
 public:
-  Session(ResourceBudget *budget, const std::string &model_path) noexcept;
+  Session(SessionBudget *budget, const std::string &model_path) noexcept;
   ~Session() = default;
 
   // Drive the state machine to completion. Returns absl::OkStatus on
@@ -78,7 +78,7 @@ public:
   Session &operator=(Session &&) = delete;
 
 private:
-  ResourceBudget *budget_; // not owned
+  SessionBudget *budget_; // not owned
   std::string model_path_;
 };
 

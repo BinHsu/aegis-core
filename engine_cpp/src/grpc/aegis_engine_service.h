@@ -16,7 +16,7 @@
 #include "proto/aegis/v1/aegis.grpc.pb.h"
 
 namespace aegis::session {
-class ResourceBudget;
+class SessionBudget;
 } // namespace aegis::session
 
 namespace aegis::grpc_service {
@@ -24,7 +24,7 @@ namespace aegis::grpc_service {
 class AegisEngineServiceImpl final : public aegis::v1::Engine::Service {
 public:
   // `budget` and `model_path` must outlive this service instance.
-  AegisEngineServiceImpl(session::ResourceBudget *budget,
+  AegisEngineServiceImpl(session::SessionBudget *budget,
                          std::string model_path) noexcept;
 
   ::grpc::Status StreamTranscribe(
@@ -37,7 +37,7 @@ public:
                         aegis::v1::HealthResponse *response) override;
 
 private:
-  session::ResourceBudget *budget_; // not owned
+  session::SessionBudget *budget_; // not owned
   std::string model_path_;
 };
 
