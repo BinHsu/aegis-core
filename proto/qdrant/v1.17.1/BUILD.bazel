@@ -1,0 +1,127 @@
+# Bazel build file for the vendored Qdrant v1.17.1 protos.
+#
+# These are Apache-2.0-licensed upstream files checked in verbatim
+# from qdrant/qdrant @ v1.17.1 — see PROVENANCE.md for source, SHA,
+# and the reasoning behind check-in vs http_archive vendor.
+#
+# Shape note: each .proto gets its own proto_library with explicit
+# deps so protoc's strict-public-import check is satisfied when
+# cc_grpc_library runs. A single combined proto_library with six
+# srcs appears to compile fine for cc_proto_library but fails
+# cc_grpc_library's codegen ("seems to be defined in X, which is
+# not imported by Y") because the grpc plugin processes each source
+# independently and needs each service proto to see its transitive
+# message protos through explicit proto_library deps, not just the
+# intra-srcs side door. Splitting is also the Bazel-idiomatic
+# pattern matching Qdrant's upstream build.
+#
+# The `qdrant_cc_grpc` cc_library at the bottom is the single
+# public label downstream engine_cpp code depends on.
+
+load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@rules_proto//proto:defs.bzl", "proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# ---------------------------------------------------------------------------
+# Message-only protos (no services) — leaf types shared across the service
+# protos below.
+# ---------------------------------------------------------------------------
+
+proto_library(
+    name = "json_with_int_proto",
+    srcs = ["json_with_int.proto"],
+    strip_import_prefix = "/proto/qdrant/v1.17.1",
+)
+
+proto_library(
+    name = "qdrant_common_proto",
+    srcs = ["qdrant_common.proto"],
+    strip_import_prefix = "/proto/qdrant/v1.17.1",
+    deps = ["@com_google_protobuf//:timestamp_proto"],
+)
+
+proto_library(
+    name = "collections_proto",
+    srcs = ["collections.proto"],
+    strip_import_prefix = "/proto/qdrant/v1.17.1",
+    deps = [
+        ":json_with_int_proto",
+        ":qdrant_common_proto",
+    ],
+)
+
+proto_library(
+    name = "points_proto",
+    srcs = ["points.proto"],
+    strip_import_prefix = "/proto/qdrant/v1.17.1",
+    deps = [
+        ":collections_proto",
+        ":json_with_int_proto",
+        ":qdrant_common_proto",
+        "@com_google_protobuf//:timestamp_proto",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Service protos — each service gets its own cc_grpc_library.
+# ---------------------------------------------------------------------------
+
+proto_library(
+    name = "collections_service_proto",
+    srcs = ["collections_service.proto"],
+    strip_import_prefix = "/proto/qdrant/v1.17.1",
+    deps = [":collections_proto"],
+)
+
+proto_library(
+    name = "points_service_proto",
+    srcs = ["points_service.proto"],
+    strip_import_prefix = "/proto/qdrant/v1.17.1",
+    deps = [":points_proto"],
+)
+
+# ---------------------------------------------------------------------------
+# C++ bindings — one cc_proto_library per proto_library (the modern
+# protobuf rules require exactly one dep label each; shared message
+# protos are deduped internally via Bazel's virtual cc_proto_library
+# targets, so linking both service libraries below does not ODR-
+# conflict on qdrant_common / collections / points generated code).
+# ---------------------------------------------------------------------------
+
+cc_proto_library(
+    name = "collections_service_cc_proto",
+    deps = [":collections_service_proto"],
+)
+
+cc_grpc_library(
+    name = "collections_service_cc_grpc",
+    srcs = [":collections_service_proto"],
+    grpc_only = True,
+    deps = [":collections_service_cc_proto"],
+)
+
+cc_proto_library(
+    name = "points_service_cc_proto",
+    deps = [":points_service_proto"],
+)
+
+cc_grpc_library(
+    name = "points_service_cc_grpc",
+    srcs = [":points_service_proto"],
+    grpc_only = True,
+    deps = [":points_service_cc_proto"],
+)
+
+# The single public label engine_cpp code depends on. Umbrella over the
+# two service cc_grpc_libraries so a single
+# `//proto/qdrant/v1.17.1:qdrant_cc_grpc` dep pulls in the full stub
+# surface (messages + both services).
+cc_library(
+    name = "qdrant_cc_grpc",
+    deps = [
+        ":collections_service_cc_grpc",
+        ":points_service_cc_grpc",
+    ],
+)
