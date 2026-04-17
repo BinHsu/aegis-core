@@ -339,7 +339,11 @@ strategy — including the trade-off analysis and migration triggers
 **Current (demo horizon)**: Option β — BuildBuddy Personal free tier.
 An API key lives in GitHub Actions secrets as `BUILDBUDDY_API_KEY`;
 the CI workflow passes it via
-`--remote_header=x-buildbuddy-api-key=…`.
+`--remote_header=x-buildbuddy-api-key=…`. The one-time signup +
+key + secret wiring is a manual-human-action procedure captured in
+[`docs/runbooks/buildbuddy-cache-setup.md`](docs/runbooks/buildbuddy-cache-setup.md)
+— upstream operators follow it once; fork operators follow it only
+if they want their own cache namespace.
 
 **Planned (production)**: Option δ — S3 direct via Bazel 7.4+
 `--credential_helper`, short-lived AWS creds via GitHub Actions OIDC
@@ -351,10 +355,10 @@ Outcome.
 Remote cache is an optimization, never a correctness dependency.
 Three common postures for a fork:
 
-- **Use your own BuildBuddy cache** — sign up at
-  <https://app.buildbuddy.io/>, create an API key, add it as the
-  `BUILDBUDDY_API_KEY` GitHub Actions secret in your fork; the
-  existing workflow will use your namespace automatically.
+- **Use your own BuildBuddy cache** — follow
+  [`docs/runbooks/buildbuddy-cache-setup.md`](docs/runbooks/buildbuddy-cache-setup.md)
+  against your fork's GitHub repository; the existing workflow
+  will use your namespace automatically.
 - **Disable remote cache entirely** — remove the `--remote_cache`
   / `--bes_backend` / `--remote_header` flags from
   `.github/workflows/ci-baseline.yml`. `actions/cache` stays; you
