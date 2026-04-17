@@ -2,15 +2,19 @@
 
 #include "engine_cpp/src/session/session.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "engine_cpp/src/audio/opus_decoder.h"
 #include "engine_cpp/src/inference/whisper_engine.h"
-#include "engine_cpp/src/session/resource_budget.h"
+#include "engine_cpp/src/session/session_budget.h"
 #include "proto/aegis/v1/aegis.pb.h"
 
 namespace aegis::session {
@@ -70,7 +74,7 @@ absl::Status EmitTranscriptSegments(
 
 } // namespace
 
-Session::Session(ResourceBudget *budget, const std::string &model_path) noexcept
+Session::Session(SessionBudget *budget, const std::string &model_path) noexcept
     : budget_(budget), model_path_(model_path) {}
 
 absl::Status
@@ -118,6 +122,12 @@ Session::Run(::grpc::ServerReaderWriter<aegis::v1::EgressMessage,
   // Pre-reserve ~30 seconds of 16 kHz mono to avoid mid-loop rallocs.
   samples.reserve(30 * 16000);
 
+  // OpusDecoder is lazy-init on the first OpusChunk — sessions that
+  // stream only PcmChunk (WAV fixture replay, push-to-talk) never pay
+  // the libopus setup cost. Per ADR-0016 one instance per session;
+  // libopus carries PLC state across calls.
+  std::unique_ptr<aegis::audio::OpusDecoder> opus_decoder;
+
   while (stream->Read(&msg)) {
     if (msg.has_session_start()) {
       budget_->Release(reserve_bytes);
@@ -130,6 +140,32 @@ Session::Run(::grpc::ServerReaderWriter<aegis::v1::EgressMessage,
         AppendInt16LEAsFloat(msg.pcm().pcm(), &samples);
       }
       // In Paused state we deliberately drop PCM per ADR-0006.
+      continue;
+    }
+
+    if (msg.has_opus()) {
+      if (state == State::Active) {
+        if (opus_decoder == nullptr) {
+          auto dec_or = aegis::audio::OpusDecoder::Create();
+          if (!dec_or.ok()) {
+            budget_->Release(reserve_bytes);
+            return dec_or.status();
+          }
+          opus_decoder = std::move(*dec_or);
+        }
+        const std::string &payload = msg.opus().opus();
+        auto pcm_or = opus_decoder->Decode(std::span<const std::byte>(
+            reinterpret_cast<const std::byte *>(payload.data()),
+            payload.size()));
+        if (pcm_or.ok()) {
+          samples.insert(samples.end(), pcm_or->begin(), pcm_or->end());
+        }
+        // On decode error: log-and-drop per ADR-0016. A single
+        // corrupt 20 ms frame should not tear down a session.
+        // Logging infra on this path lands in Phase 4; for now
+        // the drop is silent.
+      }
+      // Paused: drop, same contract as PcmChunk.
       continue;
     }
 

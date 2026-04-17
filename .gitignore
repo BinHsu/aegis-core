@@ -63,6 +63,15 @@ MODULE.bazel.lock
 .venv/
 venv/
 env/
+
+# --- RAG vector index (ADR-0019) -----------------------------------------
+# Built from docs/rag/*.md by tools/rag/seed.py. The index is a
+# derivative artifact: bumping the embedding model regenerates it,
+# committing it would diff-noise every rebuild and lie about reality
+# when the model version drifts. Cloud deploys re-seed from the corpus
+# at deploy time; reviewers re-seed locally by running seed.py.
+.rag-index/
+
 __pycache__/
 *.py[cod]
 *$py.class
@@ -76,8 +85,10 @@ htmlcov/
 coverage.xml
 *.egg-info/
 
-# --- Node.js (CLAUDE.md Rule 6) ------------------------------------------
+# --- Node.js (CLAUDE.md Rule 6, ADR-0015) --------------------------------
 node_modules/
+# pnpm's content-addressable store — pinned to ./.pnpm-store/ via
+# .npmrc `store-dir=.pnpm-store` so it stays inside the repo tree.
 .pnpm-store/
 .npm/
 .yarn/
@@ -185,3 +196,11 @@ coverage/
 ._.DS_Store
 .Spotlight-V100
 .Trashes
+
+# --- Author-personal files (NOT for repo consumers) ---------------------
+# Private interview-prep reference maintained by the author. Contains
+# portfolio positioning, likely interviewer questions, and suggested
+# answer frames that map to this repo's code. A downstream consumer
+# cloning the repo for its actual utility should NOT have to carry the
+# author's personal career material, so it stays out of version control.
+/interview-prep.md

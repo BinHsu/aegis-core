@@ -55,6 +55,14 @@ cmake(
         # scale; revisit when Phase 2+ load tests show threading as a
         # bottleneck, and add -lgomp to Linux linkopts at that point.
         "GGML_OPENMP": "OFF",
+        # Pin to match Bazel's apple toolchain default (11.0). Without
+        # this, CMake picks up the host SDK (currently darwin 26.3) and
+        # ld prints ~18 warnings per engine binary link about the
+        # newer-than-link-target libggml-cpu object files. Same root
+        # cause and fix as libopus (commit 51835b1); see incident 09's
+        # Prevention section. Safe to keep aligned with whatever
+        # MACOSX_DEPLOYMENT_TARGET Bazel's apple toolchain emits.
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
     },
     # Backend selection (metal/cuda flags) is deferred to the consumer
     # wrapper in the root module, which has access to

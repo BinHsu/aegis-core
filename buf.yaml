@@ -43,3 +43,14 @@ breaking:
   # FILE enforcement catches all semantic breaking changes (field
   # deletion, tag renumbering, type changes) without requiring
   # wire-format compatibility rules that are too loose.
+  except:
+    # The go_package option only affects the import path that Go
+    # consumers use; it is not on the wire. Aegis owns the single
+    # consumer (gateway_go/) and updates it atomically with any
+    # go_package change, so this is not a breakage for us. The lint
+    # rule exists for libraries shipping protos to external Go
+    # consumers — not our situation. (See ADR-0013 for the codegen
+    # distribution model that makes us the only Go consumer of
+    # aegis.v1.) If we ever publish .proto for external Go consumers,
+    # remove this exception.
+    - FILE_SAME_GO_PACKAGE

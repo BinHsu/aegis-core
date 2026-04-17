@@ -28,12 +28,19 @@
    * **ALL generated code, comments, commit messages, file names, and project documentation (like `.md` files) MUST be written strictly in English.** This ensures global open-source compatibility.
    * Multilingual or local languages (like Traditional Chinese) should ONLY be used during conversational interactions/chat with the human user.
 
-6. **Strict Directory Confinement (The Repo Boundary)**
-   * **ABSOLUTE RULE**: Every single action, dependency, cache, and model MUST be strictly confined to the current repository directory. Do NOT step out of bounds.
+6. **Strict Directory Confinement — All Toolchains Are Hermetic**
+   * **The foundational premise of this project is: clone it, build it, it just works — with zero reliance on anything the host OS happens to have installed.** Every compiler, runtime, SDK, and tool is managed inside the repository. Do NOT assume any system-provided binary is present or correct.
+   * **ABSOLUTE RULE**: Every action, dependency, cache, and model MUST be strictly confined to the current repository directory. Do NOT step out of bounds.
    * If a user clones this repo into `D://temp`, you do not touch `C://` or `~/.cache` under any circumstances. **DO NOT pollute the user's global system directories.**
-   * **Mandatory Isolation**: You MUST use virtual environments (`.venv` for Python), local `node_modules`, and isolated workspaces to prevent ANY side effects on the host OS.
-   * Big models (.ggml files) must be downloaded strongly to a local `/models` directory within the repo.
-   * Build tools must be scoped locally. For example, Bazel MUST be configured via `.bazelrc` to set `--output_user_root=./.bazel_cache`.
+   * **The correct entry point for ALL build and test operations is `./tools/bazelisk/bazelisk`.** Bazel manages every hermetic toolchain in this repo:
+     - **Go** — SDK 1.24.12 via `go_sdk.download`; NEVER run `go`, `gofmt`, or `go test` directly.
+     - **C++** — hermetic clang/LLVM toolchain; NEVER run `clang++`, `cmake`, or `make` directly.
+     - **Protobuf / gRPC** — `buf` via pre-commit; codegen via Bazel `proto_library` rules; NEVER run `protoc` directly.
+     - **Node.js / TypeScript** — hermetic Node 20 LTS + pnpm via `aspect_rules_js` (ADR-0015). ALWAYS invoke via `./tools/scripts/frontend.sh {install|dev|build|typecheck}`; NEVER run a system `node` / `npm` / `pnpm`. `pnpm-lock.yaml` at the repo root is authoritative; the content-addressable store lives at `./.pnpm-store/` per `.npmrc`.
+     - **Python** — if ever needed, use `.venv` inside the repo; NEVER install packages globally.
+   * Big models (`.gguf`/`.ggml`) must be downloaded to `/models` inside the repo; NEVER to `~/.cache` or system model directories.
+   * Bazel itself MUST be configured via `.bazelrc` with `--output_user_root=./.bazel_cache`.
+   * **Bazel test flag reminder**: `--test_output=short` is NOT valid; use `summary`, `errors`, `all`, or `streamed`.
 
 7. **Incident Postmortems (Field Notes Discipline)**
    * When you encounter a **non-trivial development-time blocker** — working definition: ≥ 15 minutes of debugging, OR two or more failed fix attempts, OR a root cause more than one layer below the surface error — you MUST add a postmortem entry to `docs/incidents.md` before the task is considered done.
@@ -43,7 +50,12 @@
    * Trivial bugs (typo in a BUILD file fixed in 60 seconds, clang-format whitespace) do NOT warrant a postmortem — don't pollute the file.
    * This rule is a portfolio-grade **learning-culture signal**. Treat it with the same seriousness as Rule 2 Testing Integrity.
 
-8. **Environment Pre-flight (Trust the Handbook, Verify the Machine)**
+8. **Root-Cause Fixes Over Workarounds**
+   * When something fails (CI, build, test, merge), **investigate the actual root cause and fix it**. Do NOT bypass with flags like `--admin`, `--no-verify`, or skip logic.
+   * Workarounds are acceptable ONLY when the effort to fix properly is disproportionately high (e.g., requires upstream changes, multi-day refactor). In that case, present BOTH the proper fix AND the workaround with effort estimates, and let the human decide.
+   * The default is always "fix it right." Discuss the tradeoff with the human before acting — never silently choose the shortcut.
+
+9. **Environment Pre-flight (Trust the Handbook, Verify the Machine)**
    * Before you start committing work on a fresh clone, run a one-shot pre-flight check: confirm the repo's own tooling is wired up for THIS machine. Specifically:
      - `ls .git/hooks/pre-commit .git/hooks/commit-msg` — both must exist. If not, run `pre-commit install && pre-commit install --hook-type commit-msg` exactly as `CONTRIBUTING.md` §Development Setup mandates.
      - `git config --get user.signingkey && git config --get commit.gpgsign` — signing must be live. If not, follow `docs/github-setup.md` §0.5.

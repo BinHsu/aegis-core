@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "webrtc",
+    srcs = ["negotiator.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/webrtc",
+    visibility = ["//gateway_go:__subpackages__"],
+    deps = [
+        "@com_github_pion_webrtc_v4//:webrtc",
+    ],
+)
+
+go_test(
+    name = "webrtc_test",
+    # "medium" because TestNegotiateLoopbackICEAndRTP does real ICE/DTLS
+    # negotiation over loopback — typically < 2 s, but given a generous
+    # budget to avoid flakes on slow CI runners.
+    size = "medium",
+    srcs = ["negotiator_test.go"],
+    embed = [":webrtc"],
+    deps = [
+        "@com_github_pion_webrtc_v4//:webrtc",
+        "@com_github_pion_webrtc_v4//pkg/media",
+    ],
+)

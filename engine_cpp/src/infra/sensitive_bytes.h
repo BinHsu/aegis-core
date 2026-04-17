@@ -19,12 +19,45 @@
 #ifndef AEGIS_ENGINE_CPP_SRC_INFRA_SENSITIVE_BYTES_H_
 #define AEGIS_ENGINE_CPP_SRC_INFRA_SENSITIVE_BYTES_H_
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <ostream>
 #include <span>
+#include <type_traits>
 
 namespace aegis::infra {
+
+// ByteLikePointee constrains the raw-pointer `SensitiveBytes` ctor to
+// types whose pointee is "actually a byte" in the sense of the gRPC
+// wire framing this codebase uses:
+//
+//   - `char`           — `proto::bytes` fields decode to `std::string`,
+//                        whose `.data()` returns `const char*`.
+//   - `unsigned char`  — the C idiom for raw buffers.
+//   - `std::byte`      — the C++17 "explicitly opaque binary data"
+//                        type; what we would write on a greenfield API.
+//   - `std::uint8_t`   — fixed-width byte alias, common in codec code.
+//
+// This is a C++20 `concept` (§7.5) used as a template parameter
+// constraint. It replaces a `void*` parameter that accepted anything,
+// including pointers into wildly inappropriate types (a `TranscriptSegment*`
+// would have compiled silently). With the constraint in place, a
+// mis-use is rejected at the point of construction with a readable
+// compiler diagnostic naming the concept, not a dump of template
+// instantiation context.
+//
+// Rationale for using a concept here specifically: the compile-time
+// type system is already carrying the "sensitive-data" invariant (ADR-
+// 0005 R3); the concept extends that discipline to the entry point
+// where raw pointers originate (proto field decoding). Future Semgrep
+// rules can then audit only the `.bytes()` exit point — the entry
+// point is self-auditing via the compiler.
+template <typename T>
+concept ByteLikePointee = std::same_as<std::remove_cv_t<T>, char> ||
+                          std::same_as<std::remove_cv_t<T>, unsigned char> ||
+                          std::same_as<std::remove_cv_t<T>, std::byte> ||
+                          std::same_as<std::remove_cv_t<T>, std::uint8_t>;
 
 class SensitiveBytes {
 public:
@@ -36,10 +69,16 @@ public:
   explicit constexpr SensitiveBytes(std::span<const std::byte> data) noexcept
       : data_(data) {}
 
-  // Convenience ctor from raw pointer + size (for proto::bytes fields
-  // which come as std::string-of-char).
-  SensitiveBytes(const void *data, std::size_t size) noexcept
-      : data_(static_cast<const std::byte *>(data), size) {}
+  // Raw-pointer ctor for proto::bytes callers. Constrained by
+  // `ByteLikePointee` above so the compiler rejects, at the call site,
+  // any pointee that isn't one of the four byte-sized types we treat
+  // interchangeably for wire framing. `reinterpret_cast` is necessary
+  // because `std::span<const std::byte>` cannot be constructed directly
+  // from `const char*`; the concept guarantees the reinterpret is
+  // well-defined (all four types have size 1 and byte-like alignment).
+  template <ByteLikePointee T>
+  SensitiveBytes(const T *data, std::size_t size) noexcept
+      : data_(reinterpret_cast<const std::byte *>(data), size) {}
 
   // Explicit raw access. Code that needs the bytes for legitimate
   // purposes (inference, framing) uses this. This is the ONE call

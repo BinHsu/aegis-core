@@ -1,0 +1,18 @@
+# engine_cpp/third_party/libopus/BUILD.bazel
+#
+# Consumer-facing alias for @libopus (downloaded via
+# MODULE.bazel's http_archive + built by rules_foreign_cc's `cmake`
+# rule per libopus.BUILD). Engine targets depend on
+# `//engine_cpp/third_party/libopus:libopus` for clean repo-local
+# include paths; the actual output is `@libopus//:libopus`.
+
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+# Export libopus.BUILD so MODULE.bazel http_archive can reference it.
+exports_files(["libopus.BUILD"])
+
+alias(
+    name = "libopus",
+    actual = "@libopus//:libopus",
+    visibility = ["//visibility:public"],
+)

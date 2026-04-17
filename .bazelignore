@@ -1,0 +1,6 @@
+# Directories Bazel must not descend into when looking for BUILD files.
+# aspect_rules_js's npm_translate_lock requires this file to exist so it
+# can verify the project's ignored roots — see ADR-0015.
+
+node_modules
+frontend_web/node_modules

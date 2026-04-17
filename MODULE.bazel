@@ -54,7 +54,7 @@ bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
 
 # googletest — cc_test framework for engine_cpp/tests/. Phase 1 uses
 # gtest + gmock; Phase 2+ may add `fuzztest` bazel_dep for fuzz tests.
-bazel_dep(name = "googletest", version = "1.17.0", repo_name = "com_google_googletest", dev_dependency = True)
+bazel_dep(name = "googletest", version = "1.17.0", dev_dependency = True, repo_name = "com_google_googletest")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
@@ -64,6 +64,19 @@ http_archive(
     sha256 = "b26f30e52c095ccb75da40b168437736605eb280de57381887bf9e2b65f31e66",
     strip_prefix = "whisper.cpp-1.8.4",
     urls = ["https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.4.tar.gz"],
+)
+
+# libopus — ADR-0016. The engine decodes Opus frames received over
+# the wire (gRPC StreamTranscribe's new OpusChunk variant) before
+# feeding PCM into whisper.cpp. Same http_archive + rules_foreign_cc
+# + cmake pattern as whisper_cpp above; see
+# engine_cpp/third_party/libopus/libopus.BUILD for the cmake target.
+http_archive(
+    name = "libopus",
+    build_file = "//engine_cpp/third_party/libopus:libopus.BUILD",
+    sha256 = "65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1",
+    strip_prefix = "opus-1.5.2",
+    urls = ["https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"],
 )
 
 # -----------------------------------------------------------------------------
@@ -78,6 +91,7 @@ bazel_dep(name = "rules_go", version = "0.52.0")
 bazel_dep(name = "gazelle", version = "0.50.0")
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+
 # Pinned >= 1.24.12 because gazelle 0.50.0's go_repository_tools has a
 # go.work requiring go >= 1.24.12 (running lower errors out during
 # external repo setup). Bump gazelle to go along.
@@ -91,14 +105,66 @@ go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//gateway_go:go.mod")
 use_repo(
     go_deps,
+    "com_github_coder_websocket",
+    "com_github_golang_jwt_jwt_v5",
+    "com_github_improbable_eng_grpc_web",
+    "com_github_pion_webrtc_v4",
     "org_golang_google_grpc",
     "org_golang_google_protobuf",
 )
 
 # -----------------------------------------------------------------------------
-# Phase 2+ dependencies (added as each component comes online):
+# Node.js / TypeScript toolchain — ADR-0015. `aspect_rules_js` provides
+# a hermetic Node toolchain and pnpm-based dependency management. This
+# lands in Phase 3 (earlier than the originally-planned Phase 4a) so
+# that `frontend_web/` has no system-Node prerequisite — the "clone,
+# build, it just works" promise in CLAUDE.md Rule 3 stays intact.
 #
-#   bazel_dep(name = "rules_nodejs",     version = "6.3.2")    # Phase 3 frontend
+# Design notes:
+#   - aspect_rules_js is Aspect's fork of the original rules_nodejs;
+#     it specifically addresses pnpm + peer-deps + IDE-visible
+#     node_modules (the pain points the original hit at our Phase-1
+#     scoping).
+#   - pnpm-lock.yaml at the repo root is authoritative; Bazel reads
+#     it via npm_translate_lock. Commit the lockfile alongside any
+#     package.json change.
+#   - Node version is pinned to 20 LTS (matches
+#     frontend_web/package.json "engines" field).
+# -----------------------------------------------------------------------------
+bazel_dep(name = "aspect_rules_js", version = "2.1.2")
+bazel_dep(name = "aspect_rules_ts", version = "3.2.0")
+bazel_dep(name = "rules_nodejs", version = "6.3.0")
+
+# Hermetic Node toolchain. The default Node 16 that rules_nodejs
+# registers is too old for React 19 / Vite 6 — bump to 20.
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node", dev_dependency = True)
+node.toolchain(node_version = "20.11.1")
+
+# pnpm via aspect_rules_js — installed once, accessible via
+# `bazel run -- @pnpm//:pnpm ...` for the initial lockfile bootstrap
+# and for any ad-hoc dep-management commands. We use the default
+# pnpm version bundled with aspect_rules_js (currently 8.6.7) — the
+# version the extension knows about via its internal PNPM_VERSIONS
+# dictionary is upstream-controlled, so we accept its pin rather than
+# forcing a mismatch. When aspect_rules_js bumps, we get a newer
+# pnpm; check the release notes at that point.
+pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm")
+use_repo(pnpm, "pnpm")
+
+# npm translates the pnpm-lock.yaml into Bazel repos — one repo per
+# npm package version, all hash-addressed via the lockfile's
+# integrity hashes.
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm", dev_dependency = True)
+npm.npm_translate_lock(
+    name = "npm",
+    pnpm_lock = "//:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "npm")
+
+# -----------------------------------------------------------------------------
+# Phase 4+ dependencies (added as each component comes online):
+#
 #   bazel_dep(name = "rules_oci",        version = "2.0.1")    # Phase 4 packaging
 #   bazel_dep(name = "rules_rust",       version = "0.54.0")   # Phase 4 Tauri
 #

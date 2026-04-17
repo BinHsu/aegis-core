@@ -618,12 +618,285 @@ path.
 
 ---
 
+## Incident 08 — `bazel run //:app_local --with-frontend` shutdown glacially slow (29 s)
+
+| Field | Value |
+| --- | --- |
+| Date | 2026-04-14 |
+| Severity | S3 — annoying dev-experience regression, not a ship blocker |
+| Commit | `38f9150` |
+| Phase | Phase 3 A-2 (N-child supervisor in `cmd/app_local`) |
+
+### Symptom
+
+After extending the Local-mode launcher with a third subprocess
+(Vite dev server, opt-in via `--with-frontend`), Ctrl-C / SIGTERM
+took **29 seconds** to return the shell. Engine + gateway + frontend
+all received the signal, all three visibly exited, but the launcher
+itself hung for the full duration, logging each child's grace-period
+timeout and abandon-reap warning in sequence.
+
+The two-child variant (engine + gateway only, pre-Phase-3) shut
+down in ~3 ms. So the slowness appeared the moment we added a third
+child.
+
+### Root cause
+
+Double-consumption of each child's single-consumer `wait` channel.
+
+The supervisor had a fan-in goroutine per child:
+
+```go
+for _, c := range children {
+    go func() {
+        err := <-c.wait                        // consumes the channel
+        exits <- childExit{name: c.name, err: err}
+    }()
+}
+```
+
+Then `select { case <-ctx.Done(): ... }` fired the teardown path,
+which called `terminate(child)` for each. `terminate` in turn did:
+
+```go
+select {
+case <-c.wait:                                 // blocks forever
+case <-time.After(c.gracePeriod):
+    ...
+}
+```
+
+But the fan-in goroutine had **already drained `c.wait`** — it's a
+buffered channel with exactly one payload — so `<-c.wait` inside
+terminate blocked for the full grace period every single time, even
+though the underlying process had exited 50 ms earlier. The log
+showed `[gateway] bye` at T+4 ms and the grace-period warning at
+T+10 s, with nothing in between.
+
+Root cause is structural: we reached for "react to any unexpected
+exit" (fan-in) without considering that the same event needs to be
+observable by the ctx-done-driven teardown too. A one-shot `<-chan`
+can serve at most one reader.
+
+### Detection
+
+Noticed the 29 s total only after visually timing a Ctrl-C with a
+stopwatch (`kill -TERM; while kill -0; do :; done`). Before that,
+the symptom was being misread as "Vite is slow to exit under
+SIGTERM" — a plausible-but-wrong hypothesis because `[frontend]
+Terminated: 15` was the last line before the gap.
+
+### Red herrings (~45 min lost)
+
+1. **"pnpm wrapper won't forward SIGTERM"** — true but tangential;
+   the actual frontend processes DID eventually die. The grace-
+   period was only SIGTERM → SIGKILL fallback semantics, not the
+   bug.
+2. **"set Setpgid on all children so grandchildren propagate"** —
+   over-correction. Made the engine/gateway shutdown *worse*: with
+   Setpgid=true on a plain Go binary that forks nothing, `cmd.Wait()`
+   empirically hangs until the grace escalation, turning a 3 ms
+   shutdown into a 10 s one. Reverted this to pgroup-only-for-
+   frontend.
+3. **"`cmd.Wait` is stuck on stdout/stderr pipe EOF because a
+   detached grandchild holds the fd"** — actually true in the
+   frontend case (esbuild daemons on macOS), but it wasn't the
+   cause of the 29 s because engine and gateway had no
+   grandchildren and still hung. This is real but downstream of
+   the actual bug; we kept the `Process.Release()` fallback for it.
+
+### Resolution
+
+Commit `38f9150`:
+
+1. Change `child.wait <-chan error` to `child.done <-chan struct{}`
+   plus `child.waitErr *error`. The `done` channel is **closed**
+   (never value-sent-to) by the waiter goroutine when cmd.Wait
+   returns. A closed channel broadcasts to arbitrarily many readers,
+   so both the fan-in and terminate observe the same exit without
+   draining.
+2. Apply `SysProcAttr.Setpgid=true` only to the frontend child
+   (where pnpm→node→vite grandchildren require pgroup-level
+   signalling). Engine and gateway stay direct-pid.
+3. Keep the `Process.Release()` post-SIGKILL fallback for the
+   detached-grandchild pipe-hold case, but it's now rarely hit.
+
+Measured shutdown time after fix: **0.03 s** (1000× faster).
+
+### Prevention
+
+- **Go-specific**: whenever a channel is a "completion event that
+  multiple observers need," use close-broadcast (`close(ch)` +
+  `<-ch`) not one-shot send. The type signature `<-chan struct{}`
+  makes the intent visible at call sites — zero-size payload is a
+  standard idiom for "this is a signal, not a value".
+- **Supervisor pattern**: if your fan-in reader is the *only* thing
+  that reads a per-child event, any other code that needs to
+  observe the event must route through the fan-in's published
+  state — never through the source channel directly.
+- **Darwin quirk noted**: `SysProcAttr.Setpgid=true` on a Go binary
+  that forks nothing triggers a slow-reap path in `cmd.Wait` on
+  macOS. Applying pgroup-scoped supervision should be selective;
+  default to off, opt in per child when grandchild signal
+  propagation is genuinely required.
+
+### Lessons
+
+1. **"The process exited 50 ms ago" and "my launcher doesn't know
+   yet" are different facts.** Confusing them costs real time.
+   Timing the shutdown with a stopwatch, not inspecting logs,
+   turned out to be the cheapest way to separate process-exit
+   latency from supervisor-observability latency.
+2. **Two bugs can look like one bug.** The Vite slow-SIGTERM thing
+   and the fan-in channel drain were both present, and fixing the
+   first one alone left the second invisible because its effect
+   was being masked by the first's grace period. Each layer of
+   fix stripped one symptom; the final fix got us from 29 s to
+   30 ms.
+3. **N-child refactor wasn't gratuitous.** It surfaced a
+   supervisor-pattern bug that was latent in the two-child variant
+   — the old code happened not to exercise the ctx-done terminate
+   path because engine/gateway always exited cleanly within the
+   fan-in's consumption window. Adding a third child that behaves
+   differently exposed the structural issue. Add N-ness *before*
+   you think you need it; it catches this class of latent bug.
+4. **Setpgid is not free.** The reflex "put children in their own
+   process groups so I can signal them as a unit" is usually the
+   right move on Linux. On darwin it interacts with `cmd.Wait`'s
+   fast-reap in ways I can't yet explain in detail — benchmark
+   before applying globally.
+
+---
+
+## Incident 09 — pion/opus rejects every browser Opus frame; refactor decode to engine
+
+**Date**: 2026-04-14 — 2026-04-15  **Severity**: S3  **Duration**: ~1 day end-to-end (discovery → ADR → wire flip)
+**Related commits**: `1984f19`, `748fde2`, `8292470`, `<this-commit>`
+**Related ADR**: [ADR-0016](adr/0016-opus-decode-on-engine.md)
+
+### Symptom
+
+During the Phase 3 LAN-phone smoke test (iOS Safari joining as the
+host, gateway running on a laptop on the same Wi-Fi, engine on
+loopback), the gateway log spammed once per 20 ms audio frame:
+
+```
+pipeline: opus decode: unsupported configuration mode: 3
+```
+
+Every Opus frame from the phone failed to decode; the engine
+received zero PcmChunks; the transcript stayed empty for the entire
+test session. Same result on Chrome on Android.
+
+### Root cause
+
+`github.com/pion/opus` is a pure-Go Opus implementation that has
+**not** reached coverage parity with `libopus`. RFC 6716 defines
+three Opus coding modes — **SILK** (low-rate speech), **CELT**
+(music), and **Hybrid** (both, stacked). WebRTC browsers
+**routinely negotiate Hybrid** at common bitrates (config field 14–15,
+which surfaces as the "mode 3" error in pion/opus). pion/opus
+refuses to decode these frames with the error verbatim above.
+
+The gateway's loopback unit tests had been silent on this because
+they used pre-recorded fixtures encoded with constrained config
+that pion/opus *does* support. Real browsers exposed the gap
+immediately on the first non-loopback test.
+
+### Detection
+
+The error message in the gateway log was the dead giveaway:
+specifically, the words "configuration mode: 3" pointed straight at
+the Opus codec's mode field rather than at any networking or
+session-state symptom. The instinct was initially to look at WebRTC
+negotiation (was the SDP wrong? wrong codec selected?), which cost
+~10 minutes; the codec-mode reading of the message redirected
+attention to the right layer.
+
+### Resolution
+
+A domain-boundary refactor rather than a code-level patch (the more
+intuitive "patch pion/opus or fork it" path was rejected after
+~30 min of analysis):
+
+1. **Decision** ([ADR-0016](adr/0016-opus-decode-on-engine.md)):
+   move Opus decode from the Go gateway to the C++ engine. Codec
+   work belongs in the audio-processing domain (alongside whisper.cpp
+   and any future DSP), not in the session-transport BFF. Gateway
+   forwards RTP payloads verbatim.
+2. **Day 1 (`1984f19`)** — proto + build infra: added `OpusChunk`
+   variant to `IngestMessage.payload` (proto3 back-compat); added
+   libopus 1.5.2 via `rules_foreign_cc` cmake; landed
+   `aegis::audio::OpusDecoder` C++ wrapper class with
+   encode→decode roundtrip unit test.
+3. **Day 2a (`748fde2`)** — engine side: Session state machine
+   gained a kOpus branch; lazy-init OpusDecoder per session; decode
+   errors are log-and-drop (single corrupt 20 ms frame must not
+   tear down a session).
+4. **Day 2b (`8292470`)** — gateway side: removed pion/opus,
+   `WriteRTPPayload` now emits OpusChunk; dropped the dep from
+   `go.mod` + `MODULE.bazel`.
+5. **Day 2c (this commit)** — docs (`ARCHITECTURE.md`, `ROADMAP.md`,
+   this entry) + libopus build pinned to
+   `CMAKE_OSX_DEPLOYMENT_TARGET=11.0` to silence the
+   `object file was built for newer 'macOS' version (26.3) than
+   being linked (11.0)` warnings on the engine binary link.
+
+### Prevention
+
+- **Test on real browsers, early.** pion/opus's loopback fixtures
+  passed with flying colors; a phone in the room did not. Adding a
+  "real-browser smoke test" to the Phase 3 acceptance gate would
+  have caught this two days earlier. ROADMAP item logged.
+- **Be skeptical of pure-language codec libraries.** The pull of
+  "no cgo, single language" is real, but codec coverage is the
+  long tail of standards-compliance work that volunteer Go ports
+  rarely complete. For codec-heavy paths, the FFI cost of using
+  the canonical C library is usually the right cost to pay. (The
+  alternative of cgo-wrapping libopus in Go was also considered
+  and rejected — see ADR-0016 §"Why not A'".)
+- **The macOS-deployment-target warning is a class.** libopus is
+  the second time the SDK-vs-link mismatch has surfaced (whisper.cpp
+  has the same warning on libggml-cpu). When adding any
+  `rules_foreign_cc` cmake() target, the cache_entries should
+  default to including `CMAKE_OSX_DEPLOYMENT_TARGET` aligned with
+  Bazel's apple toolchain. Open a separate issue to fix the
+  whisper.cpp side.
+
+### Lessons
+
+1. **Look at the literal error string before climbing the stack.**
+   "configuration mode: 3" is a codec-domain phrase. Treating it
+   like a generic decode failure ("maybe the bytes are wrong, maybe
+   the network corrupted it") wastes time. Read the words.
+2. **Refactor at the domain boundary, not at the code seam.** Two
+   "smaller" fixes (patch pion/opus, or wrap libopus in cgo on the
+   gateway) both *looked* cheaper than a multi-component refactor.
+   Both would have moved the fault back into the gateway, which is
+   the wrong domain for codec work. The "biggest" diff was the
+   right one because it made the boundary correct, and the
+   subsequent commits were small and uncontroversial as a result.
+3. **A planned 2-day refactor that *actually takes* 2 days is a
+   gift.** The day-1/day-2 split was specified in ADR-0016 up
+   front; both days hit their scope, with one descope (the in-test
+   encode-decode roundtrip replaced the "checked-in fixture"
+   variant) explained in the test file's header. Plans that survive
+   contact with reality without slipping are worth noting precisely
+   *because* they're rare.
+4. **The ADR was load-bearing.** Going straight to code on this
+   one would have left the "why not A'" question unanswered for
+   future readers. Because A and A' both *look* simpler than C
+   from a code-diff perspective, anyone re-evaluating the choice
+   needs the rationale on file or they'll relitigate it.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a
   running production system. Once the system is in Phase 4+ with
   real users, this file will split: operational incidents go to a
-  separate `ops/incidents.md` on the landing-zone repo (customer
+  separate `ops/incidents.md` on the `aegis-aws-landing-zone` repo (customer
   impact is out of scope for the application repo).
 - Each postmortem links back to the commit(s) that resolved it;
   the commit messages themselves carry the nitty-gritty details

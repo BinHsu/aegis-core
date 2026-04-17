@@ -1,10 +1,22 @@
 # ADR-0010: C++ Engine Runtime Architecture — Threading, Session, Resource Budget
 
-- **Status**: Accepted
-- **Date**: 2026-04-11
+- **Status**: Accepted (revised 2026-04-15 — see [§Revision](#revision-2026-04-15--resourcebudget-split-into-modelbudget--sessionbudget) for `ResourceBudget` split into `ModelBudget` + `SessionBudget`)
+- **Date**: 2026-04-11 (original); 2026-04-15 (revision)
 - **Deciders**: Project owner, architect
 - **Supersedes**: —
 - **Superseded by**: —
+
+> **Revision note (2026-04-15)**: ADR-0020 lands bge-m3 GGUF and
+> (eventually) an LLM into the engine process alongside whisper.cpp.
+> The original `ResourceBudget` design conflates "model weights
+> loaded once at startup" with "per-session working memory," which
+> makes capacity math confusing once the engine owns more than one
+> model. This ADR's Phase 1 decisions (sync-gRPC threading model,
+> `absl::Status` error convention) are **unchanged**; the resource-
+> budget sub-decision (§Sub-decision 2) is **extended** with the
+> split described in the [Revision section](#revision-2026-04-15--resourcebudget-split-into-modelbudget--sessionbudget) at the end of this document. The original
+> design intent is preserved — only the accounting structure
+> changes.
 
 ## Context
 
@@ -477,6 +489,237 @@ rediscover them:
   cgroups are simpler in K8s; explore once we have CI load-test
   data.
 
+## Revision: 2026-04-15 — ResourceBudget split into ModelBudget + SessionBudget
+
+### Why this revision exists
+
+The original 2026-04-11 design treats "fixed model overhead"
+(whisper + diarization = ~2.5 GB) as a **subtractive constant** in
+capacity math and uses a single `ResourceBudget` to track
+per-session reservations. That was fine when the engine owned
+exactly one inference model (whisper.cpp); it becomes awkward the
+moment ADR-0020 lands bge-m3 GGUF (~400 MB) next to it, and will
+break down entirely when a future LLM (Qwen / Llama Q4_K_M, ~4–8
+GB) joins.
+
+Three specific pressures from ADR-0020:
+
+1. **More than one model lives in process.** whisper + bge-m3 today,
+   LLM tomorrow. Each has a distinct lifetime: loaded at engine
+   startup, never freed. A single `ResourceBudget::Reserve` /
+   `Release` pair assumes symmetric ownership, which these don't
+   have.
+2. **Model weights are shared across all sessions**, not reserved
+   per-session. Charging per-session for memory that exists
+   regardless of session count double-counts the budget.
+3. **Observability clarity.** `aegis_engine_budget_bytes_used` as a
+   single number hides whether pressure is coming from model bloat
+   (fix: change quantization / swap model) or session pressure
+   (fix: scale out). Splitting the metric tells the on-call engineer
+   which lever to pull.
+
+### The split
+
+**`ModelBudget`** — process-global. Populated at engine startup as
+each model loads and registers its footprint. Immutable thereafter
+(no `Release` — model weights live for the process lifetime).
+
+**`SessionBudget`** — per-engine-instance, sized as
+`(pod_memory_limit - ModelBudget::TotalUsedBytes())` at engine
+startup, then consumed session-by-session via the existing
+`Reserve`/`Release` contract.
+
+Both are observable via separate Prometheus metrics
+(`aegis_engine_model_bytes_used{model="whisper"|"bge-m3"|"llm"}`,
+`aegis_engine_session_bytes_used`).
+
+### API shape
+
+```cpp
+// engine_cpp/src/session/model_budget.h — new
+class ModelBudget {
+ public:
+  // Called by each model loader at startup. Thread-safe; the
+  // accumulated total is read once after all models have registered.
+  // No matching Release — model weights live for the process
+  // lifetime.
+  static void Register(std::string_view model_name, std::size_t bytes);
+
+  // Total model footprint. Read after all models have loaded;
+  // passed into the SessionBudget constructor.
+  static std::size_t TotalUsedBytes();
+
+  // Per-model breakdown for observability.
+  static std::vector<std::pair<std::string, std::size_t>> Breakdown();
+};
+
+// engine_cpp/src/session/session_budget.h — renamed from ResourceBudget
+class SessionBudget {
+ public:
+  // total_bytes should be (pod_memory_limit - ModelBudget::TotalUsedBytes())
+  // computed at engine startup AFTER all models have registered.
+  explicit SessionBudget(std::size_t total_bytes);
+
+  // Same Reserve/Release semantics as the original ResourceBudget.
+  absl::Status Reserve(std::size_t bytes);
+  void Release(std::size_t bytes);
+
+  std::size_t BytesUsed() const;
+  std::size_t BytesAvailable() const;
+
+ private:
+  const std::size_t total_bytes_;
+  std::atomic<std::size_t> bytes_used_;
+};
+```
+
+Startup order in `engine_cpp/cmd/engine/main.cc`:
+
+```cpp
+int main() {
+  const std::size_t pod_limit = ReadPodMemoryLimit();  // CLI flag or K8s env
+
+  // Each loader registers with ModelBudget as it loads weights.
+  auto whisper = WhisperEngine::Create(model_path);       // ~75 MB tiny.en
+  auto embedder = GGMLEmbedder::Create(bge_m3_gguf_path); // ~400 MB Q4_K_M
+
+  // Now all models are loaded; size SessionBudget from what's left.
+  const std::size_t session_pool = pod_limit - ModelBudget::TotalUsedBytes();
+  SessionBudget session_budget(session_pool);
+
+  // Session factory uses session_budget for per-session reserves.
+  RunServer(session_budget, ...);
+}
+```
+
+### Revised capacity math (Phase 3b with ADR-0020 models landed)
+
+Model budget with Phase 3b scope (whisper tiny.en for demo,
+bge-m3 Q4_K_M for RAG; no LLM yet):
+
+| Model                          | RAM    |
+| ------------------------------ | ------ |
+| whisper tiny.en (FP16)         | ~75 MB |
+| bge-m3 Q4_K_M GGUF             | ~400 MB |
+| **Phase 3b ModelBudget total** | **~475 MB** |
+
+With a future LLM (Phase 5+ scope, illustrative):
+
+| Model                    | RAM    |
+| ------------------------ | ------ |
+| whisper large-v3-turbo Q4 | ~1.5 GB |
+| bge-m3 Q4_K_M            | ~400 MB |
+| Llama-3-8B-Instruct Q4_K_M | ~4.8 GB |
+| **ModelBudget total**    | **~6.7 GB** |
+
+Revised session cap table (SessionBudget reservation unchanged at
+200 MB per session):
+
+| Pod memory | ModelBudget | SessionBudget pool | Max sessions |
+| ---------- | ----------- | ------------------ | ------------ |
+| 8 GB       | 475 MB (Phase 3b) | ~7.5 GB    | ~37         |
+| 16 GB      | 475 MB (Phase 3b) | ~15.5 GB   | ~77         |
+| 16 GB      | 6.7 GB (+LLM)     | ~9.3 GB    | ~46         |
+| 32 GB      | 6.7 GB (+LLM)     | ~25.3 GB   | ~126        |
+
+The local-mode 16 GB Apple Silicon ceiling (8 GB engine pod
+effective) now supports ~37 concurrent sessions in Phase 3b —
+slightly higher than the original 27 because the Phase 3b
+ModelBudget (bge-m3-only) is smaller than the original's assumed
+whisper-large + diarization overhead (~2.5 GB). The original
+numbers in [§Local Mode Capacity](#local-mode-capacity-16-gb-ceiling) describe
+the Phase 5+ / full-model scenario, not Phase 3b.
+
+### Observability
+
+Original single metric:
+
+```
+aegis_engine_budget_bytes_used  {gauge}
+```
+
+Revised into two metrics:
+
+```
+aegis_engine_model_bytes_used    {gauge, label: model="whisper"|"bge-m3"|"llm"}
+aegis_engine_session_bytes_used  {gauge}
+aegis_engine_sessions_active     {gauge}    # unchanged
+aegis_engine_sessions_rejected_total{reason="session_budget"}  # was "budget"
+```
+
+The rejection label specificity matters: a future
+`reason="model_budget"` (for the startup-time "models don't fit in
+pod" check) is structurally different from mid-run session
+rejection.
+
+### What's explicitly unchanged
+
+- **Threading model** (§Sub-decision 1): still sync gRPC, one
+  session = one thread. Nothing about the split affects how
+  streams are served.
+- **Error handling convention** (§Sub-decision 3): still
+  `absl::Status` / `absl::StatusOr<T>`, exceptions banned. Both
+  `ModelBudget::Register` and `SessionBudget::Reserve` return
+  / take `absl::Status`.
+- **Per-session reservation default**: still 200 MB. The split
+  doesn't touch the per-session estimate; it only changes
+  what's counted in the pool against which reservations are
+  checked.
+- **Over-commitment rule**: still "if reserve would exceed the
+  pool, reject immediately with `RESOURCE_EXHAUSTED`." Applies
+  only to `SessionBudget`. `ModelBudget::Register` calls at
+  startup are NOT allowed to exceed `pod_limit`; if they would,
+  the engine fails to boot with a clear error (per Hard Rules
+  below).
+
+### Hard rules (additional to §Sub-decision 2)
+
+- **Models register before `SessionBudget` is constructed.**
+  This is enforced by construction order in `main.cc`. Any model
+  loaded later (hot-reload, Phase 5+ dynamic LLM selection) needs
+  its own revision.
+- **ModelBudget is startup-time.** No `Release`, no hot-reload,
+  no shrinking during the process lifetime. A model that needs
+  to be swapped requires engine restart.
+- **Engine refuses to boot if ModelBudget ≥ pod_limit.** Better a
+  clear startup error than an engine that accepts zero sessions.
+- **`aegis_engine_sessions_rejected_total{reason="session_budget"}`
+  replaces the old `reason="budget"`** — callers that dashboarded
+  the old label need to update.
+
+### Implementation impact
+
+Directly touches:
+
+- `engine_cpp/src/session/resource_budget.{h,cc}` → rename to
+  `session_budget.{h,cc}`; trim to what's now `SessionBudget`.
+- `engine_cpp/src/session/model_budget.{h,cc}` → new.
+- `engine_cpp/src/session/BUILD.bazel` → split targets.
+- `engine_cpp/cmd/engine/main.cc` → startup order per API Shape
+  above.
+- `engine_cpp/src/session/session.cc` → `budget_->Reserve` /
+  `Release` calls still use the renamed `SessionBudget*`; no
+  behavioral change.
+- Callers of the rejection-reason metric label dashboards.
+
+**ADR-0010's original prose is preserved above — the pre-2026-04-15
+`ResourceBudget` section still reads as it was written, with the
+understanding that anywhere it says `ResourceBudget` the revised
+code has `SessionBudget` (plus a companion `ModelBudget`).** Do
+not delete the original prose; it is the historical record of the
+Phase 1 decision that this revision extends rather than replaces.
+
+### Phase 3b implementation checklist (tracked in ROADMAP 3b)
+
+- [ ] Rename `ResourceBudget` → `SessionBudget` across the engine
+- [ ] Add `ModelBudget` class + registration hooks in
+      `WhisperEngine::Create` and `GGMLEmbedder::Create`
+- [ ] Update `main.cc` startup order
+- [ ] Update metric names + add the new labels
+- [ ] Update `ARCHITECTURE.md` §6 capacity numbers to reflect the
+      new ModelBudget baseline (separate commit — cross-cutting
+      with other §6 revisions already accumulating)
+
 ## Related
 
 - ADR-0004 Stateless Broadcast Relay (fail-fast session loss
@@ -488,6 +731,9 @@ rediscover them:
   `engine_cpp/src/infra/`)
 - ADR-0009 C++ Build and Toolchain (grpc-cpp and Abseil
   dependencies)
+- ADR-0020 Engine owns inference — unified runtime for seed,
+  query, ASR, future LLM (driver of the 2026-04-15 revision
+  above)
 - `ARCHITECTURE.md` §6 AI Models & Hardware Resource Optimization
 - `ARCHITECTURE.md` §10.6 Observability
 - `ARCHITECTURE.md` §11 Known Limitations (L2 — C++ engine crash

@@ -4,12 +4,12 @@
 
 #include <utility>
 
-#include "engine_cpp/src/session/resource_budget.h"
 #include "engine_cpp/src/session/session.h"
+#include "engine_cpp/src/session/session_budget.h"
 
 namespace aegis::grpc_service {
 
-AegisEngineServiceImpl::AegisEngineServiceImpl(session::ResourceBudget *budget,
+AegisEngineServiceImpl::AegisEngineServiceImpl(session::SessionBudget *budget,
                                                std::string model_path) noexcept
     : budget_(budget), model_path_(std::move(model_path)) {}
 

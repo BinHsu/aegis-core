@@ -1,12 +1,29 @@
 # 🛡️ Aegis Core
 
-> **Turn every remote meeting into a strategic advantage.**
+> **A chief-of-staff's tool for the moment before the principal speaks.**
 
-Aegis Core is a real-time meeting intelligence system for enterprises.
-A staff operator captures meeting audio; a C++ engine transcribes and
-diarizes it on-device; a RAG-backed hint generator surfaces factual
-answers to any detected question — enabling executives to respond with
-authority in negotiations, press conferences, and depositions.
+Aegis Core is real-time meeting intelligence built for the person
+sitting next to the principal — the chief-of-staff whose job is to make
+sure the leader walks into the negotiation, the press conference, the
+board review with the right facts already at hand. Great leaders are
+great because of the people around them. This repository is a
+deliberate act of care for that work: a tool that respects the
+chief-of-staff's judgment, stays out of the principal's way, and keeps
+its promises about what it does with sensitive audio.
+
+A C++ engine transcribes meeting audio on-device; a Go gateway handles
+session boundaries, authentication, and WebRTC; a RAG-backed retriever
+surfaces the fact the chief-of-staff needs, in the language the room is
+speaking, the moment a question appears in the transcript. Nothing
+leaves the machine unless the chief-of-staff explicitly makes it leave.
+
+A codebase does not make a company — that takes a business model, a
+team, and a decade of judgment calls. But a codebase can make a
+promise: that what the README says is what the build system enforces,
+that the words "privacy," "sovereignty," and "local-first" describe the
+code rather than the marketing. Aegis Core is the bet that efficiency
+and readability can both be maximized at once, with the tension between
+them made visible rather than hidden.
 
 Design goals, from day one:
 
@@ -24,6 +41,27 @@ Design goals, from day one:
 The first-generation Python/macOS prototype lives at
 [BinHsu/Aegis-Prompter](https://github.com/BinHsu/Aegis-Prompter);
 this V2 is a ground-up enterprise rewrite.
+
+---
+
+### 📖 Reading this repo
+
+- **Recruiters / hiring partners** — start at
+  [`docs/interview-notes.md`](docs/interview-notes.md). Plain language,
+  7-minute read, no jargon. It answers *"what does this candidate
+  bring?"*.
+- **Technical reviewers / hiring-manager engineering leads** — start
+  with [Quick Start](#quick-start), then
+  [Known Gaps](#known-gaps-phase-2), then the ADR index at
+  [Design Documents](#design-documents). Every non-trivial design
+  decision has its own ADR under 300 lines with an
+  *Alternatives Considered* section.
+- **Cloud infrastructure evidence** — backend + platform architecture
+  lives in this repo; AWS deployment / compliance / DevOps evidence
+  lives in the companion
+  [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+  repo. That side of the stack maps to a different reviewer audience
+  (ops / SRE) and gets its own walkthrough on request.
 
 ---
 
@@ -50,7 +88,7 @@ implementation in progress.
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
 | **Phase 1** | Bazel monorepo, proto contracts, C++ engine + whisper.cpp + StreamTranscribe, Go Gateway skeleton, Vite/React frontend with provider abstractions | ✅ Done |
-| **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1 shipped (Gateway → Engine gRPC client, ADR-0013 proto codegen distribution); A2-A5 pending |
+| **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1–A5 shipped; a few items deliberately descoped — see [Known Gaps](#known-gaps-phase-2) below |
 | **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
@@ -181,45 +219,113 @@ into `.bazel_cache/`, `.bazelisk/`, `.bufsk/`, and `models/` per
 git clone https://github.com/BinHsu/aegis-core.git
 cd aegis-core
 
-# Build the C++ engine skeleton (cold ~10 min first time, <1s incremental)
-./tools/bazelisk/bazelisk build //engine_cpp/cmd/engine:engine
-
-# Run unit + integration tests (skips transcribe test if model not fetched)
-./tools/bazelisk/bazelisk test //engine_cpp/...
-
-# Optional: fetch the test model (75 MB) and run the real-inference test
+# One-time: fetch the whisper model (~75 MB, SHA-256-verified)
 ./tools/scripts/download_models.sh --all
-./tools/bazelisk/bazelisk test //engine_cpp/tests/integration:whisper_transcribe_test \
-  --test_env=AEGIS_MODEL_DIR="$(pwd)/models"
-# [ RUN      ] WhisperTranscribeTest.JfkAskNot
-# [       OK ] WhisperTranscribeTest.JfkAskNot (370 ms)
 
-# Run the engine binary
-./bazel-bin/engine_cpp/cmd/engine/engine
-# aegis-engine: listening on 0.0.0.0:50051
-#   budget_total_bytes=5767168000
-#   model_path=models/ggml-tiny.en.bin
-#   version=0.1.0-phase1-s4d
-#   whisper: WHISPER : COREML = 0 | ... | CPU : NEON = 1 | ... | ACCELERATE = 1 | ...
+# Run everything — engine + gateway, one command
+./tools/bazelisk/bazelisk run //:app_local
+# [launcher] starting engine: .../engine_cpp/cmd/engine/engine
+# [engine] aegis-engine: listening on 0.0.0.0:50051
+# [engine]   model_path=/path/to/aegis-core/models/ggml-tiny.en.bin
+# [launcher] engine ready at localhost:50051 (model=ggml-tiny.en.bin)
+# [launcher] starting gateway: .../gateway_go/cmd/gateway/gateway_/gateway
+# [launcher] gateway up; HTTP :8080 (/healthz, /ws/viewer) and gRPC :9090
+# [launcher] press Ctrl-C to stop
 
-# Run the Go Gateway (in another terminal)
-./tools/bazelisk/bazelisk build //gateway_go/cmd/gateway:gateway
-./bazel-bin/gateway_go/cmd/gateway/gateway_/gateway
-# aegis-gateway: listening on :8080
-#   version=0.1.0-phase1-s5
-$ curl -s http://localhost:8080/healthz
-# {"ready":true,"version":"0.1.0-phase1-s5"}
+# Verify both are wired (in another terminal)
+curl -s http://localhost:8080/healthz
+# {"ready":true,"version":"0.1.0-phase2-a4","active_sessions":0,
+#  "engine":{"reachable":true,"addr":"localhost:50051","ready":true,
+#            "model":"...ggml-tiny.en.bin","backend":"cpu"}}
+
+# Ctrl-C — gateway drains first, then engine, then launcher exits
 ```
 
-The engine responds to `aegis.v1.Engine.Health` with ready=true and
-service metadata, and `aegis.v1.Engine.StreamTranscribe` runs the
-full state machine per ADR-0006 / ADR-0010. Override the model path
-with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`. The gateway's Phase 2
-wiring will have it act as a client to the engine over gRPC and
-terminate WebRTC from the host browser.
+**Frontend (Phase 3)** — hermetic Node 20 + pnpm via `aspect_rules_js`
+(ADR-0015). No system `node` / `npm` prerequisite:
 
-> *Last verified against `main`: 2026-04-13 (Phase 2 A1 — gateway-engine
-> gRPC pipeline + ADR-0013 proto codegen distribution).*
+```bash
+# One-time, after a fresh clone: install frontend deps via Bazel-managed pnpm
+./tools/scripts/frontend.sh install
+
+# Inner-loop dev: Vite dev server on :5173, reads gateway at :8080 by default
+./tools/scripts/frontend.sh dev
+
+# Production build → frontend_web/dist/
+./tools/scripts/frontend.sh build
+
+# Type check (tsc --noEmit) — runs across src/ + generated proto bindings
+./tools/scripts/frontend.sh typecheck
+```
+
+**Running pieces individually** (for debugging or CI):
+
+```bash
+# Engine only
+./tools/bazelisk/bazelisk run //engine_cpp/cmd/engine:engine
+# aegis-engine: listening on 0.0.0.0:50051
+
+# Gateway only (needs an engine reachable at AEGIS_ENGINE_ADDR, default localhost:50051)
+./tools/bazelisk/bazelisk run //gateway_go/cmd/gateway:gateway
+
+# Full Go+C++ E2E transcription test: real engine, real WAV, asserts "ask not" / "your country"
+./tools/bazelisk/bazelisk run //engine_cpp/cmd/engine:engine   # terminal 1
+AEGIS_ENGINE_ADDR=localhost:50051 \
+  ./tools/bazelisk/bazelisk test //gateway_go/internal/pipeline:pipeline_test \
+  --test_env=AEGIS_ENGINE_ADDR --test_output=errors              # terminal 2
+
+# Engine unit + integration tests (C++ gtest; skips transcribe test if model not fetched)
+./tools/bazelisk/bazelisk test //engine_cpp/...
+```
+
+Override the whisper model with `AEGIS_MODEL_PATH=/abs/path/to/ggml.bin`.
+The engine exposes `aegis.v1.Engine.Health` (readiness + backend / model
+metadata) and `aegis.v1.Engine.StreamTranscribe` (the full state machine
+per ADR-0006 / ADR-0010). The gateway terminates WebRTC from the host
+browser, decodes Opus → 16 kHz PCM, proxies to the engine's bidi stream,
+and fans transcript egress out to viewers over gRPC-Web (Cloud mode) or
+WebSocket (Local mode).
+
+> *Last verified against `main`: 2026-04-14 (Phase 2 A1–A5 + ops polish —
+> audio pipeline wired end-to-end, `//:app_local` one-command bundle,
+> ADR-0005 R3 `RedactedPCM` type).*
+
+---
+
+## Known Gaps (Phase 2)
+
+Phase 2's stated scope was **"wire it up to the point it works"** — a
+demoable Local mode, end-to-end transcription, nothing more. A handful
+of items intentionally ship shallow or absent. Each is tracked in
+[`ROADMAP.md` → Phase 2 → Known Gaps](ROADMAP.md) with full rationale;
+the short list, so you don't trip over a missing surface expecting it
+to be there:
+
+- **No WER regression suite** — a single-fixture English smoke test
+  (`jfk.wav` content-equality check) catches catastrophic regressions
+  but NOT subtle accuracy drift. Closing this requires a curated
+  multilingual audio corpus with human-audited ground truth, which is
+  Phase 3+ territory (corpus sourcing / licensing is the hard part,
+  not the harness).
+- **Cognito JWT auth is stubbed**, not production-wired. `AuthProvider`
+  port exists with a real `NoOpProvider` for Local mode and a
+  `StaticJWTProvider` stub for Cloud mode. Live JWKS fetching lands
+  alongside the Phase 3 frontend login flow.
+- **Pod Identity integration is absent.** Phase 2 has no AWS callers —
+  Pod Identity's value appears with the Phase 4 EKS deployment surface.
+- **Load testing is skeleton-only.** `tests/load/` ships a runnable k6
+  script, but SLO gates, soak scenarios, and CI cadence belong to
+  Phase 4 ops.
+- **Hexagonal ports partial.** `AuthProvider` is the only port with a
+  real implementation. `StorageProvider` / `TelemetryProvider` have
+  zero callers today — adding them speculatively would be the exact
+  kind of "framework for future us" code this project avoids.
+
+These are deliberate, not oversights. If you're evaluating the repo for
+production use, treat them as open line items; if you're reading it as
+a portfolio artifact, treat them as the honest scope-management that
+the rest of the work documents (see `docs/incidents.md` for the same
+discipline applied to dev-time blockers).
 
 ---
 
@@ -266,6 +372,12 @@ understand *why* something is designed a particular way, start here:
 | [0012](docs/adr/0012-remove-voiceprint-matching.md) | Remove voiceprint matching; question-driven hints only |
 | [0013](docs/adr/0013-proto-codegen-distribution.md) | Proto codegen distribution — Bazel-authoritative + checked-in `.pb.go` for IDE |
 | [0014](docs/adr/0014-bazel-build-cache-strategy.md) | Bazel build cache strategy — trade-offs locked, decision deferred to Phase 4 trigger conditions |
+| [0015](docs/adr/0015-hermetic-nodejs-via-aspect-rules-js.md) | Hermetic Node.js via `aspect_rules_js` (Phase 3 frontend toolchain) |
+| [0016](docs/adr/0016-opus-decode-on-engine.md) | Opus decode moves from gateway (pion/opus) to engine (libopus) |
+| [0017](docs/adr/0017-gateway-engine-topology.md) | Gateway–Engine topology: N:N-ready by design, realized by deployment |
+| [0018](docs/adr/0018-language-choice-rationale.md) | Language choice per component — polyglot for portfolio, all-Go for product |
+| [0019](docs/adr/0019-rag-corpus-and-embedding-pipeline.md) | RAG corpus + multilingual embedding pipeline (bge-m3, Qdrant, immutable-corpus-reproducible-index) — impl mechanism superseded by 0020 |
+| [0020](docs/adr/0020-engine-owns-inference.md) | Engine owns inference — unified runtime for seed, query, ASR, future LLM; Python stays off-runtime |
 
 Other primary references:
 
@@ -348,6 +460,40 @@ branch ruleset (required CI + signed commits). Local hooks are the
 fast-feedback path; CI is the belt-and-braces second pass. See
 [CONTRIBUTING.md §Development Setup](CONTRIBUTING.md#first-time-setup)
 for what each hook catches.
+
+### Cross-repo coordination ritual
+
+This repo coordinates with its companion infra repo
+[`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+via two paired standing GitHub issues, edited (never closed) as the
+contract evolves:
+
+| | aegis-core side | aegis-aws-landing-zone side |
+|---|---|---|
+| Issue | [#11](https://github.com/BinHsu/aegis-core/issues/11) | [#54](https://github.com/BinHsu/aegis-aws-landing-zone/issues/54) |
+| Lists | what aegis-core requires from the platform | what platform features aegis-core can assume |
+
+Three labels (defined on both repos):
+
+- `cross-repo` — umbrella; every coordination thread carries this.
+- `cross-repo/fyi` — informational; **no action required** on the
+  receiving side.
+- `cross-repo/blocking` — would break the receiving side's existing
+  assumptions; **must be PR'd on both repos** before either pulls the
+  change.
+
+**Session-start ritual** (run at the top of any agent / dev session
+that touches code expected to interact with the platform):
+
+```bash
+gh issue list -R BinHsu/aegis-aws-landing-zone -l cross-repo
+```
+
+If a `cross-repo/blocking` issue is open on the sibling and the
+matching change has not been PR'd here, do not pull the sibling change
+into this repo's assumptions until the alignment lands. Open new
+`cross-repo` issues (with `cross-repo/blocking` if it's a prerequisite
+for work here) on the sibling repo when this side needs something new.
 
 ---
 

@@ -101,7 +101,7 @@ repos:
       - id: buf-lint
       - id: buf-format
       - id: buf-breaking
-        args: ["--against", ".git#branch=main"]
+        args: ["--against", ".git#branch=origin/main"]
 
   # ---------------------------------------------------------------------------
   # Conventional commit message lint (optional but encouraged)

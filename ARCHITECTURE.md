@@ -128,7 +128,7 @@ Aegis Core operates as a **one-host, many-viewer broadcast** topology. Every mee
     - *Remote meeting with counterparty on a web meeting client* (Zoom Web / Google Meet / Teams Web): `getDisplayMedia({video: true, audio: true})` capturing the meeting browser tab; the video track is discarded immediately.
     - *Mixed mic + tab*: Web Audio API combines the two `MediaStream`s into one output stream via `MediaStreamAudioSourceNode` → `MediaStreamAudioDestinationNode`.
 3. **Audio transport**. The unified `MediaStream` is sent via **WebRTC** from the host to the Go Gateway. The host device is the only place in the system that ever holds the full session audio.
-4. **Gateway fan-in**. Go Gateway unwraps WebRTC UDP packets into raw PCM and pushes raw PCM over a **bidirectional gRPC stream** to the C++ Engine. Control messages (`PAUSE`, `RESUME`, `END_STREAM`) share the same stream to handle transient disconnects cleanly, per `docs/adr/0006-liveness-disconnect-handling.md`.
+4. **Gateway fan-in**. Go Gateway peels the RTP header off WebRTC UDP packets and forwards the **Opus payloads verbatim** over a **bidirectional gRPC stream** to the C++ Engine, where libopus decodes them next to whisper.cpp (see `docs/adr/0016-opus-decode-on-engine.md` for why codec work lives on the engine side, not in the BFF). Fixture-replay and push-to-talk paths bypass Opus and inject decoded PCM directly. Control messages (`PAUSE`, `RESUME`, `END_STREAM`) share the same stream to handle transient disconnects cleanly, per `docs/adr/0006-liveness-disconnect-handling.md`.
 5. **Inference**. The C++ Engine transcribes and performs **anonymous speaker diarization**. Because we capture a **single mixed audio track** (simplifying hardware), the AI isolates speakers as pseudonymous labels `Speaker_0`, `Speaker_1`, …. **Aegis does not perform voiceprint matching or any biometric identification** (see ADR-0012); diarization labels are local to the session and are never matched back to real identities. Audio PCM exists only in the engine's process RAM for the session's duration and is never persisted — see `docs/adr/0005-audio-ephemeral-policy.md`.
 6. **Question-driven hint generation**. The engine scans transcript segments for question patterns (whisper-emitted `?` punctuation plus language-specific heuristics per ADR-0012). Any detected question — regardless of which speaker asked it — triggers a RAG query against the corpus bound to this session, and the result is emitted as a `PrompterHint`. The host sees hints alongside the conversation; when the counterparty's claim contradicts the RAG result, the host gains real-time fact-checking capability (see ADR-0012 "Product Definition Shift"). Staff may still manually tag a speaker from a curated list of role labels (`Host`, `Client`, `Colleague`, `Speaker_1`); the UI **rejects real-name input** by design as a privacy-by-default measure (see §9.2).
 7. **Transcript fan-out**. The C++ engine streams speaker-labeled transcript segments and prompter hints back to the Go Gateway as Protobuf messages. The Gateway fans these out to all viewers of the session over **gRPC-Web** (Cloud mode) or **WebSocket** (Local mode; see `docs/adr/0007-local-mode-lan-topology.md`). **Transcript segments are never persisted server-side** — they flow through a bounded in-memory fan-out channel and are discarded after delivery. See `docs/adr/0004-stateless-broadcast-relay.md`.
@@ -151,6 +151,7 @@ To satisfy both "beginner-friendly local execution" and "EKS Cloud Deployment", 
 *   **Process Supervisor Pattern**: 
     - In `CLOUD` mode, Go GW and C++ Engine run in separate K8s Pods communicating via Istio/Envoy.
     - In `LOCAL` mode, a user simply runs `bazel run //:app_local`. The Go GW acts as a local supervisor, programmatically spinning up the C++ binary as a child background process (`exec.Command`) to simulate the microservice network internally, without requiring the user to open multiple terminals.
+*   **Gateway ↔ Engine Topology (N:N-ready by design)**: The code is written to support 1:1, 1:N, and M:N deployments without change — deployment realizes the actual topology, not application code. See [ADR-0017](docs/adr/0017-gateway-engine-topology.md) for the invariants (round-robin gRPC LB, per-replica session state, stream-auto-pinning), the "never hardcode a single engine" review rule, and the cross-repo split between this repo (code N-ready) and `aegis-aws-landing-zone` (Headless Service + ALB session affinity).
 
 ### 6. AI Models & Hardware Resource Optimization
 The system targets an absolute physical ceiling of **16GB Unified Memory** (e.g., MacBook Air M4 base-high tier) to guarantee successful `LOCAL` mode deployments without crashing.
@@ -172,10 +173,10 @@ This repository (`aegis-core`) is an Application Monorepo. However, it relies on
 *   **GitOps Conflict Prevention (Zero Overlap)**:
     - ArgoCD Server runs in the Infra repo's EKS cluster, but it polls the K8s manifests located in THIS Application repository.
     - Application engineers push K8s YAML changes here. ArgoCD detects the change and automatically syncs the EKS cluster.
-    - *Note to future Agents: Do not try to insert Terraform code to build an EKS cluster here. Direct the user to the landing-zone repository.*
+    - *Note to future Agents: Do not try to insert Terraform code to build an EKS cluster here. Direct the user to the `aegis-aws-landing-zone` repository.*
 
 ### 8. Enterprise Standards (Security & Observability)
-To pass strict compliance and enterprise security audits, this application enforces the following patterns. (The infrastructure for these is provisioned in the landing-zone repository).
+To pass strict compliance and enterprise security audits, this application enforces the following patterns. (The infrastructure for these is provisioned in the `aegis-aws-landing-zone` repository).
 *   **Zero Trust Networking (mTLS)**: Even within the EKS cluster, the communication between the Go Gateway and the C++ Engine is protected by a Service Mesh (e.g., Istio) enforcing Mutual TLS.
 *   **Identity First (EKS Pod Identity & Cognito)**: 
     - *Server-side*: No hardcoded AWS credentials or IAM static keys exist. The Go Gateway authenticates to DynamoDB/S3 using **EKS Pod Identity**, transparently assuming IAM roles. 
@@ -352,7 +353,7 @@ Per CLAUDE.md Rule 2, all tests must have legitimate inputs producing verifiable
 - **Tracing**: OpenTelemetry spans propagate from WebRTC ingress through Go Gateway and C++ Engine (per §8). Span attributes follow the ADR-0005 R4 allowlist; transcript and audio never appear as span attributes.
 - **Metrics**: RED (Rate / Errors / Duration) metrics on every gRPC method; USE (Utilization / Saturation / Errors) metrics on every pod; domain metrics include `aegis_host_transient_loss_total`, `aegis_questions_detected_total`, `aegis_hints_emitted_total`, `aegis_engine_budget_bytes_used`, `aegis_engine_sessions_active`, and others.
 - **Logging**: structured JSON logs with compile-time PII redaction (ADR-0005 R3). In Cloud mode, logs route to CloudWatch via FluentBit; in Local mode, logs go to stdout.
-- **Dashboards and alerts**: landing-zone repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
+- **Dashboards and alerts**: `aegis-aws-landing-zone` repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
 
 #### 10.7 Secrets and Credentials
 

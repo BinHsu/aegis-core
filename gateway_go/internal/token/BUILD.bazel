@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "token",
+    srcs = ["jwt.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/token",
+    visibility = ["//gateway_go:__subpackages__"],
+    deps = [
+        "@com_github_golang_jwt_jwt_v5//:jwt",
+    ],
+)
+
+go_test(
+    name = "token_test",
+    size = "small",
+    srcs = ["jwt_test.go"],
+    embed = [":token"],
+    deps = [
+        "@com_github_golang_jwt_jwt_v5//:jwt",
+    ],
+)

@@ -5,6 +5,13 @@
 # Bazel recognizes the repo root as a package and so the root-level
 # .bazelrc's %workspace% substitution resolves correctly.
 #
+# The //:app_local alias below is the CLAUDE.md Rule 3 single-command
+# entrypoint ("Anyone downloading this must be able to compile and run
+# it locally with minimal struggle"). Run:
+#
+#   ./tools/scripts/download_models.sh   # one-time, pulls ggml-tiny.en.bin
+#   ./tools/bazelisk/bazelisk run //:app_local
+#
 # No //:gazelle target is defined here. An earlier experiment added one
 # but gazelle's auto-generation rewrote hand-maintained load paths using
 # the old @io_bazel_rules_go repo name (invalid in our bzlmod setup) and
@@ -15,3 +22,9 @@
 # In the meantime, Go tooling on this repo is handled by:
 #   tools/scripts/go.sh        — hermetic `go` via the Bazel-managed SDK
 #   tools/scripts/go_check.sh  — run `go fmt` + `go vet` across go.work modules
+
+alias(
+    name = "app_local",
+    actual = "//gateway_go/cmd/app_local:app_local",
+    visibility = ["//visibility:public"],
+)

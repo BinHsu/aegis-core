@@ -58,6 +58,6 @@ go_proto_library(
         "@rules_go//proto:go_proto",     # message types
         "@rules_go//proto:go_grpc_v2",   # gRPC service stubs
     ],
-    importpath = "github.com/BinHsu/aegis-core/gen/go/aegis/v1",
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1",
     proto = ":aegis_proto",
 )

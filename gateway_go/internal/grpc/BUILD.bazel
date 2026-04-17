@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "grpc",
+    srcs = ["gateway_service.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/grpc",
+    visibility = ["//gateway_go:__subpackages__"],
+    deps = [
+        # Bazel-authoritative proto codegen per ADR-0013.
+        "//proto/aegis/v1:aegis_go_proto",
+        "//gateway_go/internal/session",
+        "//gateway_go/internal/token",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//types/known/durationpb",
+        "@org_golang_google_protobuf//types/known/timestamppb",
+    ],
+)
+
+go_test(
+    name = "grpc_test",
+    size = "small",
+    srcs = ["gateway_service_test.go"],
+    embed = [":grpc"],
+    deps = [
+        "//proto/aegis/v1:aegis_go_proto",
+        "//gateway_go/internal/session",
+        "//gateway_go/internal/token",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_grpc//test/bufconn",
+    ],
+)

@@ -6,7 +6,8 @@ cc_binary(
     deps = [
         "//engine_cpp/src/grpc:aegis_engine_service",
         "//engine_cpp/src/inference:whisper_engine",
-        "//engine_cpp/src/session:resource_budget",
+        "//engine_cpp/src/session:model_budget",
+        "//engine_cpp/src/session:session_budget",
         "@com_github_grpc_grpc//:grpc++",
     ],
 )

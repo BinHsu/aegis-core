@@ -5,7 +5,7 @@
 // 1-session-1-thread — the grpc-cpp sync server dispatches each
 // bidi stream onto its own thread, and the Session object lives on
 // that thread's stack. When the stream closes, ~Session runs, which
-// releases the ResourceBudget reservation and tears down the
+// releases the SessionBudget reservation and tears down the
 // WhisperEngine. No shared state, no reference counting.
 //
 // The state machine is driven from the IngestMessage oneof per
@@ -22,6 +22,13 @@
 //                               (batched transcription happens on
 //                               END_STREAM for Phase 1; incremental
 //                               emission is Session 5+)
+//     - OpusChunk             → lazy-init an OpusDecoder on first
+//                               packet, decode to 16 kHz mono float
+//                               PCM, append to ring buffer. Per
+//                               ADR-0016, codec work lives here, not
+//                               in the gateway. A single corrupt
+//                               frame is logged-and-dropped, not
+//                               fatal to the session.
 //     - ControlEvent PAUSE    → transition to Paused
 //     - ControlEvent RESUME   → no-op (already active)
 //     - ControlEvent END      → flush + emit TranscriptSegment(s)
@@ -29,7 +36,7 @@
 //     - SessionStart          → INVALID_ARGUMENT (duplicate)
 //
 //   [Paused]
-//     - PcmChunk              → drop (host's audio is frozen per
+//     - PcmChunk / OpusChunk  → drop (host's audio is frozen per
 //                               ADR-0006 WebRTC Disconnected state)
 //     - ControlEvent RESUME   → transition to Active
 //     - ControlEvent END      → flush what we have; return OK
@@ -51,11 +58,11 @@
 
 namespace aegis::session {
 
-class ResourceBudget;
+class SessionBudget;
 
 class Session {
 public:
-  Session(ResourceBudget *budget, const std::string &model_path) noexcept;
+  Session(SessionBudget *budget, const std::string &model_path) noexcept;
   ~Session() = default;
 
   // Drive the state machine to completion. Returns absl::OkStatus on
@@ -71,7 +78,7 @@ public:
   Session &operator=(Session &&) = delete;
 
 private:
-  ResourceBudget *budget_; // not owned
+  SessionBudget *budget_; // not owned
   std::string model_path_;
 };
 

@@ -28,7 +28,7 @@
 #include "absl/strings/ascii.h"
 #include "engine_cpp/src/audio/wav_reader.h"
 #include "engine_cpp/src/grpc/aegis_engine_service.h"
-#include "engine_cpp/src/session/resource_budget.h"
+#include "engine_cpp/src/session/session_budget.h"
 #include "grpcpp/grpcpp.h"
 #include "proto/aegis/v1/aegis.grpc.pb.h"
 #include "gtest/gtest.h"
@@ -88,7 +88,7 @@ TEST(StreamTranscribeTest, JfkEndToEnd) {
   }
 
   // Set up in-process gRPC server with our real service.
-  session::ResourceBudget budget(1024ULL * 1024 * 1024); // 1 GiB test cap
+  session::SessionBudget budget(1024ULL * 1024 * 1024); // 1 GiB test cap
   AegisEngineServiceImpl service(&budget, model_path);
 
   ::grpc::ServerBuilder builder;
@@ -169,7 +169,7 @@ TEST(StreamTranscribeTest, JfkEndToEnd) {
 }
 
 TEST(StreamTranscribeTest, FirstMessageMustBeSessionStart) {
-  session::ResourceBudget budget(1024ULL * 1024 * 1024);
+  session::SessionBudget budget(1024ULL * 1024 * 1024);
   AegisEngineServiceImpl service(&budget, "/no/such/model"); // unused
 
   ::grpc::ServerBuilder builder;

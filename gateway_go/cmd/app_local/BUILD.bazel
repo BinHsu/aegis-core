@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_binary")
+
+# Local-mode launcher. `bazel run //:app_local` (root alias) resolves
+# here, spawning the engine + gateway as child processes.
+#
+# Both child binaries are pulled in as `data` so they're present in the
+# runfiles tree; runfiles.Rlocation inside main.go looks them up via
+# their apparent workspace-relative paths.
+go_binary(
+    name = "app_local",
+    srcs = ["main.go"],
+    data = [
+        "//engine_cpp/cmd/engine",
+        "//gateway_go/cmd/gateway",
+    ],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/cmd/app_local",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//proto/aegis/v1:aegis_go_proto",
+        "@rules_go//go/runfiles",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)

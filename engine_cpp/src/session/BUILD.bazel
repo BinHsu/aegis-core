@@ -1,9 +1,15 @@
 package(default_visibility = ["//engine_cpp:__subpackages__"])
 
 cc_library(
-    name = "resource_budget",
-    srcs = ["resource_budget.cc"],
-    hdrs = ["resource_budget.h"],
+    name = "model_budget",
+    srcs = ["model_budget.cc"],
+    hdrs = ["model_budget.h"],
+)
+
+cc_library(
+    name = "session_budget",
+    srcs = ["session_budget.cc"],
+    hdrs = ["session_budget.h"],
     deps = [
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -15,7 +21,8 @@ cc_library(
     srcs = ["session.cc"],
     hdrs = ["session.h"],
     deps = [
-        ":resource_budget",
+        ":session_budget",
+        "//engine_cpp/src/audio:opus_decoder",
         "//engine_cpp/src/inference:whisper_engine",
         "//proto/aegis/v1:aegis_cc_grpc",
         "//proto/aegis/v1:aegis_cc_proto",
