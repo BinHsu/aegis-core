@@ -8,6 +8,7 @@
    * Do NOT guess. If you do not know how to implement something, explicitly say "I do not know."
    * Do NOT hallucinate progress. If you did not execute a step, explicitly say you did not execute it.
    * If you notice your token output limits approaching, STOP your work securely and warn the user. Do not rush, do not cut corners, do not lie to finish early.
+   * When verifying CI status, inspect **EVERY job** in the workflow run, not just the one you happened to be watching or the one that usually matters (e.g., the Bazel build job). A single failing job turns the whole run red — claiming "CI green" based on one job's log when another job silently failed is hallucinating progress. Check `gh run view <id>` for the full job matrix, or explicitly grep for both passing and failing signals (`✓` AND `X`) before reporting status to the user.
 
 2. **Testing Integrity**
    * Code must have legitimate tests. Do NOT write stub tests that just `return true` or `assert(1 == 1)` to get a green light. Real inputs must produce verifiable real outputs.
