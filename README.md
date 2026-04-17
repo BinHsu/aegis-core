@@ -83,15 +83,19 @@ this V2 is a ground-up enterprise rewrite.
 
 ## Status
 
-**Pre-release.** Architecture and governance complete; Phase 1
-implementation in progress.
+**Pre-release.** Phases 0–1 complete; Phase 2 shipped in full;
+Phase 3a (platform foundations) done; Phase 3b (engine RAG inference)
+substantially landed through Slice 6 with only the validation
+experiment remaining; Phase 3c (host UI) gated on 3b.
 
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 0** | Architecture, ADRs, threat model, CI/CD governance | ✅ Complete |
 | **Phase 1** | Bazel monorepo, proto contracts, C++ engine + whisper.cpp + StreamTranscribe, Go Gateway skeleton, Vite/React frontend with provider abstractions | ✅ Done |
 | **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1–A5 shipped; a few items deliberately descoped — see [Known Gaps](#known-gaps-phase-2) below |
-| **Phase 3** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed |
+| **Phase 3a** | Platform foundations (hermetic Node via `aspect_rules_js`, Opus-on-engine, gateway N:N topology, RAG corpus pipeline, engine-owned inference) | ✅ Done |
+| **Phase 3b** | Engine RAG inference: shared ggml runtime, GGMLEmbedder (bge-m3), Qdrant C++ client, `engine seed` subcommand, cloud-cache strategy (ADR-0014 β/δ) | 🚧 Slices 1–6 landed; validation experiment (Slice 7, FP16 cos-sim ≥ 0.95) pending |
+| **Phase 3c** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed; gated on Phase 3b |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
 

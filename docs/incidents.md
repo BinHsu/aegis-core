@@ -1042,6 +1042,136 @@ version-string parity is *not* sufficient.
 
 ---
 
+## Incident 11 — grpc `cc_grpc_library` + `strip_import_prefix` = virtual_imports protoc path mismatch
+
+**Date**: 2026-04-17  **Severity**: S3  **Duration**: ~40 min end-to-end (three failed structural attempts → pivot to checked-in protos)
+**Related commit**: Phase 3b Slice 5 (PR #15 — should have been added at the time per Rule 7; retroactively recorded per session-close marker)
+
+### Symptom
+
+Attempting to vendor Qdrant's proto tree via `http_archive` + a
+same-package `cc_grpc_library` produced two different protoc
+failures in succession, each looking like a different problem:
+
+**Attempt 1 — consumer-package `cc_grpc_library`**:
+
+```
+ERROR: in _generate_cc rule //engine_cpp/third_party/qdrant:_qdrant_cc_grpc_grpc_codegen:
+  fail: 'bazel-out/darwin_arm64-fastbuild/bin/external/_main~_repo_rules~qdrant/_virtual_imports/qdrant_proto/collections.proto'
+  does not lie within 'engine_cpp/third_party/qdrant'.
+```
+
+**Attempt 2 — move `cc_grpc_library` into the external archive's BUILD**:
+
+```
+protoc failed: Could not make proto path relative:
+  external/_main~_repo_rules~qdrant/_virtual_imports/qdrant_proto/collections.proto:
+  No such file or directory
+```
+
+### Root cause
+
+Two overlapping quirks that look like one bug:
+
+1. grpc's `cc_grpc_library` rule requires its `srcs` proto_library
+   to sit in the SAME Bazel package as the rule itself. Splitting
+   the proto_library (in the external archive's BUILD) from the
+   cc_grpc_library (in a consumer wrapper BUILD) fails at the
+   analysis phase with "does not lie within" — hence attempt 1.
+2. When proto_library uses `strip_import_prefix` (to preserve
+   Qdrant's `import "qdrant_common.proto";` bare-filename internal
+   imports), Bazel creates a `_virtual_imports/<library>/` tree
+   and routes protoc invocations through it. grpc's
+   `grpc_cpp_plugin` reads the source path DIRECTLY (not through
+   the virtual mapping), so the protoc invocation fails with
+   "Could not make proto path relative" — attempt 2.
+
+Each attempt surfaces a different-looking error, and the two
+errors do not obviously share a root until you realize both
+trace back to the combination of `strip_import_prefix` +
+`cc_grpc_library` on an external-repo proto_library. A
+single-file proto_library (like our `proto/aegis/v1/aegis.proto`)
+never triggers either quirk because it has no inter-proto
+imports needing strip_import_prefix.
+
+### Detection
+
+The second failure's "No such file or directory" under
+`_virtual_imports/` was the load-bearing signal — virtual imports
+are a Bazel synthesis, not a filesystem fact, so protoc expecting
+to stat the path means it's receiving the Bazel-internal layout
+rather than a resolved filesystem path. Once that was visible,
+grepping the grpc/bazel/generate_cc.bzl source (available in the
+external repo cache) confirmed the plugin does not consult
+`-I` paths the way bazel's native proto_library does.
+
+### Resolution
+
+**Pivot away from http_archive vendoring entirely**. Check the six
+Qdrant proto files directly into `proto/qdrant/v1.17.1/` with an
+in-tree BUILD.bazel. The checked-in layout does not need
+`strip_import_prefix` because the protos sit at a Bazel package
+root where bare-filename imports resolve naturally. Upgrade
+procedure + provenance (upstream commit, tarball SHA-256, license)
+captured in `proto/qdrant/v1.17.1/PROVENANCE.md` — `MODULE.bazel`
+carries a brief comment explaining why http_archive was rejected.
+
+Secondary refinement once the protos were checked in: a single
+combined proto_library with six srcs passed cc_proto_library but
+STILL failed cc_grpc_library's strict public-import check
+("`X` seems to be defined in `collections.proto`, which is not
+imported by `collections_service.proto`"). Fix: split into one
+proto_library per file with explicit inter-proto `deps`, then one
+cc_grpc_library per service proto, then a thin `cc_library` umbrella
+(`qdrant_cc_grpc`) aggregating both service grpc libs for downstream
+convenience.
+
+### Prevention
+
+- The in-tree vendor pattern (`proto/<vendor>/<version>/`) is now
+  the default for third-party protos with inter-proto imports.
+  `PROVENANCE.md` + `MODULE.bazel` comment block together point
+  any future contributor at this incident.
+- `buf.yaml` gains `excludes: [proto/qdrant]` so the vendored tree
+  is not lint-gated by our STANDARD config — upstream protos
+  follow upstream's conventions, not ours.
+- Because the grpc plugin's virtual_imports handling is an upstream
+  Bazel/grpc interaction we cannot easily fix, no new CI check is
+  warranted; the in-tree pattern avoids the class of bug entirely.
+- ADR-0021 P3's "integration-test link check" in CI still catches
+  different-but-related drift (shared ggml version mismatches); no
+  additional gate needed for the proto-vendor flavor.
+
+### Lessons
+
+1. **Bazel's proto virtualization is load-bearing but leaky.**
+   `strip_import_prefix` works cleanly with native
+   `cc_proto_library` because protobuf's protoc invocation follows
+   Bazel's `-I` plumbing. It breaks with `cc_grpc_library` because
+   grpc's codegen plugin has its own path resolution. Mixing the
+   two on an external-repo proto_library is a supported-sounding
+   configuration that isn't actually robust. Diagnostics are
+   misleading because each wrong setup fails at a different layer.
+2. **The cost/benefit of "vendor via `http_archive`" collapses for
+   tiny proto-only trees.** Qdrant's six .proto files are ~few
+   thousand lines total, text, and bumping them is a readable
+   git diff instead of an opaque SHA change. Reserve `http_archive`
+   for trees where build-time access to source is load-bearing
+   (whisper.cpp, ggml, llama.cpp — all of which have
+   `rules_foreign_cc` cmake steps that need the source).
+3. **Rule 7's session-close discipline is about honesty across
+   sessions, not just within one.** This postmortem should have
+   been written in the PR #15 session per Rule 7's ≥15min + ≥2
+   failed-attempts criteria. It was skipped because the session's
+   energy was on "ship Slice 5" rather than "record what just
+   hurt." Adding the `session-close-review` marker to
+   `docs/incidents.md` (this session) is the mechanism to prevent
+   that omission from recurring — the marker's grep will fire at
+   every future session close, not just the one where the
+   incident happened.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a
