@@ -1,7 +1,7 @@
 # 🗺️ Aegis Core (V2) — Roadmap
 
 **Current Status**: Architecture design complete; implementation bootstrapping pending.
-**Last Updated**: 2026-04-11
+**Last Updated**: 2026-04-17
 
 This roadmap reflects the architectural decisions captured in
 `ARCHITECTURE.md` and the ADRs in `docs/adr/`. Before working on any
@@ -252,9 +252,14 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 Driven by ADR-0020. Out-of-3b exit criterion: `engine --seed --corpus docs/rag/taiwan.md --target=local` writes a working Qdrant collection, and an in-engine query returns semantically relevant chunks for an English / Japanese / Chinese test query against the zh-TW corpus.
 
 - [x] `engine_cpp/src/inference/embedder.h` — abstract `Embedder` interface (Embed(text) → vector) — Slice 1 (`0a9b4a7`)
-- [ ] `engine_cpp/src/inference/ggml_embedder.{h,cc}` — default impl loading `BAAI/bge-m3` Q4_K_M GGUF via the existing ggml runtime
-- [ ] `engine_cpp/third_party/bge_m3/` — `http_archive` wrapper pinning the GGUF upstream (sha256 + mirror per ADR-0009 pattern)
+- [x] **ADR-0021 shared ggml plumbing** — one ggml build consumed by both whisper.cpp and llama.cpp via `USE_SYSTEM_GGML` — Slice 3 (`7cd00e1`)
+- [x] `engine_cpp/src/inference/ggml_embedder.{h,cc}` — default impl loading `BAAI/bge-m3` Q4_K_M GGUF via the shared ggml runtime through llama.cpp's C API — Slice 3 (`33f8eb7`)
+- [x] bge-m3 Q4_K_M pinned in `models/manifest.json` with real SHA-256 (438 MB, `lm-kit/bge-m3-gguf`); fetched via `./tools/scripts/download_models.sh --model bge-m3-q4km` (manifest-driven, consistent with Phase 1 whisper-tiny pattern — ADR-0021 implementation note supersedes the earlier `third_party/bge_m3/` http_archive sketch, since runtime-loaded weights do not need Bazel build-time visibility) — Slice 4
 - [x] C++ markdown chunker with the ADR-0019 §Decision.2 separator list (`\n\n`, `\n`, `。`, `！`, `？`, `，`, space); target chunk size ~450 chars, overlap ~80 — Slice 2 (`e1d23f0`)
+- [x] `GGMLEmbedder` integration test with real bge-m3 weights — asserts dim == 1024, L2-normalized output, and related-pair cos-sim > unrelated-pair (English + Traditional Chinese) — Slice 4 (`engine_cpp/tests/integration/bge_m3_embed_test.cc`)
+- [x] **ADR-0021 P3 CI version-match check** — `tools/scripts/check_ggml_versions.sh` (grep layer) + `bazel build //engine_cpp/tests/integration/...` in CI (link layer); two-layer design catches both "numbers diverged" and "same number, divergent source" drift per incident-10 — Slice 4
+- [x] **ADR-0021 P4 upgrade SOP** — `CONTRIBUTING.md §Upgrading the ggml triple` documents the triple-bump procedure, PR convention (`deps(ggml-triple):`), and what to do when the drift check fails — Slice 4
+- [x] **ggml triple bump** to v0.9.9 to unblock llama.cpp b8595's `gguf_*_ptr` symbols (incident-10 resolution) — Slice 4
 - [ ] Qdrant C++ client wired (direct gRPC stubs generated from [Qdrant's proto](https://github.com/qdrant/qdrant/tree/master/lib/api/src/grpc/proto))
 - [ ] `engine --seed --corpus PATH --target={local|cloud}` subcommand in `engine_cpp/cmd/engine/`; cloud target reads `QDRANT_URL` + `QDRANT_API_KEY` from env
 - [ ] **Validation experiment**: load the Taiwan corpus via FlagEmbedding reference (scratch Python, not committed) + `GGMLEmbedder`; assert mean cos-sim ≥ 0.95 across all chunks. Scratch Python deleted after validation.
