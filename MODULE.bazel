@@ -58,12 +58,43 @@ bazel_dep(name = "googletest", version = "1.17.0", dev_dependency = True, repo_n
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║ VERSION-COUPLED TRIPLE — ggml / whisper.cpp / llama.cpp         ║
+# ║                                                                  ║
+# ║ These three deps share one ggml runtime (ADR-0021).              ║
+# ║ They MUST be upgraded together. Never bump one without           ║
+# ║ verifying the other two are compatible.                          ║
+# ║                                                                  ║
+# ║ Current pin: ggml v0.9.8                                        ║
+# ║   whisper.cpp v1.8.4 — bundles ggml 0.9.8                       ║
+# ║   llama.cpp b8595    — bundles ggml 0.9.8                       ║
+# ║                                                                  ║
+# ║ Upgrade SOP: CONTRIBUTING.md §Upgrading ggml triple              ║
+# ║ Dependabot: excluded (see .github/dependabot.yml)                ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+http_archive(
+    name = "ggml",
+    build_file = "//engine_cpp/third_party/ggml:ggml.BUILD",
+    sha256 = "9d8b38e473697e9014ea2275fadb4ed5c247b1ca82404875fe5ac336c0d0754c",
+    strip_prefix = "ggml-0.9.8",
+    urls = ["https://github.com/ggml-org/ggml/archive/refs/tags/v0.9.8.tar.gz"],
+)
+
 http_archive(
     name = "whisper_cpp",
     build_file = "//engine_cpp/third_party/whisper_cpp:whisper_cpp.BUILD",
     sha256 = "b26f30e52c095ccb75da40b168437736605eb280de57381887bf9e2b65f31e66",
     strip_prefix = "whisper.cpp-1.8.4",
     urls = ["https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.4.tar.gz"],
+)
+
+http_archive(
+    name = "llama_cpp",
+    build_file = "//engine_cpp/third_party/llama_cpp:llama_cpp.BUILD",
+    sha256 = "0204ae003b6396717324f8bfa556f94d95efb6bb9e50e0b02a895f8022fcb66e",
+    strip_prefix = "llama.cpp-b8595",
+    urls = ["https://github.com/ggml-org/llama.cpp/archive/refs/tags/b8595.tar.gz"],
 )
 
 # libopus — ADR-0016. The engine decodes Opus frames received over

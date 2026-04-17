@@ -1,0 +1,17 @@
+# engine_cpp/third_party/llama_cpp/BUILD.bazel
+#
+# Consumer-facing wrapper for llama.cpp (ADR-0021). Depends on the
+# shared ggml target so consumers get one copy of all symbols.
+
+package(default_visibility = ["//engine_cpp:__subpackages__"])
+
+exports_files(["llama_cpp.BUILD"])
+
+cc_library(
+    name = "llama_cpp",
+    deps = [
+        "//engine_cpp/third_party/ggml",
+        "@llama_cpp//:llama_cpp_cmake",
+    ],
+    visibility = ["//visibility:public"],
+)
