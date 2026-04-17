@@ -302,6 +302,67 @@ turn the same compromise into full AWS account escalation. The
 per-repo dedicated role is the forcing function that keeps blast
 radius bounded to the cache tier.
 
+### δ prerequisites — implementation status (2026-04-17)
+
+Cross-repo coordination resolved same-day via
+[landing-zone #72](https://github.com/BinHsu/aegis-aws-landing-zone/issues/72)
+(cross-repo/blocking) → ldz PR #74 merged to main.
+
+Provisioned via Terraform (code merged; live ARNs available after
+the next `terraform-apply-baseline.yml` run on ldz side):
+
+| Resource | Name | Terraform output |
+| --- | --- | --- |
+| ECR push role | `github-actions-aegis-core-ecr` | `aegis_core_ecr_role_arn` |
+| S3 cache role | `github-actions-aegis-core-cache` | `aegis_core_cache_role_arn` |
+| S3 cache bucket | `aegis-staging-bazel-cache-251774439261` | `bazel_cache_bucket_name` |
+
+Trust policy and inline policies implemented exactly per the spec
+above for both roles. The `github-actions-terraform` role's trust
+policy no longer references any `repo:BinHsu/aegis-core:*` subject
+(one accidental re-addition in PR #73 was reverted before merge).
+
+### Accepted deviation from §4 bucket config
+
+**Versioning**: this ADR requested OFF; ldz PR #74 chose ON.
+
+**Accepted.** Cost delta is on the order of $1–2/month for a
+cache-scale bucket (cache keys are content-addressable SHA-prefixed,
+so the working set does not accumulate many historical versions —
+lifecycle rule expires noncurrent versions along with current on
+the same 14-day window). Correctness is not impacted. Raising a
+follow-up coordination round to flip this one bit would cost more
+in round-trip time than the deviation costs per year. The lesson for
+future spec authors: pin the bits that affect correctness and
+security tightly; leave "preference" bits (cost, posture parity) as
+guidance unless the delta justifies another round of coordination.
+
+### Phase 4d β→δ migration — what's left after this
+
+The migration from Option β (BuildBuddy Personal) to Option δ (S3 +
+OIDC) is now purely an aegis-core-side CI workflow change. The
+landing-zone infrastructure is pre-provisioned and will be live
+after ldz's next Terraform apply. When the migration trigger fires
+(most likely T1 — `aegis-aws-landing-zone` shipping its AWS OIDC
+trust policy for Cosign / ECR / EKS deploy, which this PR #74
+effectively satisfies), the aegis-core side needs:
+
+- `permissions: id-token: write` in the `bazel-unit-tests` job
+- `aws-actions/configure-aws-credentials` action step with
+  `role-to-assume: <aegis_core_cache_role_arn from ldz outputs>`
+- A small credential helper script under `tools/scripts/` that
+  signs S3 HTTP requests with SigV4 using the assumed role's
+  short-lived creds
+- Swap `--remote_cache=grpcs://remote.buildbuddy.io` for the S3
+  HTTP cache URL (`https://<bucket>.s3.<region>.amazonaws.com` with
+  `--credential_helper` pointing at the signer script)
+- Pull the `BUILDBUDDY_API_KEY` secret from the workflow
+- Delete the old BuildBuddy API key at
+  <https://app.buildbuddy.io/settings/org/api-keys>
+
+Total blast radius: one workflow file + one new script. Estimated
+wiring time: half a day once the trigger fires.
+
 ### What α and γ become
 
 - **Option α** (`actions/cache` only) is retained as the
