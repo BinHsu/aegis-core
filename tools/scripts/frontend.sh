@@ -87,6 +87,12 @@ export PATH="$NODE_BIN_DIR:$PATH"
 # exits immediately with FATAL: BAZEL_BINDIR must be set.
 export BAZEL_BINDIR="."
 
+# Playwright browsers must be repo-local per CLAUDE.md Rule 6
+# (hermetic toolchains — nothing touches ~/.cache or system dirs).
+# Every `e2e` / `e2e:install` invocation therefore points Playwright
+# at a .playwright-browsers/ directory inside the repo, gitignored.
+export PLAYWRIGHT_BROWSERS_PATH="$REPO_ROOT/.playwright-browsers"
+
 cmd="${1:-help}"
 shift || true
 
@@ -96,7 +102,7 @@ case "$cmd" in
     # (currently just frontend_web/) get their deps.
     exec "$PNPM_BIN" --dir "$REPO_ROOT" install "$@"
     ;;
-  dev|build|typecheck|preview)
+  dev|build|typecheck|preview|e2e|e2e:install)
     # Every other "named" command delegates to pnpm scripts inside
     # frontend_web's package.json.
     exec "$PNPM_BIN" --dir "$REPO_ROOT/frontend_web" run "$cmd" "$@"
@@ -111,6 +117,11 @@ Commands:
   build                   Production build → frontend_web/dist/.
   typecheck               Run tsc --noEmit across the frontend tree.
   preview                 Preview the production build locally.
+  e2e                     Run Playwright live-browser smoke tests
+                          (chromium + webkit). Spawns its own dev
+                          server per playwright.config.ts#webServer.
+  e2e:install             One-time browser binary download into
+                          ./.playwright-browsers/ (repo-local).
   <anything else>         Passed through to pnpm with --dir frontend_web.
 
 Every invocation uses the Bazel-managed Node toolchain; host Node

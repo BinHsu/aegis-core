@@ -237,6 +237,62 @@ jobs:
         run: ./tools/scripts/check_frontend_tauri_compliance.sh
 
   # ---------------------------------------------------------------------------
+  # Live-browser smoke (Playwright) — Phase 3c Slice 6. Runs the frontend
+  # in real chromium + webkit engines via Playwright so UI-level
+  # regressions cannot hide behind jsdom approximations. Rooted in
+  # Incident 09's lesson: loopback/mock tests silently passed while
+  # every real-browser Opus frame failed to decode.
+  #
+  # Browsers are kept out of actions/cache at the global user dir;
+  # PLAYWRIGHT_BROWSERS_PATH is pinned to a repo-local path matching
+  # tools/scripts/frontend.sh so the cache key can live in-repo.
+  # ---------------------------------------------------------------------------
+  frontend-e2e-smoke:
+    name: Frontend live-browser smoke (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.playwright-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Cache Bazel (Node toolchain)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.bazel_cache
+            ${{ github.workspace }}/.bazelisk
+          key: bazel-e2e-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion') }}
+          restore-keys: |
+            bazel-e2e-${{ runner.os }}-
+
+      - name: Install frontend deps (hermetic pnpm)
+        run: ./tools/scripts/frontend.sh install
+
+      - name: Install Playwright browsers
+        run: ./tools/scripts/frontend.sh e2e:install
+
+      - name: Run Playwright smoke
+        run: ./tools/scripts/frontend.sh e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend_web/playwright-report/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
   # Documentation link check — basic sanity for internal cross-references.
   # Uses a lightweight action; does not fail the build on external link
   # timeouts (those are noisy).
