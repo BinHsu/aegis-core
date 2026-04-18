@@ -121,6 +121,59 @@ technical team can verify.
 
 ---
 
+## Governance posture — GitOps, DevSecOps, FinOps (verifiable row-by-row)
+
+Three frameworks your platform / security / finance stakeholders will
+ask about. Each table below maps the principle to the **specific
+file or ADR** that realises it. No hand-waving — click through and
+verify.
+
+### GitOps — repo is the source of truth; every change is a reviewable diff
+
+| Principle                                | How this repo realises it                                                                                         | Artifact                                                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Declarative system state                 | Every build, dep, and codegen step declared in Bazel; no host-installed tooling allowed to influence the outcome. | `MODULE.bazel`, `CLAUDE.md` Rule 6, `ADR-0008`, `ADR-0015`                                            |
+| Architecture decisions as code-reviewed artefacts | ADRs are PR'd and committed before the code they govern; deprecated choices get superseding ADRs, not quiet rewrites. | `docs/adr/0001` … `docs/adr/0024`                                                                     |
+| Roadmap + Known Gaps in the tree, not in a wiki | Release horizon + deliberate-omission list live in git so they diff with the code they describe.                  | `ROADMAP.md`, `README.md` §"Known Gaps"                                                               |
+| Conventional Commits, signed, `--force-scope` | Pre-commit hook rejects non-Conventional, non-signed, or scopeless messages — no ad-hoc history.                  | `.pre-commit-config.yaml` (conventional-pre-commit `--force-scope`), `docs/github-setup.md` §0.5      |
+| PR-gated CI as merge criterion           | 8-job matrix (lint, codegen drift, secrets, proto, Bazel tests, Tauri-compliance, Playwright, link-check) blocks merge. | `.github/workflows/ci-baseline.yml`                                                                    |
+| Reproducible-clone promise               | `bazelisk` wrapper + `.bazelrc` `--output_user_root=./.bazel_cache` + hermetic Node + repo-local Playwright browsers. | `tools/bazelisk/bazelisk`, `.bazelrc`, `tools/scripts/frontend.sh`, `ADR-0015`                         |
+| Cross-repo coordination is also a diff   | Platform dependencies requested of the landing-zone repo via labelled GitHub issues, not Slack DMs.               | `gh issue #11` (cross-repo standing), `docs/github-setup.md`                                          |
+
+### DevSecOps — security is a pipeline stage, not a late-stage audit
+
+| Principle                                 | How this repo realises it                                                                                          | Artifact                                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Secrets never land in commits             | Gitleaks runs at pre-commit **and** on every PR; `.gitignore` blocks `.env`, `*.pem`, `*.key`, `credentials.json`. | `.pre-commit-config.yaml` (gitleaks hook), `.github/workflows/ci-baseline.yml` (secret-scan job), `.gitignore` |
+| Known-pitfall auth tests                  | JWT `alg=none` downgrade is a specific unit test, not a review checkbox.                                           | `gateway_go/internal/token/jwt_test.go`, `gateway_go/internal/auth/auth_test.go`                     |
+| Privacy by design at the UI layer         | Speaker labels = closed curated list (no free-text) per GDPR Art. 25; enforced by reducer + compliance grep.       | `frontend_web/src/pages/Host/HostPage.tsx` (`CURATED_SPEAKER_LABELS`), `ARCHITECTURE.md` §9.2        |
+| Consent is auditable, not implicit        | Two-phase consent (audio + transcript-export) with stable record shape for the Phase-4 ledger drop-in.             | `ADR-0024`, `frontend_web/src/lib/consent.ts`, `frontend_web/src/components/*Consent*.tsx`           |
+| Ephemeral audio is a code invariant       | Seven binding requirements on the C++ engine; no "enable recording" toggle exists.                                 | `ADR-0005`, `ADR-0012`, `ARCHITECTURE.md` §9.1                                                       |
+| Cross-WebView compatibility gate          | ADR-0002 Constraints 1–6 enforced by a grep script; CI fails the PR on `chrome.*`, Service Worker, `SharedArrayBuffer`, `user-select: none` on transcript, etc. | `tools/scripts/check_frontend_tauri_compliance.sh`, `ADR-0002`                                       |
+| Live-browser regression guard             | Playwright chromium + webkit smoke tests the consent flow in real engines (Incident-09 lesson in code).            | `frontend_web/e2e/consent-smoke.spec.ts`, `docs/incidents.md` #09                                    |
+| Incident discipline                       | Dev-time postmortems with root cause + failed-attempt narrative; linked commit hashes; no marketing gloss.         | `docs/incidents.md`, `CLAUDE.md` Rule 7                                                              |
+
+### FinOps — spend awareness is an architectural decision, not a later optimisation
+
+| Principle                                | How this repo realises it                                                                                          | Artifact                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Demo horizon = near-zero idle cost       | In-memory session state (refresh = meeting ends); no always-on cache/DB for the demo tier.                         | `ADR-0023` Decision A, `gateway_go/internal/grpc/gateway_service.go`                                 |
+| Pay-per-query stateful tier              | DynamoDB On-Demand for the consent ledger when it lands; idle ≈ 0, billed only on real events.                     | `ADR-0022` (multi-tenancy + pricing choice), cross-repo dependency on `aegis-aws-landing-zone`       |
+| Remote-cache SaaS tier matches usage     | BuildBuddy Personal free tier for the demo; plan documented for S3+OIDC at production volume.                      | `ADR-0014` (Option β → Option δ), `docs/runbooks/buildbuddy-cache-setup.md`                          |
+| RAG retrieval is opt-in                  | Empty `rag_id` is first-class "no corpus" mode; no corpus → no embedding calls → no vector-DB query cost.          | `ADR-0023` Decision B, `proto/aegis/v1/aegis.proto` (`CreateMeetingRequest.rag_id`)                   |
+| Self-hosted vector store for the MVP     | Qdrant binary + storage dir live inside the repo; no managed SaaS billing until usage justifies it.                | `ADR-0019`, `docs/runbooks/qdrant-local-setup.md`                                                    |
+| Models pulled on demand, not baked in    | `models/` gitignored; SHA-verified downloads per build; no fat images shipping 75 MB of weights.                   | `.gitignore` §AI model artifacts, `ARCHITECTURE.md` §10.1                                            |
+| Skipped features = avoided spend         | Explicit no-biometric, no-voiceprint, no-durable-transcript decisions. The cheapest line item is the one you don't build. | `ADR-0012`, `ARCHITECTURE.md` §9.1, `ROADMAP.md` §"Known Gaps"                                   |
+| Engine owns inference (no Python runtime)| bge-m3 + Whisper run via llama.cpp C API inside the engine binary; no SageMaker endpoint on standby, no per-token API bill. | `ADR-0020`, `ADR-0021`, `engine_cpp/src/inference/ggml_embedder.cc`                                 |
+| Cloud infra cost evidence is in its own repo | Separation keeps Terraform / billing alerts / CUR dashboards out of the app repo's review surface.             | [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone) (linked throughout)     |
+
+These three tables are the short answer when a platform / security /
+finance reviewer asks "does this repo match our governance posture?".
+Each row is **falsifiable**: if the linked artefact doesn't back the
+claim, the claim is wrong and the table is the bug.
+
+---
+
 ## What I am *not* claiming
 
 I am being specific here because a mismatched hire is expensive for
