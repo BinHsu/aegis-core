@@ -47,6 +47,7 @@ import {
 } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
+import { AudioProcessingConsent } from "@/components/AudioProcessingConsent";
 import { gatewayClient } from "@/lib/gateway-client";
 import { auth } from "@/lib/auth";
 import {
@@ -120,6 +121,13 @@ interface ActiveMeeting {
   readonly subscription: Subscription;
   /** Rolling tail of transcript lines (oldest first). */
   readonly transcript: readonly TranscriptLine[];
+  /**
+   * Client-side render gate per ADR-0024 Decision B — true if the
+   * host explicitly opted into seeing the live transcript on this
+   * device for this meeting. Backend keeps transcribing regardless;
+   * this flag only controls what the host's browser renders.
+   */
+  readonly showTranscriptPanel: boolean;
 }
 
 interface TranscriptLine {
@@ -132,8 +140,19 @@ interface TranscriptLine {
 type HostState =
   | { kind: "loading-auth" }
   | { kind: "signed-out" }
-  | { kind: "ready"; principal: AuthPrincipal; ragId: string; title: string }
-  | { kind: "creating"; principal: AuthPrincipal }
+  | {
+      kind: "ready";
+      principal: AuthPrincipal;
+      ragId: string;
+      title: string;
+      /** Default OFF per ADR-0024 Decision B. Carried into ActiveMeeting on start. */
+      showTranscriptPanel: boolean;
+    }
+  | {
+      kind: "creating";
+      principal: AuthPrincipal;
+      showTranscriptPanel: boolean;
+    }
   | { kind: "active"; principal: AuthPrincipal; meeting: ActiveMeeting }
   | { kind: "ending"; principal: AuthPrincipal; meeting: ActiveMeeting }
   | { kind: "error"; principal: AuthPrincipal | null; message: string };
@@ -141,10 +160,14 @@ type HostState =
 type Action =
   | { type: "AUTH_RESOLVED"; principal: AuthPrincipal | null }
   | { type: "FORM_FIELD_CHANGED"; field: "ragId" | "title"; value: string }
+  | { type: "TRANSCRIPT_PANEL_TOGGLED"; value: boolean }
   | { type: "CREATE_REQUESTED" }
   | {
       type: "MEETING_STARTED";
-      meeting: Omit<ActiveMeeting, "transcript">;
+      // `showTranscriptPanel` comes from `state.showTranscriptPanel`
+      // (carried through `creating`), not from the action payload —
+      // the reducer wires it in on transition.
+      meeting: Omit<ActiveMeeting, "transcript" | "showTranscriptPanel">;
     }
   | { type: "TRANSCRIPT_LINE"; line: TranscriptLine }
   | { type: "END_REQUESTED" }
@@ -161,22 +184,35 @@ function reducer(state: HostState, action: Action): HostState {
         principal: action.principal,
         ragId: DEFAULT_RAG_ID,
         title: "",
+        showTranscriptPanel: false, // ADR-0024 Decision B: default OFF
       };
     }
     case "FORM_FIELD_CHANGED": {
       if (state.kind !== "ready") return state;
       return { ...state, [action.field]: action.value };
     }
+    case "TRANSCRIPT_PANEL_TOGGLED": {
+      if (state.kind !== "ready") return state;
+      return { ...state, showTranscriptPanel: action.value };
+    }
     case "CREATE_REQUESTED": {
       if (state.kind !== "ready") return state;
-      return { kind: "creating", principal: state.principal };
+      return {
+        kind: "creating",
+        principal: state.principal,
+        showTranscriptPanel: state.showTranscriptPanel,
+      };
     }
     case "MEETING_STARTED": {
       if (state.kind !== "creating") return state;
       return {
         kind: "active",
         principal: state.principal,
-        meeting: { ...action.meeting, transcript: [] },
+        meeting: {
+          ...action.meeting,
+          transcript: [],
+          showTranscriptPanel: state.showTranscriptPanel,
+        },
       };
     }
     case "TRANSCRIPT_LINE": {
@@ -215,7 +251,13 @@ function reducer(state: HostState, action: Action): HostState {
             ? state.principal
             : null;
       if (principal === null) return { kind: "signed-out" };
-      return { kind: "ready", principal, ragId: "", title: "" };
+      return {
+        kind: "ready",
+        principal,
+        ragId: "",
+        title: "",
+        showTranscriptPanel: false,
+      };
     }
     case "ERROR_RAISED": {
       // Carry forward the principal if we have one so the user lands
@@ -231,6 +273,7 @@ function reducer(state: HostState, action: Action): HostState {
         principal: state.principal,
         ragId: "",
         title: "",
+        showTranscriptPanel: false,
       };
     }
   }
@@ -479,9 +522,11 @@ export function HostPage(): JSX.Element {
     const isCreating = state.kind === "creating";
     const ragId = state.kind === "ready" ? state.ragId : DEFAULT_RAG_ID;
     const title = state.kind === "ready" ? state.title : "";
+    const showTranscriptPanel = state.showTranscriptPanel;
     return (
       <main>
         <Header principal={state.principal} />
+        <AudioProcessingConsent userId={state.principal.userId} />
         <h3>Start a new meeting</h3>
         <form
           onSubmit={(e) => {
@@ -528,6 +573,47 @@ export function HostPage(): JSX.Element {
               }
             />
           </label>
+
+          {/*
+            Transcript panel opt-in (ADR-0024 Decision B). Default
+            OFF. Turning ON shows the GDPR notice so the host
+            acknowledges the on-screen-data-exposure risk before the
+            transcript renders live.
+          */}
+          <fieldset disabled={isCreating} style={{ marginBottom: "1rem" }}>
+            <legend>Live transcript panel</legend>
+            <label style={{ display: "block", marginBottom: "0.25rem" }}>
+              <input
+                type="checkbox"
+                checked={showTranscriptPanel}
+                onChange={(e) =>
+                  dispatch({
+                    type: "TRANSCRIPT_PANEL_TOGGLED",
+                    value: e.target.checked,
+                  })
+                }
+              />{" "}
+              Show live transcript on this screen
+            </label>
+            {showTranscriptPanel && (
+              <p
+                style={{
+                  margin: "0.3rem 0 0 1.6rem",
+                  fontSize: "0.82rem",
+                  color: "#555",
+                  maxWidth: "44rem",
+                }}
+              >
+                Turning on the live transcript shows meeting content on your
+                screen. Aegis processes this data under GDPR Art. 6(1)(f)
+                (legitimate interests — operating the service you requested)
+                and, where participants' messages include special-category data,
+                Art. 9(2)(a) (your explicit consent to see it). You are
+                responsible for the physical security of your screen
+                (bystanders, recording devices) while the panel is visible.
+              </p>
+            )}
+          </fieldset>
 
           <fieldset disabled={isCreating} style={{ marginBottom: "1rem" }}>
             <legend>Audio source</legend>
@@ -595,6 +681,7 @@ export function HostPage(): JSX.Element {
   return (
     <main>
       <Header principal={state.principal} />
+      <AudioProcessingConsent userId={state.principal.userId} />
       <h3>Meeting active</h3>
 
       <section
@@ -641,7 +728,22 @@ export function HostPage(): JSX.Element {
             state: <code>{meeting.peer.connectionState}</code>
           </p>
           <h4 style={{ marginBottom: "0.25rem" }}>Live transcript (echo)</h4>
-          {meeting.transcript.length === 0 ? (
+          {/*
+            ADR-0024 Decision B render gate. When the host did not opt
+            in to the panel, we show a placeholder instead of the
+            transcript lines. The backend keeps transcribing either
+            way — this is purely a client-side visibility choice.
+            ADR-0024 Decision D also forbids disabling text selection
+            on the transcript (screenshots bypass it, breaks screen
+            readers); the compliance script enforces that rule.
+          */}
+          {!meeting.showTranscriptPanel ? (
+            <p style={{ color: "#888", fontStyle: "italic" }}>
+              Transcript display disabled for this meeting. Toggle on in the New
+              Meeting form to show transcript lines on this screen (default OFF
+              per consent posture).
+            </p>
+          ) : meeting.transcript.length === 0 ? (
             <p style={{ color: "#888", fontStyle: "italic" }}>
               Waiting for the first segment…
             </p>
