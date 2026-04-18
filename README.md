@@ -175,7 +175,7 @@ citing phase progress in prose elsewhere — it drifts.
 | **Phase 2** | Internal MVP, BFF wiring, WebRTC, WER golden-audio regression | 🚧 A1–A5 shipped; a few items deliberately descoped — see [Known Gaps](#known-gaps-phase-2) below |
 | **Phase 3a** | Platform foundations (hermetic Node via `aspect_rules_js`, Opus-on-engine, gateway N:N topology, RAG corpus pipeline, engine-owned inference) | ✅ Done |
 | **Phase 3b** | Engine RAG inference: shared ggml runtime, GGMLEmbedder (bge-m3), Qdrant C++ client, `engine seed` subcommand, cloud-cache strategy (ADR-0014 β/δ) | ✅ Done — all seven slices landed; Slice 7 validation PASS (mean cos-sim 0.9659 vs FP reference, threshold 0.95) |
-| **Phase 3c** | Pure-web host + viewer UIs (React + Vite) | 📋 Designed; gated on Phase 3b |
+| **Phase 3c** | Pure-web host + viewer UIs (React + Vite): provider scaffolding, RAG opt-in, consent flows (ADR-0024), curated speaker labels (ARCH §9.2), transcript export (MD + JSON), Playwright cross-WebView smoke | ✅ Done — Slices 1-6 landed; 8-job CI matrix (adds chromium + webkit live-browser gate) |
 | **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 📋 Designed |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
 
