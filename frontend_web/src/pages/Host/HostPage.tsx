@@ -48,8 +48,18 @@ import {
 import { QRCodeSVG } from "qrcode.react";
 
 import { AudioProcessingConsent } from "@/components/AudioProcessingConsent";
+import {
+  TranscriptExportConsentModal,
+  type TranscriptExportFormat,
+} from "@/components/TranscriptExportConsentModal";
 import { gatewayClient } from "@/lib/gateway-client";
 import { auth } from "@/lib/auth";
+import {
+  formatTranscriptJson,
+  formatTranscriptMarkdown,
+  suggestedFilename,
+  type TranscriptExportMeta,
+} from "@/lib/transcriptExport";
 import {
   CaptureError,
   type CaptureMode,
@@ -57,6 +67,10 @@ import {
   WebAudioCaptureProvider,
 } from "@/providers/AudioCaptureProvider";
 import type { AuthPrincipal } from "@/providers/AuthProvider";
+import {
+  pickFileSystemProvider,
+  type FileSystemProvider,
+} from "@/providers/FileSystemProvider";
 import {
   pickTranscriptStreamProvider,
   type Subscription,
@@ -138,7 +152,11 @@ interface ActiveMeeting {
   readonly capture: CaptureSession;
   readonly peer: RTCPeerConnection;
   readonly subscription: Subscription;
-  /** Rolling tail of transcript lines (oldest first). */
+  /** Host-chosen meeting title (free-text, not PII-sensitive). Used
+   *  in export metadata + filename suggestion. Empty string allowed. */
+  readonly title: string;
+  /** Full accumulated transcript (not trimmed). Display uses the
+   *  tail slice. Export uses the full array per ARCH §9.1. */
   readonly transcript: readonly TranscriptLine[];
   /**
    * Client-side render gate per ADR-0024 Decision B — true if the
@@ -179,6 +197,7 @@ type HostState =
   | {
       kind: "creating";
       principal: AuthPrincipal;
+      title: string;
       showTranscriptPanel: boolean;
     }
   | { kind: "active"; principal: AuthPrincipal; meeting: ActiveMeeting }
@@ -197,7 +216,7 @@ type Action =
       // the reducer wires it in on transition.
       meeting: Omit<
         ActiveMeeting,
-        "transcript" | "showTranscriptPanel" | "speakerOverrides"
+        "transcript" | "showTranscriptPanel" | "speakerOverrides" | "title"
       >;
     }
   | { type: "TRANSCRIPT_LINE"; line: TranscriptLine }
@@ -237,6 +256,7 @@ function reducer(state: HostState, action: Action): HostState {
       return {
         kind: "creating",
         principal: state.principal,
+        title: state.title,
         showTranscriptPanel: state.showTranscriptPanel,
       };
     }
@@ -247,6 +267,7 @@ function reducer(state: HostState, action: Action): HostState {
         principal: state.principal,
         meeting: {
           ...action.meeting,
+          title: state.title,
           transcript: [],
           showTranscriptPanel: state.showTranscriptPanel,
           speakerOverrides: {},
@@ -259,18 +280,20 @@ function reducer(state: HostState, action: Action): HostState {
       // overwritten by its final form. The id contains isFinal so
       // a finalized version naturally has a different key — handle
       // that by pruning prior interims of the same numeric segmentId.
+      //
+      // The host accumulates the FULL transcript per ARCH §9.1
+      // (host-local accumulation, browser memory only). The display
+      // tail (TRANSCRIPT_TAIL) is applied at render time. Export in
+      // Slice 5 needs the full history; a 4-hour meeting at ~1 seg/s
+      // is a few MB of UTF-8 — fine for browser memory.
       const numericId = action.line.id.split(":")[0];
       const filtered = state.meeting.transcript.filter(
         (l) => l.id.split(":")[0] !== numericId,
       );
       const next = [...filtered, action.line];
-      const trimmed =
-        next.length > TRANSCRIPT_TAIL
-          ? next.slice(next.length - TRANSCRIPT_TAIL)
-          : next;
       return {
         ...state,
-        meeting: { ...state.meeting, transcript: trimmed },
+        meeting: { ...state.meeting, transcript: next },
       };
     }
     case "SPEAKER_LABEL_ASSIGNED": {
@@ -351,6 +374,16 @@ export function HostPage(): JSX.Element {
   // Single AudioCaptureProvider for the page. Stateless across
   // start/stop cycles; safe to memoize.
   const captureProvider = useMemo(() => new WebAudioCaptureProvider(), []);
+  // FileSystemProvider (ADR-0002 Constraint 5) for transcript export.
+  // Web impl wraps Blob + anchor download today; Phase 4 swap to Tauri.
+  const fileSystem: FileSystemProvider = useMemo(
+    () => pickFileSystemProvider(),
+    [],
+  );
+
+  // Export-flow UI state — purely visual, not in the reducer.
+  const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // ──────────────────────────────────────────────────────────────────
   // Auth subscription. Local mode fires once with the synthetic
@@ -501,6 +534,50 @@ export function HostPage(): JSX.Element {
       }
     },
     [captureProvider],
+  );
+
+  // Export flow (ADR-0024 Decision C). The TranscriptExportConsentModal
+  // owns the acceptance gesture + audit record emit; this handler only
+  // runs once the user has confirmed. Formatting + save is synchronous
+  // enough (transcripts are at most a few MB of UTF-8) that a promise
+  // round-trip is fine without a spinner.
+  const performExport = useCallback(
+    async (format: TranscriptExportFormat, meeting: ActiveMeeting) => {
+      setExportError(null);
+      try {
+        const meta: TranscriptExportMeta = {
+          sessionId: meeting.sessionId,
+          userId:
+            state.kind === "active" || state.kind === "ending"
+              ? state.principal.userId
+              : "unknown",
+          title: meeting.title,
+          exportedAt: new Date().toISOString(),
+        };
+        const content =
+          format === "markdown"
+            ? formatTranscriptMarkdown(
+                meeting.transcript,
+                meeting.speakerOverrides,
+                meta,
+              )
+            : formatTranscriptJson(
+                meeting.transcript,
+                meeting.speakerOverrides,
+                meta,
+              );
+        const extension = format === "markdown" ? "md" : "json";
+        await fileSystem.saveAs({
+          suggestedName: suggestedFilename(meta, extension),
+          content,
+          format,
+        });
+        setExportModalOpen(false);
+      } catch (err) {
+        setExportError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [fileSystem, state],
   );
 
   const endMeeting = useCallback(async (active: ActiveMeeting) => {
@@ -820,36 +897,81 @@ export function HostPage(): JSX.Element {
                   })
                 }
               />
+              {/*
+                The transcript accumulates unbounded per ARCH §9.1 so
+                export can include the full history. Only the TAIL is
+                rendered on screen to match the Viewer-side
+                PROMPTER_WINDOW (5).
+              */}
               <ul style={{ paddingLeft: "1rem" }}>
-                {meeting.transcript.map((line) => {
-                  const displayLabel =
-                    meeting.speakerOverrides[line.speaker] ?? line.speaker;
-                  return (
-                    <li
-                      key={line.id}
-                      style={{
-                        color: line.isFinal ? "#000" : "#888",
-                        fontStyle: line.isFinal ? "normal" : "italic",
-                      }}
-                    >
-                      <strong>{displayLabel}:</strong> {line.text}
-                    </li>
-                  );
-                })}
+                {meeting.transcript
+                  .slice(
+                    Math.max(0, meeting.transcript.length - TRANSCRIPT_TAIL),
+                  )
+                  .map((line) => {
+                    const displayLabel =
+                      meeting.speakerOverrides[line.speaker] ?? line.speaker;
+                    return (
+                      <li
+                        key={line.id}
+                        style={{
+                          color: line.isFinal ? "#000" : "#888",
+                          fontStyle: line.isFinal ? "normal" : "italic",
+                        }}
+                      >
+                        <strong>{displayLabel}:</strong> {line.text}
+                      </li>
+                    );
+                  })}
               </ul>
+              {meeting.transcript.length > TRANSCRIPT_TAIL && (
+                <p style={{ fontSize: "0.75rem", color: "#888", margin: 0 }}>
+                  Showing the last {TRANSCRIPT_TAIL} lines ·{" "}
+                  {meeting.transcript.length} segments accumulated (full history
+                  exported on demand).
+                </p>
+              )}
             </>
           )}
 
-          <button
-            type="button"
-            onClick={() => void endMeeting(meeting)}
-            disabled={isEnding}
-            style={{ marginTop: "1rem" }}
-          >
-            {isEnding ? "Ending…" : "End meeting"}
-          </button>
+          <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
+            <button
+              type="button"
+              onClick={() => {
+                setExportError(null);
+                setExportModalOpen(true);
+              }}
+              disabled={meeting.transcript.length === 0 || isEnding}
+              title={
+                meeting.transcript.length === 0
+                  ? "Nothing to export yet — wait for the first segment"
+                  : "Export the full transcript — consent modal opens first"
+              }
+            >
+              Export transcript…
+            </button>
+            <button
+              type="button"
+              onClick={() => void endMeeting(meeting)}
+              disabled={isEnding}
+            >
+              {isEnding ? "Ending…" : "End meeting"}
+            </button>
+          </div>
+          {exportError !== null && (
+            <p style={{ color: "#c0392b", fontSize: "0.85rem" }}>
+              Export failed: {exportError}
+            </p>
+          )}
         </div>
       </section>
+      <TranscriptExportConsentModal
+        open={exportModalOpen}
+        userId={state.principal.userId}
+        sessionId={meeting.sessionId}
+        onConfirm={(format) => void performExport(format, meeting)}
+        onCancel={() => setExportModalOpen(false)}
+      />
     </main>
   );
 }
