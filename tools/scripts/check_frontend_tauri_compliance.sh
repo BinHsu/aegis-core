@@ -123,6 +123,14 @@ check "Constraint 5 (Blob downloads only via FileSystemProvider)" \
   '\.download = ' \
   '/FileSystemProvider/'
 
+# ADR-0024 Decision D — transcript text must never have
+# `user-select: none`. The CSS rule provides theatrical protection
+# (screenshots bypass it) at real accessibility cost (breaks screen
+# readers). The forbidden pattern appears in both CSS-string form
+# and the React inline-style-object form.
+check "ADR-0024 D (no user-select: none on transcript text)" \
+  'user-select:\s*none|userSelect:\s*["'"'"']none["'"'"']'
+
 # Constraint 6 — informational warning only; IndexedDB is permitted
 # but large-binary storage is not. Flag for reviewer attention.
 INDEXEDDB="$(grep -RInE --include='*.ts' --include='*.tsx' \
