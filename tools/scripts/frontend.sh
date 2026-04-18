@@ -30,18 +30,35 @@ cd "$REPO_ROOT"
 resolve_node_bin_dir() {
   local output_base
   output_base="$("$REPO_ROOT/tools/bazelisk/bazelisk" info output_base 2>/dev/null)"
-  # Typical layouts under rules_nodejs + aspect_rules_js toolchain:
+  # Probe known layouts first — fast path, no recursive scan.
   for candidate in \
     "$output_base/external/rules_nodejs~~node~nodejs_darwin_arm64/bin" \
     "$output_base/external/rules_nodejs~~node~nodejs_darwin_amd64/bin" \
     "$output_base/external/rules_nodejs~~node~nodejs_linux_amd64/bin" \
-    "$output_base/external/rules_nodejs~~node~nodejs_linux_arm64/bin"
+    "$output_base/external/rules_nodejs~~node~nodejs_linux_arm64/bin" \
+    "$output_base/external/rules_nodejs~node~nodejs_darwin_arm64/bin" \
+    "$output_base/external/rules_nodejs~node~nodejs_darwin_amd64/bin" \
+    "$output_base/external/rules_nodejs~node~nodejs_linux_amd64/bin" \
+    "$output_base/external/rules_nodejs~node~nodejs_linux_arm64/bin"
   do
     if [[ -x "$candidate/node" ]]; then
       echo "$candidate"
       return 0
     fi
   done
+  # Fallback: scan external/ for any nodejs_* repo that actually
+  # contains an executable `node`. Slower but insulates the wrapper
+  # from repo-mapping naming changes across rules_nodejs versions
+  # (single- vs double-tilde, prefix changes, etc.). Depth 2 keeps
+  # the scan bounded — the target dir is external/<repo>/bin.
+  local found
+  found="$(find "$output_base/external" -maxdepth 3 -type f -name node -perm -u+x 2>/dev/null \
+           | grep -E '/nodejs_(linux|darwin|windows)_[a-z0-9_]+/bin/node$' \
+           | head -n 1)"
+  if [[ -n "$found" ]]; then
+    dirname "$found"
+    return 0
+  fi
   return 1
 }
 
