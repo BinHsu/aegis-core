@@ -219,6 +219,24 @@ jobs:
             --test_tag_filters=-requires-model
 
   # ---------------------------------------------------------------------------
+  # ADR-0002 Phase 3 Web Frontend compliance — Tauri-wrap compatibility.
+  # Greps frontend_web/src/ for the six forbidden patterns from ADR-0002's
+  # "Constraints on the Phase 3 Web Frontend" section. Runs in < 1s; fails
+  # the PR if a chrome.* / Service Worker / SharedArrayBuffer / out-of-
+  # provider notification / Blob-download / navigator.mediaDevices slip-
+  # through appears. Protects the Phase 4+ Tauri shell migration path.
+  # ---------------------------------------------------------------------------
+  frontend-tauri-compliance:
+    name: Frontend Tauri-compatibility check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run ADR-0002 Phase 3 compliance grep
+        run: ./tools/scripts/check_frontend_tauri_compliance.sh
+
+  # ---------------------------------------------------------------------------
   # Documentation link check — basic sanity for internal cross-references.
   # Uses a lightweight action; does not fail the build on external link
   # timeouts (those are noisy).
