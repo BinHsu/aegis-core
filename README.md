@@ -127,7 +127,10 @@ departure.
 - **Recruiters / hiring partners** — start at
   [`docs/interview-notes.md`](docs/interview-notes.md). Plain language,
   7-minute read, no jargon. It answers *"what does this candidate
-  bring?"*.
+  bring?"* and contains three row-by-row tables
+  ([GitOps / DevSecOps / FinOps](docs/interview-notes.md#governance-posture--gitops-devsecops-finops-verifiable-row-by-row))
+  mapping each governance principle to the file or ADR that realises
+  it — each claim is falsifiable against the repo.
 - **Technical reviewers / hiring-manager engineering leads** — start
   with [Quick Start](#quick-start), then
   [Known Gaps](#known-gaps-phase-2), then the ADR index at
