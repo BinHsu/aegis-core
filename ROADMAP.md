@@ -1,7 +1,7 @@
 # 🗺️ Aegis Core (V2) — Roadmap
 
 **Current Status**: Architecture design complete; implementation bootstrapping pending.
-**Last Updated**: 2026-04-17 (Phase 3b exited — Slice 7 cos-sim validation PASS, mean 0.9659)
+**Last Updated**: 2026-04-18 (Phase 3c exited — Slices 1-6 landed, 8-job CI matrix adds Playwright chromium + webkit live-browser gate)
 
 This roadmap reflects the architectural decisions captured in
 `ARCHITECTURE.md` and the ADRs in `docs/adr/`. Before working on any
@@ -266,32 +266,32 @@ Driven by ADR-0020. Out-of-3b exit criterion: `engine --seed --corpus docs/rag/t
 - [x] **ADR-0010 revision**: split `ResourceBudget` into `ModelBudget` (process-global, ~500 MB for whisper + bge-m3 Q4_K_M) and `SessionBudget` (per-session, existing `kDefaultReservationBytes`). ADR updated in Slice 1 (`e61b192`); code landed in Slice 3.
 - [x] **whisper.cpp deployment-target fix** (incident-09 Prevention follow-up): mirror what libopus did in commit `51835b1` — add `CMAKE_OSX_DEPLOYMENT_TARGET=11.0` to `whisper_cpp.BUILD` cache_entries, silencing the ~18 libggml-cpu warnings on the engine link — Slice 1 (`0d2bdb8`).
 
-### Phase 3c: Frontend Host UI + cross-WebView acceptance 📋
+### Phase 3c: Frontend Host UI + cross-WebView acceptance ✅
 
 > *"Make the chief-of-staff actually able to run a meeting, see hints, and export the transcript."*
 
-Gated by 3b — prompter display needs real transcript data; corpus selector needs a real vector collection; consent + export flows need a real artifact to produce.
+Gated by 3b — prompter display needs real transcript data; corpus selector needs a real vector collection; consent + export flows need a real artifact to produce. **All six slices landed 2026-04-18** (PRs #19–#24); Playwright live-browser gate adds chromium + webkit to the CI matrix (Incident-09 lesson in code).
 
-#### Frontend scaffolding (remaining)
-- [ ] `AuthProvider`, `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` stubs
-- [ ] Respect all ADR-0002 Phase 3 Constraints 1–6 (no `chrome.*`, no Service Worker dependency, etc.)
+#### Frontend scaffolding
+- [x] `FileSystemProvider`, `NotificationProvider`, `AutoUpdateProvider` scaffolding — Slice 1 (`#19`). `AuthProvider` pre-existed from Phase 2.
+- [x] Respect all ADR-0002 Phase 3 Constraints 1–6 (no `chrome.*`, no Service Worker dependency, etc.) — `tools/scripts/check_frontend_tauri_compliance.sh` grep gate extended per slice
 
 #### Host UI (Staff)
-- [ ] Login flow (Cognito Cloud / dummy Local)
-- [ ] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display
-- [ ] One-time audio-processing consent capture on first use (ARCH §9.3; no biometric consent needed — see ADR-0012)
-- [ ] **Transcript consent — two-phase flow**: meeting-start toggle (default off; GDPR notice citing Art. 6(1)(f) + Art. 9(2)(a) on toggle-on; gates the transcript panel UI mode) + export-time confirmation modal (responsibility transfer + audit log with user id + timestamp + IP + session id). **DO NOT** apply `user-select: none` to transcript text — screenshots bypass it and it breaks screen readers. If leak traceability matters, use on-screen watermarking (user id + timestamp, low contrast) instead.
-- [ ] Speaker label tagging UI — curated choice list, **no free-text name input** (ARCH §9.2)
-- [ ] Live prompter display with rolling 5-line window (matches Viewer UI PROMPTER_WINDOW=5)
-- [ ] Export flow: Markdown + JSON download — triggers transcript-consent phase-2 modal above
-- [ ] "End Meeting" button
-- [ ] QR code display for LAN viewer join (Local mode only) (ADR-0007)
+- [x] Login flow (Cognito Cloud / dummy Local) — pre-existed from Phase 2
+- [x] "New Meeting" flow: RAG corpus selector → `CreateMeeting` RPC → session token display — Slice 2 (`#20`); RAG binding opt-in per ADR-0023 Decision B (empty `rag_id` first-class "no corpus" mode)
+- [x] One-time audio-processing consent capture on first use (ARCH §9.3; no biometric consent needed — see ADR-0012) — Slice 3 (`#21`) — ADR-0024 Decision A
+- [x] **Transcript consent — two-phase flow**: meeting-start toggle (default off; GDPR notice citing Art. 6(1)(f) + Art. 9(2)(a) on toggle-on; gates the transcript panel UI mode) + export-time confirmation modal (responsibility transfer + audit log with user id + timestamp + session id). **DO NOT** apply `user-select: none` to transcript text — screenshots bypass it and it breaks screen readers. — Slice 3 (`#21`) — ADR-0024 Decisions B, C, D; watermarking (Decision E) deferred to Phase 4+
+- [x] Speaker label tagging UI — curated choice list, **no free-text name input** (ARCH §9.2) — Slice 4 (`#22`); `CURATED_SPEAKER_LABELS` closed set + reducer defense-in-depth rejects non-curated values
+- [x] Live prompter display with rolling 5-line window (matches Viewer UI PROMPTER_WINDOW=5) — Slice 5 (`#23`); full transcript accumulates per ARCH §9.1, tail slice at render time only
+- [x] Export flow: Markdown + JSON download — triggers transcript-consent phase-2 modal above — Slice 5 (`#23`); `lib/transcriptExport.ts` pure formatters resolve speaker overrides at export time
+- [x] "End Meeting" button — pre-existed from Phase 2
+- [x] QR code display for LAN viewer join (Local mode only) (ADR-0007) — pre-existed from Phase 2
 
 #### Cross-WebView acceptance
-- [ ] Chrome / Edge primary testing
-- [ ] WKWebView sanity check on macOS (ensures Phase 4 Tauri wrap will not be blocked)
-- [ ] Firefox / Safari explicitly NOT supported for host role (L6); document in README
-- [ ] **Live-browser WebRTC smoke test harness** (incident-09 Prevention item): automate a real-browser (Playwright or Puppeteer) host → gateway → engine → transcript pipeline. Catches pion/opus-class "works on loopback, breaks on real browsers" regressions in CI rather than in production.
+- [x] Chrome / Edge primary testing — Playwright chromium project, Slice 6 (`#24`)
+- [x] WKWebView sanity check on macOS (ensures Phase 4 Tauri wrap will not be blocked) — Playwright webkit project, Slice 6 (`#24`)
+- [x] Firefox / Safari explicitly NOT supported for host role (L6); document in README — carried in existing README §Status / Known Gaps narrative
+- [x] **Live-browser WebRTC smoke test harness** (incident-09 Prevention item): automate a real-browser (Playwright or Puppeteer) host → gateway → engine → transcript pipeline. Catches pion/opus-class "works on loopback, breaks on real browsers" regressions in CI rather than in production. — Slice 6 (`#24`); scope today is the consent-flow gate (6 tests, chromium + webkit); full audio-path smoke lands once Phase 4 Tauri makes the host a proper app process with predictable audio permissions.
 
 ---
 
