@@ -275,16 +275,6 @@ jobs:
           restore-keys: |
             bazel-e2e-${{ runner.os }}-
 
-      # Fetch the Node toolchain explicitly with visible output — the
-      # frontend.sh wrapper quietly `|| true`s its own fetch on the
-      # assumption that the target already cached, which is not true
-      # on a cold CI runner. Doing it here makes any download failure
-      # observable instead of cascading into an opaque "node binary
-      # not found" from resolve_node_bin_dir.
-      - name: Fetch Bazel Node toolchain
-        run: |
-          ./tools/bazelisk/bazelisk build @rules_nodejs//nodejs:resolved_toolchain
-
       - name: Install frontend deps (hermetic pnpm)
         run: ./tools/scripts/frontend.sh install
 

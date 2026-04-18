@@ -62,10 +62,19 @@ resolve_node_bin_dir() {
   return 1
 }
 
-# Ensure the Node toolchain is downloaded. First-run cost is ~30s
-# on a cold Bazel cache; subsequent runs are cache hits.
-"$REPO_ROOT/tools/bazelisk/bazelisk" build \
-  @rules_nodejs//nodejs:resolved_toolchain >/dev/null 2>&1 || true
+# Ensure the hermetic pnpm binary is materialised. Building @pnpm
+# transitively fetches the @rules_nodejs Node toolchain because the
+# pnpm js_binary target depends on it, so a single `bazelisk build`
+# populates everything `resolve_node_bin_dir` looks for. We surface
+# the output on failure so a toolchain-fetch problem in CI shows up
+# as a clear Bazel error instead of cascading into the "node binary
+# not found" message from the resolver. First-run cost is ~30s on a
+# cold Bazel cache; subsequent runs are cache hits.
+if ! "$REPO_ROOT/tools/bazelisk/bazelisk" build @pnpm//:pnpm >/dev/null 2>&1; then
+  echo "error: failed to build @pnpm//:pnpm — re-running with visible output:" >&2
+  "$REPO_ROOT/tools/bazelisk/bazelisk" build @pnpm//:pnpm >&2
+  exit 1
+fi
 
 NODE_BIN_DIR="$(resolve_node_bin_dir || true)"
 if [[ -z "${NODE_BIN_DIR:-}" ]]; then
@@ -86,9 +95,32 @@ EOF
   exit 1
 fi
 
-# Bazel-managed pnpm — built once, then available as a plain binary.
-"$REPO_ROOT/tools/bazelisk/bazelisk" build @pnpm//:pnpm >/dev/null 2>&1
-PNPM_BIN="$REPO_ROOT/bazel-bin/external/aspect_rules_js~~pnpm~pnpm/pnpm_/pnpm"
+# Bazel-managed pnpm — already built by the step above. Resolve its
+# concrete path; the repo-mapping layout can use single or double
+# tildes depending on rules version, so probe both.
+resolve_pnpm_bin() {
+  for candidate in \
+    "$REPO_ROOT/bazel-bin/external/aspect_rules_js~~pnpm~pnpm/pnpm_/pnpm" \
+    "$REPO_ROOT/bazel-bin/external/aspect_rules_js~pnpm~pnpm/pnpm_/pnpm"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  # Fallback: glob for any pnpm wrapper Bazel has materialised.
+  local found
+  found="$(find "$REPO_ROOT/bazel-bin/external" -maxdepth 4 -type f -name pnpm -perm -u+x 2>/dev/null | grep -E '/pnpm_/pnpm$' | head -n 1)"
+  if [[ -n "$found" ]]; then
+    echo "$found"
+    return 0
+  fi
+  return 1
+}
+PNPM_BIN="$(resolve_pnpm_bin || true)"
+if [[ -z "${PNPM_BIN:-}" ]]; then
+  echo "error: built @pnpm//:pnpm but could not locate the pnpm binary under bazel-bin/external/." >&2
+  exit 1
+fi
 
 # Prepend Node to PATH for the subprocess only. The pnpm binary we
 # invoke below will shell out to `node` internally (it's a Node
