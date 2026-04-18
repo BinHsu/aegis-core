@@ -97,6 +97,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+# Playwright browser binaries pinned to a repo-local directory via
+# PLAYWRIGHT_BROWSERS_PATH (tools/scripts/frontend.sh exports it).
+# Per-machine state, never committed.
+.playwright-browsers/
+frontend_web/playwright-report/
+frontend_web/test-results/
 
 # --- Go ------------------------------------------------------------------
 # Go modules live inside gateway_go/; we do NOT ignore go.sum.

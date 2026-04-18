@@ -34,6 +34,12 @@ importers:
         specifier: ^7.1.0
         version: 7.1.0(react-dom@19.1.0)(react@19.1.0)
     devDependencies:
+      "@playwright/test":
+        specifier: ^1.49.1
+        version: 1.49.1
+      "@types/node":
+        specifier: ^20.19.0
+        version: 20.19.0
       "@types/react":
         specifier: ^19.1.0
         version: 19.1.0
@@ -48,7 +54,7 @@ importers:
         version: 5.7.2
       vite:
         specifier: ^6.0.7
-        version: 6.0.7
+        version: 6.0.7(@types/node@20.19.0)
 
 packages:
   /@babel/code-frame@7.29.0:
@@ -660,6 +666,17 @@ packages:
       "@jridgewell/sourcemap-codec": 1.5.5
     dev: true
 
+  /@playwright/test@1.49.1:
+    resolution:
+      {
+        integrity: sha512-Ky+BVzPz8pL6PQxHqNRW1k3mIyv933LML7HktS8uik0bUXNCdPhoS/kLihiO1tMf/egaJb4IutXd7UywvXEW+g==,
+      }
+    engines: { node: ">=18" }
+    hasBin: true
+    dependencies:
+      playwright: 1.49.1
+    dev: true
+
   /@rollup/rollup-android-arm-eabi@4.60.1:
     resolution:
       {
@@ -990,6 +1007,15 @@ packages:
       }
     dev: true
 
+  /@types/node@20.19.0:
+    resolution:
+      {
+        integrity: sha512-hfrc+1tud1xcdVTABC2JiomZJEklMcXYNTVtZLAeqTVWD+qL5jkHKT+1lOtqDdGxt+mB53DTtiz673vfjU8D1Q==,
+      }
+    dependencies:
+      undici-types: 6.21.0
+    dev: true
+
   /@types/react-dom@19.1.0(@types/react@19.1.0):
     resolution:
       {
@@ -1024,7 +1050,7 @@ packages:
       "@babel/plugin-transform-react-jsx-source": 7.27.1(@babel/core@7.29.0)
       "@types/babel__core": 7.20.5
       react-refresh: 0.14.2
-      vite: 6.0.7
+      vite: 6.0.7(@types/node@20.19.0)
     transitivePeerDependencies:
       - supports-color
     dev: true
@@ -1148,6 +1174,17 @@ packages:
     engines: { node: ">=6" }
     dev: true
 
+  /fsevents@2.3.2:
+    resolution:
+      {
+        integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==,
+      }
+    engines: { node: ^8.16.0 || ^10.6.0 || >=11.0.0 }
+    os: [darwin]
+    requiresBuild: true
+    dev: true
+    optional: true
+
   /fsevents@2.3.3:
     resolution:
       {
@@ -1247,6 +1284,28 @@ packages:
       {
         integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==,
       }
+    dev: true
+
+  /playwright-core@1.49.1:
+    resolution:
+      {
+        integrity: sha512-BzmpVcs4kE2CH15rWfzpjzVGhWERJfmnXmniSyKeRZUs9Ws65m+RGIi7mjJK/euCegfn3i7jvqWeWyHe9y3Vgg==,
+      }
+    engines: { node: ">=18" }
+    hasBin: true
+    dev: true
+
+  /playwright@1.49.1:
+    resolution:
+      {
+        integrity: sha512-VYL8zLoNTBxVOrJBbDuRgDWa3i+mfQgDTrL8Ah9QXZ7ax4Dsj0MSq5bYgytRnDVVe+njoKnfsYkH3HzqVj5UZA==,
+      }
+    engines: { node: ">=18" }
+    hasBin: true
+    dependencies:
+      playwright-core: 1.49.1
+    optionalDependencies:
+      fsevents: 2.3.2
     dev: true
 
   /postcss@8.5.9:
@@ -1420,6 +1479,13 @@ packages:
     hasBin: true
     dev: true
 
+  /undici-types@6.21.0:
+    resolution:
+      {
+        integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==,
+      }
+    dev: true
+
   /update-browserslist-db@1.2.3(browserslist@4.28.2):
     resolution:
       {
@@ -1434,7 +1500,7 @@ packages:
       picocolors: 1.1.1
     dev: true
 
-  /vite@6.0.7:
+  /vite@6.0.7(@types/node@20.19.0):
     resolution:
       {
         integrity: sha512-RDt8r/7qx9940f8FcOIAH9PTViRrghKaK2K1jY3RaAURrEUbm9Du1mJ72G+jlhtG3WwodnfzY8ORQZbBavZEAQ==,
@@ -1477,6 +1543,7 @@ packages:
       yaml:
         optional: true
     dependencies:
+      "@types/node": 20.19.0
       esbuild: 0.24.2
       postcss: 8.5.9
       rollup: 4.60.1
