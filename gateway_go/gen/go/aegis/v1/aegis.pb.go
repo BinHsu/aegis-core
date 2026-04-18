@@ -244,9 +244,15 @@ func (ControlKind) EnumDescriptor() ([]byte, []int) {
 type CreateMeetingRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Identifier of the RAG corpus to bind to this meeting. In Cloud mode
-	// this is a DynamoDB partition key; in Local mode it is a path
-	// identifier resolved relative to `./models/` (per CLAUDE.md Rule 6).
-	// Must reference a corpus the authenticated caller can access.
+	// this is a DynamoDB partition key; in Local mode it is a Qdrant
+	// collection name (e.g., `aegis_taiwan` from `engine seed`).
+	//
+	// An empty string means NO RAG binding — the meeting runs transcript-
+	// only and the chief-of-staff provides hints manually. This is a
+	// first-class mode, not an error case; see ADR-0023 §"Decision B —
+	// RAG opt-in" for the rationale. Gateway MUST NOT reject empty
+	// rag_id with NOT_FOUND. When non-empty, rag_id must reference a
+	// corpus the authenticated caller can access.
 	RagId string `protobuf:"bytes,1,opt,name=rag_id,json=ragId,proto3" json:"rag_id,omitempty"`
 	// Optional human-readable meeting title (displayed in viewer UI and
 	// in the export metadata). Max 200 characters.
@@ -1328,7 +1334,9 @@ type SessionStart struct {
 	// Tenant / organization identifier. Empty in Local mode; populated
 	// in Cloud mode from the host's Cognito JWT.
 	TenantId string `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	// RAG corpus identifier to bind to this session.
+	// RAG corpus identifier to bind to this session. Empty string means
+	// the session has no RAG binding (transcript-only, manual hints);
+	// engine MUST skip RAG init for empty rag_id. See ADR-0023 §"Decision B".
 	RagId string `protobuf:"bytes,3,opt,name=rag_id,json=ragId,proto3" json:"rag_id,omitempty"`
 	// Audio format of the PcmChunk stream that will follow.
 	AudioFormat *AudioFormat `protobuf:"bytes,4,opt,name=audio_format,json=audioFormat,proto3" json:"audio_format,omitempty"`
