@@ -68,23 +68,37 @@ const ALL_MODES: { readonly value: CaptureMode; readonly label: string }[] = [
   { value: "microphone-and-tab", label: "Both (mic + tab, mixed)" },
 ];
 
-// Preset RAG corpora. Keep the list short and curated — a live system
-// would populate this from a per-tenant ListCorpora RPC (ADR-0004
-// future work). The `value` is what the Gateway's CreateMeeting RPC
-// sees (its `rag_id` proto field); the `label` is the human-friendly
-// dropdown text.
+// Preset RAG corpora. Per ADR-0023 §"Decision B" the empty-string
+// option is the DEFAULT — the chief-of-staff must opt IN to a RAG
+// corpus. "No corpus" is a first-class mode, not a degraded fallback:
+// plenty of meetings are better served by staff providing hints
+// manually than by a mediocre retrieval hit.
 //
-// The first entry is the dropdown default — cheap demo that exercises
-// the pipeline end-to-end without caring which corpus responds.
+// The remaining entries are curated presets. A live system will
+// replace this with a per-tenant ListCorpora RPC once the query path
+// lands (Phase 4+); until then, the list is authored here and must be
+// kept in sync with what `engine seed` has actually populated in the
+// target Qdrant. `aegis_taiwan` is Slice 6's seeded corpus; the
+// `demo-rag-*` entries are placeholders for future demo content.
+//
+// The `value` is what the Gateway's CreateMeeting RPC sees in the
+// `rag_id` proto field; empty string means "no RAG binding". The
+// `label` is the human-friendly dropdown text.
 const RAG_CORPORA: { readonly value: string; readonly label: string }[] = [
+  { value: "", label: "(No corpus — staff provides hints manually)" },
+  { value: "aegis_taiwan", label: "Taiwan reference (Slice 6 seeded)" },
   { value: "demo-rag-general", label: "General demo corpus" },
   { value: "demo-rag-engineering", label: "Engineering knowledge base" },
   { value: "demo-rag-sales", label: "Sales deck library" },
   { value: "demo-rag-support", label: "Customer support knowledge" },
 ];
-const DEFAULT_RAG_ID = RAG_CORPORA[0]!.value;
+const DEFAULT_RAG_ID = RAG_CORPORA[0]!.value; // "" — opt-in RAG
 
-const TRANSCRIPT_TAIL = 8; // lines visible to the host
+// Rolling transcript window shown on the host UI. Matches the
+// Viewer-side `PROMPTER_WINDOW` (5) so host and viewers see the same
+// line count; diverging would confuse the host about what the room
+// is actually reading.
+const TRANSCRIPT_TAIL = 5;
 
 const DEPLOY_MODE = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
   | "cloud"

@@ -157,11 +157,16 @@ func newWithProber(
 // CreateMeeting is the entrypoint for a new session.
 //
 // Error mapping (aligned with proto/aegis/v1/aegis.proto):
-//   - INVALID_ARGUMENT   — empty rag_id, or title over 200 chars.
+//   - INVALID_ARGUMENT   — nil request, or title over 200 chars.
 //   - UNAVAILABLE        — engine Health RPC failed entirely.
 //   - RESOURCE_EXHAUSTED — engine reports !Ready (A4 swaps this for
 //     the real ResourceBudget reservation).
 //   - INTERNAL           — registry Create or JWT sign failed.
+//
+// NOTE: empty rag_id is NOT an error. Per ADR-0023 §"Decision B —
+// RAG opt-in", a meeting with empty rag_id runs transcript-only and
+// the chief-of-staff provides hints manually. First-class mode, not
+// a degraded fallback.
 //
 // UNAUTHENTICATED / PERMISSION_DENIED paths land in A5 with the
 // Cognito JWT middleware; Local mode has no caller identity today.
@@ -169,8 +174,8 @@ func (s *GatewayService) CreateMeeting(
 	ctx context.Context,
 	req *aegisv1.CreateMeetingRequest,
 ) (*aegisv1.CreateMeetingResponse, error) {
-	if req == nil || req.GetRagId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "rag_id is required")
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is nil")
 	}
 	if len(req.GetTitle()) > 200 {
 		return nil, status.Error(codes.InvalidArgument, "title exceeds 200 characters")
