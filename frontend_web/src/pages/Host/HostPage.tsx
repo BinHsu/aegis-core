@@ -101,6 +101,25 @@ const DEFAULT_RAG_ID = RAG_CORPORA[0]!.value; // "" — opt-in RAG
 // is actually reading.
 const TRANSCRIPT_TAIL = 5;
 
+// ARCH §9.2 Speaker Labels — Privacy by Design. The UI MUST NOT
+// accept free-text speaker names, because a real name converts a
+// pseudonymized diarization label into identified PII and escalates
+// the regulatory posture (GDPR Art. 25 "Data Protection by Design").
+// This constant is the closed set of allowed relabels; the panel
+// below only lets the host pick from this list. To add a new label,
+// extend this constant — never wire in a free-text input.
+const CURATED_SPEAKER_LABELS: readonly string[] = [
+  "Host",
+  "Client",
+  "Colleague",
+  "Guest",
+  "Speaker_0",
+  "Speaker_1",
+  "Speaker_2",
+  "Speaker_3",
+  "Unknown",
+] as const;
+
 const DEPLOY_MODE = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
   | "cloud"
   | "local";
@@ -128,6 +147,15 @@ interface ActiveMeeting {
    * this flag only controls what the host's browser renders.
    */
   readonly showTranscriptPanel: boolean;
+  /**
+   * ARCH §9.2 curated-list speaker relabels. Maps each original
+   * detected label (e.g. `Speaker_0`) to a host-chosen curated
+   * label (must be in `CURATED_SPEAKER_LABELS`). Empty by default;
+   * entries are added when the host picks from the override panel.
+   * Meeting-scoped — not persisted across meetings so a new room's
+   * `Speaker_0` does not inherit the previous room's meaning.
+   */
+  readonly speakerOverrides: Readonly<Record<string, string>>;
 }
 
 interface TranscriptLine {
@@ -167,9 +195,18 @@ type Action =
       // `showTranscriptPanel` comes from `state.showTranscriptPanel`
       // (carried through `creating`), not from the action payload —
       // the reducer wires it in on transition.
-      meeting: Omit<ActiveMeeting, "transcript" | "showTranscriptPanel">;
+      meeting: Omit<
+        ActiveMeeting,
+        "transcript" | "showTranscriptPanel" | "speakerOverrides"
+      >;
     }
   | { type: "TRANSCRIPT_LINE"; line: TranscriptLine }
+  | {
+      type: "SPEAKER_LABEL_ASSIGNED";
+      originalLabel: string;
+      /** Empty string clears the override back to the original label. */
+      curatedLabel: string;
+    }
   | { type: "END_REQUESTED" }
   | { type: "MEETING_ENDED" }
   | { type: "ERROR_RAISED"; message: string }
@@ -212,6 +249,7 @@ function reducer(state: HostState, action: Action): HostState {
           ...action.meeting,
           transcript: [],
           showTranscriptPanel: state.showTranscriptPanel,
+          speakerOverrides: {},
         },
       };
     }
@@ -233,6 +271,28 @@ function reducer(state: HostState, action: Action): HostState {
       return {
         ...state,
         meeting: { ...state.meeting, transcript: trimmed },
+      };
+    }
+    case "SPEAKER_LABEL_ASSIGNED": {
+      if (state.kind !== "active") return state;
+      // Reject labels outside the curated list — defense in depth
+      // against a caller constructing the action with a freeform
+      // value. Empty string is allowed as the "clear override" signal.
+      if (
+        action.curatedLabel !== "" &&
+        !CURATED_SPEAKER_LABELS.includes(action.curatedLabel)
+      ) {
+        return state;
+      }
+      const next = { ...state.meeting.speakerOverrides };
+      if (action.curatedLabel === "") {
+        delete next[action.originalLabel];
+      } else {
+        next[action.originalLabel] = action.curatedLabel;
+      }
+      return {
+        ...state,
+        meeting: { ...state.meeting, speakerOverrides: next },
       };
     }
     case "END_REQUESTED": {
@@ -748,19 +808,36 @@ export function HostPage(): JSX.Element {
               Waiting for the first segment…
             </p>
           ) : (
-            <ul style={{ paddingLeft: "1rem" }}>
-              {meeting.transcript.map((line) => (
-                <li
-                  key={line.id}
-                  style={{
-                    color: line.isFinal ? "#000" : "#888",
-                    fontStyle: line.isFinal ? "normal" : "italic",
-                  }}
-                >
-                  <strong>{line.speaker}:</strong> {line.text}
-                </li>
-              ))}
-            </ul>
+            <>
+              <SpeakerLabelPanel
+                transcript={meeting.transcript}
+                overrides={meeting.speakerOverrides}
+                onAssign={(originalLabel, curatedLabel) =>
+                  dispatch({
+                    type: "SPEAKER_LABEL_ASSIGNED",
+                    originalLabel,
+                    curatedLabel,
+                  })
+                }
+              />
+              <ul style={{ paddingLeft: "1rem" }}>
+                {meeting.transcript.map((line) => {
+                  const displayLabel =
+                    meeting.speakerOverrides[line.speaker] ?? line.speaker;
+                  return (
+                    <li
+                      key={line.id}
+                      style={{
+                        color: line.isFinal ? "#000" : "#888",
+                        fontStyle: line.isFinal ? "normal" : "italic",
+                      }}
+                    >
+                      <strong>{displayLabel}:</strong> {line.text}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           )}
 
           <button
@@ -774,6 +851,76 @@ export function HostPage(): JSX.Element {
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * ARCH §9.2 Speaker Labels panel. Shows every distinct original
+ * diarization label that has appeared in the transcript tail, plus
+ * a curated-list <select> to override each. No free-text field —
+ * the closed set lives in `CURATED_SPEAKER_LABELS`, so the host
+ * cannot type a real name that would convert the label into
+ * identified PII (GDPR Art. 25).
+ *
+ * The "(original)" option clears an override back to the detected
+ * label without forcing a refresh, so a misclick is recoverable.
+ */
+function SpeakerLabelPanel({
+  transcript,
+  overrides,
+  onAssign,
+}: {
+  readonly transcript: readonly TranscriptLine[];
+  readonly overrides: Readonly<Record<string, string>>;
+  readonly onAssign: (originalLabel: string, curatedLabel: string) => void;
+}): JSX.Element | null {
+  // Distinct detected labels in the order they first appeared in the
+  // rolling tail. Using a simple loop keeps the order stable; Set's
+  // iteration order is insertion order in modern V8 but the explicit
+  // loop makes the invariant obvious.
+  const distinct: string[] = [];
+  for (const line of transcript) {
+    if (!distinct.includes(line.speaker)) distinct.push(line.speaker);
+  }
+  if (distinct.length === 0) return null;
+  return (
+    <fieldset
+      style={{
+        border: "1px solid #eee",
+        padding: "0.5rem 0.75rem",
+        margin: "0.25rem 0 0.75rem",
+        fontSize: "0.85rem",
+      }}
+    >
+      <legend style={{ padding: "0 0.4rem", color: "#555" }}>
+        Speaker labels (curated list only — no free-text per ARCH §9.2)
+      </legend>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+        {distinct.map((original) => {
+          const current = overrides[original] ?? "";
+          return (
+            <label
+              key={original}
+              style={{ display: "inline-flex", alignItems: "center" }}
+            >
+              <code style={{ marginRight: "0.3rem" }}>{original}</code>→{" "}
+              <select
+                value={current}
+                onChange={(e) => onAssign(original, e.target.value)}
+                style={{ marginLeft: "0.3rem" }}
+              >
+                <option value="">(original)</option>
+                {CURATED_SPEAKER_LABELS.map((label) => (
+                  <option key={label} value={label}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 
