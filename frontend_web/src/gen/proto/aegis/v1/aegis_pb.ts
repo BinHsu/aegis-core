@@ -195,9 +195,15 @@ proto3.util.setEnumType(ControlKind, "aegis.v1.ControlKind", [
 export class CreateMeetingRequest extends Message<CreateMeetingRequest> {
   /**
    * Identifier of the RAG corpus to bind to this meeting. In Cloud mode
-   * this is a DynamoDB partition key; in Local mode it is a path
-   * identifier resolved relative to `./models/` (per CLAUDE.md Rule 6).
-   * Must reference a corpus the authenticated caller can access.
+   * this is a DynamoDB partition key; in Local mode it is a Qdrant
+   * collection name (e.g., `aegis_taiwan` from `engine seed`).
+   *
+   * An empty string means NO RAG binding — the meeting runs transcript-
+   * only and the chief-of-staff provides hints manually. This is a
+   * first-class mode, not an error case; see ADR-0023 §"Decision B —
+   * RAG opt-in" for the rationale. Gateway MUST NOT reject empty
+   * rag_id with NOT_FOUND. When non-empty, rag_id must reference a
+   * corpus the authenticated caller can access.
    *
    * @generated from field: string rag_id = 1;
    */
@@ -1352,7 +1358,9 @@ export class SessionStart extends Message<SessionStart> {
   tenantId = "";
 
   /**
-   * RAG corpus identifier to bind to this session.
+   * RAG corpus identifier to bind to this session. Empty string means
+   * the session has no RAG binding (transcript-only, manual hints);
+   * engine MUST skip RAG init for empty rag_id. See ADR-0023 §"Decision B".
    *
    * @generated from field: string rag_id = 3;
    */

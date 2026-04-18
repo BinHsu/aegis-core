@@ -112,14 +112,27 @@ func TestCreateMeetingHappyPath(t *testing.T) {
 	}
 }
 
-func TestCreateMeetingRejectsEmptyRag(t *testing.T) {
+// Per ADR-0023 §"Decision B — RAG opt-in", empty rag_id is a
+// first-class mode (staff provides hints manually), not an error.
+// Gateway MUST accept CreateMeeting with empty rag_id.
+func TestCreateMeetingAcceptsEmptyRag(t *testing.T) {
 	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
 	client, cleanup := setupServer(t, svc)
 	defer cleanup()
 
-	_, err := client.CreateMeeting(context.Background(), &aegisv1.CreateMeetingRequest{})
-	if got := status.Code(err); got != codes.InvalidArgument {
-		t.Fatalf("empty rag_id: got code %v, want InvalidArgument", got)
+	resp, err := client.CreateMeeting(
+		context.Background(),
+		&aegisv1.CreateMeetingRequest{}, // empty rag_id
+	)
+	if err != nil {
+		t.Fatalf("CreateMeeting with empty rag_id: got error %v, want OK", err)
+	}
+	if resp.GetSessionId() == "" {
+		t.Fatal("CreateMeeting with empty rag_id: empty session_id in response")
+	}
+	if svc.registry.Len() != 1 {
+		t.Fatalf("registry.Len after empty-rag CreateMeeting: got %d, want 1",
+			svc.registry.Len())
 	}
 }
 
