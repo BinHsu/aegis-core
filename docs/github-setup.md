@@ -421,8 +421,10 @@ gh api --method PUT repos/BinHsu/aegis-core/automated-security-fixes
 - ✅ Dependency graph (usually on by default for public repos)
 - ✅ Dependabot alerts → Enable
 - ✅ Dependabot security updates → Enable
-- ⬜ Dependabot version updates — configured via
-  `.github/dependabot.yml` (TODO Phase 1 when dependencies exist)
+- ✅ Dependabot version updates — configured via
+  [`.github/dependabot.yml`](../.github/dependabot.yml) (five
+  ecosystems: github-actions, gomod, npm, bazel, plus a commented-out
+  Docker stanza waiting for Phase 4a)
 
 ### Verify
 
@@ -516,9 +518,15 @@ support category creation).
 
 ## 8. Issue Templates and PR Template
 
-File-based, not UI. Create `.github/ISSUE_TEMPLATE/*.yml` and
-`.github/PULL_REQUEST_TEMPLATE.md`. TODO Phase 0+ — not blocking
-Phase 0 completion.
+File-based, not UI.
+
+- ✅ PR template — [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)
+  — matches the Summary / Files / Test plan shape the session PRs
+  already use, with the 8-job CI matrix called out as the default
+  gate.
+- ⬜ Issue templates — `.github/ISSUE_TEMPLATE/*.yml`. Deferred until
+  external contributors start opening issues; the current single-
+  maintainer flow doesn't benefit from them.
 
 ---
 
@@ -527,11 +535,15 @@ Phase 0 completion.
 For fresh repo setup, the Phase 0 maintainer can run:
 
 ```bash
-./tools/scripts/gh_bootstrap.sh BinHsu/aegis-core
+./tools/scripts/gh_bootstrap.sh                 # defaults to BinHsu/aegis-core
+./tools/scripts/gh_bootstrap.sh owner/repo      # for a fork
 ```
 
-(Script TODO Phase 0+ — lives at `tools/scripts/gh_bootstrap.sh`
-when created. Until then, run the `gh` commands above in order.)
+The script asserts §§2, 3, 4, 6, and 7 idempotently. It deliberately
+does NOT apply §0 (destructive visibility toggle), §0.5 (interactive
+`ssh-keygen`), §1 (long ruleset JSON — apply by hand), §5 (CodeQL —
+Phase 4b scope per ROADMAP), or §7 category creation (REST API does
+not support it).
 
 ---
 
