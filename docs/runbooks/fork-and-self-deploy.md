@@ -47,34 +47,37 @@ In your fork of `aegis-aws-landing-zone`:
 
 ## Step 2 — Read the values you'll plug into GitHub Variables
 
-Two paths, depending on whether your fork of `aegis-aws-landing-zone` declares Terraform outputs for the staging resources. **The fallback (AWS CLI) path is the canonical one today** — the Terraform-output path is conditional on aegis-aws-landing-zone#95 resolving (asking ldz to confirm output names or add them). Use whichever fits your provisioning approach:
+Two paths, depending on how your fork's AWS infra was provisioned:
 
-- **Provisioned via forked ldz Terraform AND outputs exist** → use the Terraform-output path
-- **Provisioned via console, CDK, hand-rolled Terraform, or any other way** → use the AWS CLI path
-- **Don't know yet** → AWS CLI path; revisit later if ldz adds outputs
+- **Provisioned via forked ldz Terraform** → use Path A (one-liner per Variable)
+- **Provisioned via console, CDK, hand-rolled Terraform, or any other way** → use Path B (AWS CLI queries per value)
 
-### Path A — Terraform outputs (conditional on ldz #95)
+### Path A — Terraform outputs from forked landing-zone (ldz #95 confirmed schema)
 
-If your fork of `aegis-aws-landing-zone` declares outputs for the resources (per aegis-aws-landing-zone#95 once that issue resolves with either "outputs exist with these names" or "outputs added in this PR"), this is one command:
+Your fork of `aegis-aws-landing-zone`'s `staging/edge/` and `staging/bootstrap/` Terraservices both declare outputs for the values aegis-core consumes. Live output schema (per ldz #95 closing):
+
+| ldz Terraform output | aegis-core GH Variable |
+| --- | --- |
+| `aegis_core_ecr_role_arn` (from `staging/bootstrap/`) | `ECR_PUSH_ROLE_NAME` (extract role name from ARN) |
+| `frontend_push_role_arn` or `frontend_push_role_name` (from `staging/edge/`) | `FRONTEND_PUSH_ROLE_NAME` |
+| `frontend_s3_bucket_name` | `FRONTEND_S3_BUCKET` |
+| `frontend_cloudfront_distribution_id` | `FRONTEND_CLOUDFRONT_DISTRIBUTION_ID` |
+| `frontend_alternate_domain_name` | `FRONTEND_DOMAIN` |
+
+ldz's suggested one-liner (from the #95 closing comment) — adapt `YOUR_ORG/aegis-core` to your fork:
 
 ```bash
-cd /path/to/your/aegis-aws-landing-zone/terraform/environments/staging
-terraform output -json > /tmp/aegis-staging-outputs.json
+cd /path/to/your/aegis-aws-landing-zone/terraform/environments/staging/edge
+
+terraform output -raw frontend_s3_bucket_name              | xargs -I{} gh variable set FRONTEND_S3_BUCKET --body {} -R YOUR_ORG/aegis-core
+terraform output -raw frontend_cloudfront_distribution_id  | xargs -I{} gh variable set FRONTEND_CLOUDFRONT_DISTRIBUTION_ID --body {} -R YOUR_ORG/aegis-core
+terraform output -raw frontend_alternate_domain_name       | xargs -I{} gh variable set FRONTEND_DOMAIN --body {} -R YOUR_ORG/aegis-core
+terraform output -raw frontend_push_role_name              | xargs -I{} gh variable set FRONTEND_PUSH_ROLE_NAME --body {} -R YOUR_ORG/aegis-core
 ```
 
-Pull the values you need from the JSON:
+The remaining four Variables (`AWS_ACCOUNT_ID`, `AWS_REGION`, `ECR_REPO_NAME`, `ECR_PUSH_ROLE_NAME`, `GATEWAY_DOMAIN`) come from your AWS account / region choice in Step 1 and the existing ECR outputs in `staging/bootstrap/`. Same `terraform output -raw … | xargs gh variable set …` pattern.
 
-```bash
-jq -r .aegis_core_ecr_role_arn.value      /tmp/aegis-staging-outputs.json
-jq -r .frontend_push_role_arn.value       /tmp/aegis-staging-outputs.json
-jq -r .frontend_s3_bucket_name.value      /tmp/aegis-staging-outputs.json
-jq -r .frontend_cloudfront_distribution_id.value /tmp/aegis-staging-outputs.json
-jq -r .frontend_alternate_domain_name.value /tmp/aegis-staging-outputs.json
-```
-
-(Output names listed are aegis-core's _suggested_ schema in ldz issue #95. The actual names will follow whatever convention ldz commits to in that issue's resolution; adjust the `jq` keys to match.)
-
-### Path B — AWS CLI queries (canonical today, ldz-agnostic)
+### Path B — AWS CLI queries (ldz-agnostic, for non-Terraform provisioning)
 
 For each value, the AWS CLI command from a normal AWS user's perspective (assumes you have read perms in the account):
 
