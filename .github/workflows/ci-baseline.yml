@@ -213,12 +213,17 @@ jobs:
       - name: Smoke-test gateway OCI image (boot + healthz + read-only rootfs)
         run: |
           set -euxo pipefail
-          ./tools/bazelisk/bazelisk run //packaging/gateway:image_load -- aegis-gateway:ci-smoke
+          # The image_load target's repo_tags are defined in
+          # packaging/gateway/BUILD.bazel as "aegis-gateway:dev-local";
+          # `bazel run` does NOT accept a tag override as a positional
+          # argument (oci_load reads repo_tags from the BUILD attribute,
+          # not from argv). Aligning the docker tag below.
+          ./tools/bazelisk/bazelisk run //packaging/gateway:image_load
           docker run -d --name gw \
             --read-only \
             --user 65532:65532 \
             -p 18080:8080 \
-            aegis-gateway:ci-smoke
+            aegis-gateway:dev-local
           # Wait up to 10s for /healthz to return 200; the gateway tries
           # to dial the C++ engine on startup, which fails (engine isn't
           # in this CI step), but per main.go:440-443 /healthz still
