@@ -72,7 +72,7 @@ no Dockerfile-equivalent `useradd` action is required.
 | 4a-1 (this ADR) | `rules_oci` wiring + Go gateway image; local-only, no push | `aegis-gateway` |
 | 4a-2 ✅ | SBOM via Syft (CycloneDX) — `anchore/sbom-action` SHA-pinned, runs after smoke step against the loaded `aegis-gateway:dev-local` image; output `gateway.sbom.cdx.json` uploaded as workflow artifact | (no new image) |
 | 4a-3 ✅ | GitHub Actions ECR push via OIDC role from ldz #74. Dedicated `release-staging-image.yml` workflow on `push: branches: [main]` (PR builds don't push). `oci_push` Bazel target consumes ECR auth from `aws-actions/amazon-ecr-login`'s populated docker config. Tag: `staging-<git_sha>`. Defense-in-depth re-smoke before push. | (no new image) |
-| 4a-4 | C++ engine image — exercises hermetic clang × distroless | `aegis-engine` |
+| 4a-4 ✅ | C++ engine image. Distroless `static-debian12:nonroot` tried first; if engine fails to start in Phase 4c due to missing libc, swap to `@distroless_base` per the fork-point comment in `packaging/engine/BUILD.bazel`. Models mount-at-runtime — storage delivery specced in cross-repo [ldz #82](https://github.com/BinHsu/aegis-aws-landing-zone/issues/82) (ldz picks AWS-side realization). No engine smoke this slice (engine needs model on startup; Phase 4c K8s manifest is the smoke harness). No engine SBOM this slice (deferred until distroless variant proves stable in deployment). | `aegis-engine` |
 | 4a-5 | Frontend image — static asset packaging | `aegis-frontend` |
 | 4b   | Cosign signing + SLSA L3 + Trivy scan; SBOM becomes Cosign attestation (anchore/sbom-action supports natively) | (gates the above) |
 
@@ -176,6 +176,73 @@ work is tracked in `ROADMAP.md` Phase 4c — "Post-deploy E2E suite
 against staging" + "Synthetic monitoring against staging + prod" —
 and is the prerequisite gate for any path that puts paying users on
 the system.
+
+## Slice 4 distroless variant decision
+
+The base-image variant question for the C++ engine was deferred at
+ADR sign time and is now resolved (Slice 4, 2026-04-19):
+
+**Decision: try `static-debian12:nonroot` first; fork point clearly
+recorded in `packaging/engine/BUILD.bazel` if linker / runtime
+loader fails.**
+
+Reasoning:
+- The base image was already pulled in `MODULE.bazel` for the gateway
+  Slice 1 — zero new `oci.pull` cost to try it for engine.
+- Default Bazel `cc_binary` linkstatic produces a static-leaning ELF;
+  many real-world C++ binaries with grpc + protobuf + Abseil have
+  been successfully shipped on `static-debian12` (it's a documented
+  Aspect / bazel-contrib reference pattern).
+- The cost of trying-and-failing is one image push that won't `docker
+  run` cleanly in Phase 4c. The fix is a one-line BUILD swap.
+- The cost of preemptively choosing `base-debian12` is +10MB image
+  size forever, even if `static` would have worked.
+
+**Cross-compile from macOS to linux/amd64**: out of scope for Slice 4.
+The hermetic clang toolchain (ADR-0009) is configured for the host's
+native target, with no Linux sysroot. Adding a sysroot-cross-toolchain
+(zig cc, llvm-bootstrap-with-sysroot, or similar) is a meaningful
+infrastructure slice on its own.
+
+Slice 4 instead **trusts Camp B fully**: image is a CI artifact,
+ubuntu-latest runners build it natively, dev never builds the engine
+image. Deliberately did NOT add `target_compatible_with = linux`
+defensive gate — that would block IDE / `bazel query` analysis on
+Mac for no real safety win, and would be defensive coding against a
+scenario the doctrine forbids. If a Mac dev violates Camp B and runs
+`bazel build //packaging/engine:image` anyway, the resulting image
+contains a Mach-O binary inside a Linux image and `docker run` exits
+with "exec format error" — that failure is honest enough to teach
+the lesson.
+
+The gateway Slice 1's `engine_linux_amd64` cross-binary pattern does
+NOT apply to engine — Go has built-in cross-compile support, C++
+needs sysroot. Different language, different trade-off.
+
+**Models stay out of the image.** The engine reads model location via
+`AEGIS_MODEL_PATH` env var (default `models/ggml-tiny.en.bin`
+relative to CWD per `engine_cpp/cmd/engine/main.cc:68-73`).
+Production deployment expects `/models` to be backed by some
+persistent storage that ldz provisions; aegis-core specs the
+*requirement* (cross-repo [ldz issue #82](https://github.com/BinHsu/aegis-aws-landing-zone/issues/82))
+and lets ldz pick the AWS-side realization (EBS PV with snapshot/
+clone for ReadOnlyMany, S3 + Mountpoint CSI driver, or EFS). Image
+stays at ~50-100MB instead of 1.5GB+ if production models were baked
+in. Cost trade-off written out:
+
+| Model strategy | $/month | Pod cold-start | Dev iteration |
+| --- | --- | --- | --- |
+| Bake in image | ~$1.50 (10 tags × 1.5GB × $0.10/GB-month ECR; scales with tag count) | ~5s | Slow — every model upgrade rebuilds image |
+| Mount PV (selected) | ~$0.16 (2GB × $0.08/GB-month EBS gp3, ReadOnlyMany shareable) | ~15s incl. mount | Fast — model upgrade = update PVC |
+| Init container download | $0 storage but slow startup | 3-5 min cold start (downloads ~1.5GB on every pod restart) | Medium |
+
+**Engine smoke deferred.** Without a model the engine binary refuses
+to start. Slice 4's CI cannot meaningfully run `docker run aegis-engine`
+without first provisioning a tmpfs / volume with a test model fixture
+— that scaffolding belongs in the Phase 4c K8s manifest harness, not
+in the release workflow. For Slice 4, "image builds + pushes" is the
+deliverable; the runtime smoke gates re-emerge as Gate 9 (kubelet
+probe in EKS) once Phase 4c lands the deployment manifest.
 
 ## Cross-platform compilation — Option C
 
@@ -288,9 +355,16 @@ batch cross-target build flag for Slice 4 engine + Slice 5 frontend).
   digest change in `MODULE.bazel`.
 - Distroless `static` requires fully static binaries (no CGO). For the
   Go gateway this is satisfied via `pure = "on"` + `static = "on"` in
-  the `go_binary` rule. The C++ engine (Slice 4) will need a
-  different distroless variant (`base-debian12` or `cc-debian12`) —
-  documented as an open question to revisit when Slice 4 starts.
+  the `go_binary` rule. **Slice 4 update (2026-04-19):** the C++ engine
+  also tries `static-debian12:nonroot` first as Slice 4 ships, on the
+  bet that Bazel's default `linkstatic` produces a sufficiently
+  self-contained ELF for the grpc++ + Abseil + BoringSSL +
+  whisper.cpp/ggml/llama.cpp + libopus link line. If Phase 4c K8s
+  deployment surfaces a runtime libc/libstdc++ resolution failure,
+  the fix is a one-line BUILD swap to `@distroless_base` (requires
+  adding `distroless_base` to the `oci.pull` extension in
+  `MODULE.bazel`); the fork-point comment in
+  `packaging/engine/BUILD.bazel` is the contract.
 
 ### Out of scope (this ADR)
 
