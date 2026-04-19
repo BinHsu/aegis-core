@@ -10,7 +10,7 @@
 
 ## Context
 
-Slice 4 deliberately keeps models out of the engine OCI image (~50-100 MB image vs ~1.5 GB if baked in; ADR-0025 §"Slice 4 distroless variant decision"). Engine reads `/models` at runtime from a Kubernetes-mounted directory backed by ldz-provisioned storage (EBS PV, S3+CSI, or EFS — ldz #82).
+Slice 4 deliberately keeps models out of the engine OCI image (~50-100 MB image vs ~1.5 GB if baked in; ADR-0025 §"Slice 4 distroless variant decision"). Engine reads `/models` at runtime from a Kubernetes-mounted directory backed by ldz-provisioned storage. Recommended realization (ldz #82): **Amazon S3 Files** (April 2026 launch, EFS-backed S3 bucket-as-filesystem) — ~1ms `mmap` latency, native multi-pod attach with NFS close-to-open consistency, IAM-based access via the existing engine IRSA role, no separate CSI driver or PVC lifecycle. The contract below is storage-agnostic; engine doesn't know what's behind `/models`.
 
 The follow-on architectural question, surfaced during Slice 4 review: **what happens during a rolling deployment** when:
 
@@ -50,7 +50,9 @@ Three approaches were considered:
 
 #### Storage responsibilities (ldz)
 
-1. **Flat directory layout.** A single `/models` directory at the mount root holds all currently-required model files across all currently-deployed engine versions. No subdirectories required by the contract (though ldz may organize internally however helps their backup / lifecycle tooling).
+Recommended realization is **Amazon S3 Files** (see ldz #82 amendment 3) — managed service, IAM-native, ~1ms latency, multi-pod read by default. The five responsibilities below are storage-shape-agnostic; ldz can pick a different backing if S3 Files turns out unsuitable in eu-central-1.
+
+1. **Flat directory layout.** A single `/models` directory at the mount root holds all currently-required model files across all currently-deployed engine versions. No subdirectories required by the contract (though ldz may organize internally however helps their backup / lifecycle tooling). With S3 Files: this maps to a flat S3 bucket prefix; with EBS / EFS / Mountpoint CSI: a flat directory at the mount root.
 
 2. **Multi-version coexistence.** During a rolling deployment, both old-version and new-version model files MUST be present simultaneously. The PV / S3 prefix must be sized to hold the union of all active model versions, not just the latest.
 
