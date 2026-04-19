@@ -71,7 +71,7 @@ no Dockerfile-equivalent `useradd` action is required.
 | --- | --- | --- |
 | 4a-1 (this ADR) | `rules_oci` wiring + Go gateway image; local-only, no push | `aegis-gateway` |
 | 4a-2 ✅ | SBOM via Syft (CycloneDX) — `anchore/sbom-action` SHA-pinned, runs after smoke step against the loaded `aegis-gateway:dev-local` image; output `gateway.sbom.cdx.json` uploaded as workflow artifact | (no new image) |
-| 4a-3 | GitHub Actions ECR push via OIDC role from ldz #74 | (no new image) |
+| 4a-3 ✅ | GitHub Actions ECR push via OIDC role from ldz #74. Dedicated `release-staging-image.yml` workflow on `push: branches: [main]` (PR builds don't push). `oci_push` Bazel target consumes ECR auth from `aws-actions/amazon-ecr-login`'s populated docker config. Tag: `staging-<git_sha>`. Defense-in-depth re-smoke before push. | (no new image) |
 | 4a-4 | C++ engine image — exercises hermetic clang × distroless | `aegis-engine` |
 | 4a-5 | Frontend image — static asset packaging | `aegis-frontend` |
 | 4b   | Cosign signing + SLSA L3 + Trivy scan; SBOM becomes Cosign attestation (anchore/sbom-action supports natively) | (gates the above) |
@@ -151,7 +151,7 @@ chain that ends with the image running in staging EKS. The full chain:
 | --- | --- | --- | --- |
 | 1 | CI smoke (this ADR) | 4a-1 | image builds + boots + `/healthz` 200 + read-only rootfs honored |
 | 2 | SBOM emission | 4a-2 | every layer has a CycloneDX SBOM (`ARCHITECTURE.md` §10.1) |
-| 3 | ECR push via OIDC | 4a-3 | image lands in `251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core` |
+| 3 ✅ | ECR push via OIDC | 4a-3 | image lands in `251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core` tagged `staging-<git_sha>`; trigger restricted to `push: branches: [main]` matching the role's trust scope |
 | 4 | Trivy CVE scan | 4b | no critical CVE; otherwise push blocked |
 | 5 | Cosign keyless sign | 4b | image signed via GitHub OIDC → Sigstore Fulcio |
 | 6 | K8s manifest tag bump | 4a-3+ | `deployment.spec.containers.image` references the new digest |

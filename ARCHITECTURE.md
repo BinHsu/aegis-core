@@ -305,7 +305,9 @@ Bazel hermeticity gives Aegis a strong **build reproducibility** foundation, but
 
 ##### 10.1.1 OCI image construction
 
-Container images are built via **`rules_oci` v2** as Bazel actions — no `Dockerfile` and no Docker daemon participate in the build. Base images are **distroless** (`gcr.io/distroless/static-debian12:nonroot` for fully-static Go binaries; `base-debian12` / `cc-debian12` variants reserved for the C++ engine when Slice 4 lands), pinned by **SHA256 manifest-list digest** rather than by tag. Each image runs as **uid/gid 65532 (`nonroot`)**, ships no shell or package manager, and is read-only-rootfs-compatible. Multi-arch (`linux/amd64` + `linux/arm64/v8`) is enabled at the `oci.pull` extension level so EKS Graviton nodepools consume the same image index. Full rationale: ADR-0025; first wiring is in `packaging/gateway/BUILD.bazel`.
+Container images are built via **`rules_oci` v2** as Bazel actions — no `Dockerfile` and no Docker daemon participate in the build. Base images are **distroless** (`gcr.io/distroless/static-debian12:nonroot` for fully-static Go binaries; `base-debian12` / `cc-debian12` variants reserved for the C++ engine when Slice 4 lands), pinned by **SHA256 manifest-list digest** rather than by tag. Each image runs as **uid/gid 65532 (`nonroot`)**, ships no shell or package manager, and is read-only-rootfs-compatible. Multi-arch (`linux/amd64` + `linux/arm64/v8`) is enabled at the `oci.pull` extension level so EKS Graviton nodepools consume the same image index when Phase 4c lands the arm64 push.
+
+**Push to ECR** (live as of Phase 4a-3) is wired in a dedicated `.github/workflows/release-staging-image.yml` workflow that triggers only on `push: branches: [main]` — matching the trust scope of the `github-actions-aegis-core-ecr` IAM role provisioned in landing-zone (`refs/heads/main` only; `job_workflow_ref` further pinned by ldz to this specific workflow file). Tag scheme: `staging-<git_sha>`. PR builds validate (build + smoke + SBOM) but do not push, by design. Full rationale: ADR-0025; first wiring is in `packaging/gateway/BUILD.bazel`.
 
 #### 10.2 Static Analysis (SAST)
 
