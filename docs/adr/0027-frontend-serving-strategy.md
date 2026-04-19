@@ -130,6 +130,23 @@ S3 bucket name + CloudFront distribution ID parameterized via GitHub Actions rep
 - WAF / Shield protection on CloudFront — defense-in-depth for Phase 5 hardening, not Phase 4a.
 - Cache-control headers / cache-busting strategy for assets — Vite's content-hashed filenames cover the busting; cache-control headers tuning lives in CloudFront config (ldz side, ADR-019).
 
+## GH Variables over hardcode / Secrets (revision 2026-04-19)
+
+The first version of this ADR landed with workflow YAML referencing GitHub Secrets for the bucket / distribution-ID values (and an env-block for the role ARN). PR #35 then pivoted to hardcoded values across the env block, on the reasoning that AWS resource identifiers aren't credentials and shouldn't live in a write-only-readable vault. That second design surfaced a real cost: a forker would have to find/replace 5 touchpoints across 4 files to redirect deployment to their own AWS.
+
+Reviewer (user) raised the forker concern + then proposed using **GitHub Repository Variables** (added 2023) as the right home for non-credential config. Variables are:
+- Non-encrypted at rest (still scoped to repo, but readable from UI and `gh variable list` — debug-friendly)
+- Forker-overridable in their fork's settings — same workflow YAML deploys to their AWS with zero code edits
+- Named honestly: GitHub's "Secrets" feature is for credentials; "Variables" is for config
+
+Final design: nine atomic Variables (`AWS_ACCOUNT_ID`, `AWS_REGION`, `ECR_REPO_NAME`, `ECR_PUSH_ROLE_NAME`, `FRONTEND_PUSH_ROLE_NAME`, `FRONTEND_S3_BUCKET`, `FRONTEND_CLOUDFRONT_DISTRIBUTION_ID`, `FRONTEND_DOMAIN`, `GATEWAY_DOMAIN`). Workflow `env:` blocks compose ARNs from atomic components (`arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.FRONTEND_PUSH_ROLE_NAME }}`) so account-switching is a one-Variable change.
+
+`oci_push.repository` in `packaging/{gateway,engine}/BUILD.bazel` keeps a hardcoded upstream default (rules_oci requires `repository` at BUILD-time analysis), but CI ALWAYS passes `--repository` at runtime sourced from Variables — forker's CI overrides via the flag, no BUILD edit needed.
+
+Real secrets (`BUILDBUDDY_API_KEY` today; future Cosign signing keys) stay in GH Secrets. The Secrets-vs-Variables split now matches the real semantic split: credentials vs config.
+
+The fork runbook (`docs/runbooks/fork-and-self-deploy.md`) documents the 9 Variables a forker sets, with a primary path (Terraform outputs from forked ldz, per ldz #93) and a fallback path (`aws cli` queries) for the values.
+
 ## Cross-repo trail
 
 - ldz #90 (cross-repo Q&A): https://github.com/BinHsu/aegis-aws-landing-zone/issues/90

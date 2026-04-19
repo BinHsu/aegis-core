@@ -111,6 +111,15 @@ oci_load(
 # from Mac (`:gateway_linux_amd64` works), the push action itself
 # should only fire from CI on Linux runners. Server-side
 # defense-in-depth tracked in aegis-aws-landing-zone#83.
+#
+# `repository` here is rules_oci's BUILD-time-required default — used
+# only when `bazel run :push_staging` is invoked WITHOUT a runtime
+# `--repository` flag override. CI ALWAYS passes --repository at
+# runtime sourced from GitHub Variables (vars.AWS_ACCOUNT_ID +
+# vars.AWS_REGION + vars.ECR_REPO_NAME), so the value baked here is
+# only the upstream operator's local convenience default. Forker's
+# CI overrides via --repository, no BUILD edit needed (per ADR-0027
+# §"GH Variables over hardcode").
 oci_push(
     name = "push_staging",
     image = ":image",

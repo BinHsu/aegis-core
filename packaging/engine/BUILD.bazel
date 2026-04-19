@@ -151,6 +151,14 @@ oci_load(
 # aegis-aws-landing-zone#83 (ldz to add an ECR resource policy
 # denying ecr:PutImage from any principal other than the
 # github-actions-aegis-core-ecr OIDC role).
+#
+# `repository` is rules_oci's BUILD-time-required default — used only
+# when `bazel run :push_staging` is invoked WITHOUT a runtime
+# `--repository` flag override. CI ALWAYS passes --repository at
+# runtime sourced from GitHub Variables (vars.AWS_ACCOUNT_ID +
+# vars.AWS_REGION + vars.ECR_REPO_NAME). Forker's CI overrides via
+# --repository, no BUILD edit needed (per ADR-0027 §"GH Variables
+# over hardcode").
 oci_push(
     name = "push_staging",
     image = ":image",

@@ -35,18 +35,38 @@ on:
       - "package.json"
       - ".github/workflows/release-staging-frontend.yml"
 
+  # workflow_dispatch enables manual re-trigger from the GitHub Actions UI
+  # for break-glass scenarios — e.g., re-deploying the same SHA after a
+  # CloudFront cache hiccup, or validating IAM/role changes on the ldz
+  # side without forcing a no-op frontend commit. The same OIDC trust
+  # scope (refs/heads/main + job_workflow_ref) applies; manual dispatch
+  # only works from the main branch's workflow file, so the trust
+  # boundary is unchanged.
+  workflow_dispatch:
+
 permissions:
   id-token: write # OIDC token exchange to AWS
   contents: read # checkout
 
 env:
-  AWS_REGION: eu-central-1
-  FRONTEND_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-frontend
-  # Build-time env injected into Vite — these end up baked into the
-  # JS bundle as string literals (substituted at `vite build` time).
-  # Per ADR-0027, the SPA reaches the gateway at the API subdomain
-  # (cross-origin from `aegis-app.` → `aegis-api.`).
-  VITE_AEGIS_GATEWAY_ENDPOINT: https://aegis-api.staging.binhsu.org
+  # All AWS infra identifiers come from GitHub Repository Variables
+  # (`gh variable list`, also visible at Settings → Secrets and
+  # variables → Actions → Variables tab). Variables are non-encrypted,
+  # readable from UI/CLI for debugging, and forker-friendly: a fork
+  # operator overrides them in their repo settings without editing
+  # this YAML at all. ADR-0027 §"GH Variables over hardcode/Secrets"
+  # documents the pivot. Real secrets (BUILDBUDDY_API_KEY, future
+  # Cosign keys) stay in GH Secrets.
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  FRONTEND_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.FRONTEND_PUSH_ROLE_NAME }}
+  FRONTEND_BUCKET: ${{ vars.FRONTEND_S3_BUCKET }}
+  FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_CLOUDFRONT_DISTRIBUTION_ID }}
+  # Build-time env injected into Vite — baked into the JS bundle as
+  # string literals at `vite build` time. Per ADR-0027 the SPA reaches
+  # the gateway at the API subdomain (cross-origin `aegis-app.` →
+  # `aegis-api.`); the GATEWAY_DOMAIN variable holds just the
+  # hostname so the protocol prefix is composed here.
+  VITE_AEGIS_GATEWAY_ENDPOINT: https://${{ vars.GATEWAY_DOMAIN }}
   VITE_AEGIS_DEPLOY_MODE: cloud
 
 jobs:
@@ -91,42 +111,26 @@ jobs:
           role-session-name: aegis-core-frontend-deploy-${{ github.run_id }}
 
       - name: Sync bundle to S3
-        env:
-          BUCKET: ${{ secrets.AEGIS_FRONTEND_BUCKET_STAGING }}
         run: |
           set -euxo pipefail
-          if [ -z "${BUCKET:-}" ]; then
-            echo "ERROR: secret AEGIS_FRONTEND_BUCKET_STAGING is not set."
-            echo "ldz must provision the bucket and the value must be added"
-            echo "to repo settings → Secrets → Actions before this workflow"
-            echo "can succeed. See aegis-aws-landing-zone#91 for status."
-            exit 1
-          fi
           # --delete removes objects in S3 that aren't in dist/ — keeps
           # the bucket exactly mirroring the latest build (Vite uses
           # content-hashed filenames so this is safe; old hashes are
           # what cache invalidation handles below).
-          aws s3 sync frontend_web/dist/ "s3://${BUCKET}/" \
+          aws s3 sync frontend_web/dist/ "s3://${FRONTEND_BUCKET}/" \
             --delete \
             --cache-control "public, max-age=31536000, immutable" \
             --exclude "index.html"
           # index.html gets a short cache so users see new builds promptly
           # without waiting for the year-long immutable TTL on the assets
           # it references.
-          aws s3 cp frontend_web/dist/index.html "s3://${BUCKET}/index.html" \
+          aws s3 cp frontend_web/dist/index.html "s3://${FRONTEND_BUCKET}/index.html" \
             --cache-control "public, max-age=60, must-revalidate" \
             --content-type "text/html; charset=utf-8"
 
       - name: Invalidate CloudFront edge cache
-        env:
-          DISTRIBUTION_ID: ${{ secrets.AEGIS_FRONTEND_DISTRIBUTION_ID_STAGING }}
         run: |
           set -euxo pipefail
-          if [ -z "${DISTRIBUTION_ID:-}" ]; then
-            echo "ERROR: secret AEGIS_FRONTEND_DISTRIBUTION_ID_STAGING is not set."
-            echo "See AEGIS_FRONTEND_BUCKET_STAGING comment above."
-            exit 1
-          fi
           # Invalidation is THE single most important step for SPA deploys
           # — without it, users see stale index.html pointing at
           # already-deleted asset filenames. Vite's content-hashed asset
@@ -134,8 +138,8 @@ jobs:
           # selective invalidation needed, and CloudFront's first 1000
           # invalidations/month are free).
           INVALIDATION_ID=$(aws cloudfront create-invalidation \
-            --distribution-id "${DISTRIBUTION_ID}" \
+            --distribution-id "${FRONTEND_DISTRIBUTION_ID}" \
             --paths "/*" \
             --query 'Invalidation.Id' \
             --output text)
-          echo "::notice title=Frontend deployed::Bundle synced to s3://${{ secrets.AEGIS_FRONTEND_BUCKET_STAGING }}/, CloudFront invalidation ${INVALIDATION_ID} in flight"
+          echo "::notice title=Frontend deployed::Bundle synced to s3://${FRONTEND_BUCKET}/, CloudFront invalidation ${INVALIDATION_ID} in flight"
