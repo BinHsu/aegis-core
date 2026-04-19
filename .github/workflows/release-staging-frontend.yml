@@ -35,6 +35,15 @@ on:
       - "package.json"
       - ".github/workflows/release-staging-frontend.yml"
 
+  # workflow_dispatch enables manual re-trigger from the GitHub Actions UI
+  # for break-glass scenarios — e.g., re-deploying the same SHA after a
+  # CloudFront cache hiccup, or validating IAM/role changes on the ldz
+  # side without forcing a no-op frontend commit. The same OIDC trust
+  # scope (refs/heads/main + job_workflow_ref) applies; manual dispatch
+  # only works from the main branch's workflow file, so the trust
+  # boundary is unchanged.
+  workflow_dispatch:
+
 permissions:
   id-token: write # OIDC token exchange to AWS
   contents: read # checkout
