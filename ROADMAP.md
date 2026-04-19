@@ -1,7 +1,7 @@
 # 🗺️ Aegis Core (V2) — Roadmap
 
 **Current Status**: Architecture design complete; implementation bootstrapping pending.
-**Last Updated**: 2026-04-18 (Phase 3c exited — Slices 1-6 landed, 8-job CI matrix adds Playwright chromium + webkit live-browser gate)
+**Last Updated**: 2026-04-19 (Phase 4a EXITED — all 5 slices landed: rules_oci wiring + Go GW image + CI smoke + CycloneDX SBOM + ECR push + C++ engine image + S3+CloudFront frontend; Phase 4b mini-slice 1 also landed: Cosign keyless image signing + signed SBOM attestation. ADRs 0025 / 0026 v2 + Revision / 0027 / 0028 capture the design pivots driven by this session's reviews.)
 
 This roadmap reflects the architectural decisions captured in
 `ARCHITECTURE.md` and the ADRs in `docs/adr/`. Before working on any
