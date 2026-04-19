@@ -148,4 +148,47 @@ jobs:
           ./tools/bazelisk/bazelisk run //packaging/gateway:push_staging -- \
             --repository "${REPO}" \
             --tag "${TAG}"
-          echo "::notice title=Image pushed::${REPO}:${TAG}"
+          echo "::notice title=Gateway image pushed::${REPO}:${TAG}"
+
+      # Phase 4a Slice 4 — C++ engine image. Built on the same runner
+      # in the same workflow because:
+      #   - Same OIDC trust scope, same ECR repo (single repo,
+      #     image type distinguished by tag prefix).
+      #   - Same Bazel cache; engine binary build is already exercised
+      #     by ci-baseline.yml's bazel-unit-tests, so cache should be
+      #     hot here.
+      #   - One workflow file = one job_workflow_ref pin in ldz IAM
+      #     trust policy (ldz #79 Q4) — adding a separate workflow
+      #     would force ldz to expand the trust policy.
+      #
+      # NO engine smoke step at this slice. Engine on startup loads a
+      # ggml model from `/models` (engine_cpp/cmd/engine/main.cc:68-73);
+      # without the model, container crashes immediately. Smoke needs
+      # the Phase 4c K8s manifests to mount the model PV. For Slice 4
+      # we trust "image builds + pushes" as the deliverable.
+      #
+      # NO SBOM step yet either — Slice 4a-2 added gateway SBOM via
+      # anchore/sbom-action; engine SBOM follows the same pattern but
+      # is intentionally deferred so this slice stays focused on
+      # "engine image lands in ECR". Engine SBOM lands as a follow-up
+      # commit / mini-slice once we confirm the engine image strategy
+      # (especially distroless variant) is stable.
+      - name: Build engine OCI image
+        run: ./tools/bazelisk/bazelisk build //packaging/engine:image
+
+      - name: Push engine image to ECR (tag engine-staging-<git_sha>)
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set -euxo pipefail
+          # Tag convention: prefix `engine-` distinguishes engine images
+          # from gateway images in the shared `aegis-core` ECR repo.
+          # When ldz Q1 lands the prod ECR split, the prefix can drop
+          # since separate repos make the type unambiguous.
+          TAG="engine-staging-${GITHUB_SHA}"
+          REPO="${ECR_REGISTRY}/${ECR_REPOSITORY}"
+          echo "Pushing ${REPO}:${TAG}"
+          ./tools/bazelisk/bazelisk run //packaging/engine:push_staging -- \
+            --repository "${REPO}" \
+            --tag "${TAG}"
+          echo "::notice title=Engine image pushed::${REPO}:${TAG}"

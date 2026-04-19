@@ -1,0 +1,117 @@
+# Phase 4a Slice 4 — C++ engine distroless OCI image (Linux-only build).
+#
+# Strategy in ADR-0025; per-attribute rationale inline below.
+#
+# Targets:
+#   //packaging/engine:image         — OCI image directory (CI smoke target)
+#   //packaging/engine:image_load    — wraps :image for `docker load`
+#   //packaging/engine:push_staging  — pushes to ECR via release-staging-image.yml
+#
+# CRITICAL DESIGN DECISIONS (recorded for next contributor):
+#
+# 1. NO target_compatible_with gate. Camp B (ADR-0025) commits the
+#    project to "image is a CI artifact, dev never builds the image".
+#    CI is always ubuntu-latest (Linux exec) — the Mac case literally
+#    cannot fire under the trust model. Adding a `target_compatible_with`
+#    gate would be defensive coding against a scenario the doctrine
+#    forbids — and would break Mac-side `bazel query` / IDE completion
+#    for no real safety win.
+#
+#    What happens if a Mac dev violates Camp B and runs
+#    `bazel build //packaging/engine:image` anyway? The engine cc_binary
+#    builds Mach-O arm64; pkg_tar packs it; image builds successfully;
+#    `docker run aegis-engine:dev-local` exits with "exec format error".
+#    That failure is honest and loud — Camp B says don't do this; if
+#    you did it, you see why. Hermetic clang doesn't ship a Linux
+#    sysroot for cross-compile, so the right answer is "build on the
+#    correct host", not "block analysis on the wrong host".
+#
+# 2. Trying distroless `static-debian12:nonroot` first (vs `base`).
+#    The C++ engine's link line is grpc++ + Abseil + BoringSSL +
+#    protobuf + whisper.cpp/ggml/llama.cpp via rules_foreign_cc CMake
+#    + libopus. Default Bazel cc_binary linkstatic produces a static
+#    binary, but BoringSSL historically uses NSS modules for DNS that
+#    require glibc-with-NSS even when statically linked elsewhere,
+#    and rules_foreign_cc CMake recipes don't always honor -static.
+#
+#    If `:image` fails to build because of dynamic-lib references,
+#    swap base = "@distroless_base" (requires adding distroless_base
+#    to MODULE.bazel oci.pull). This BUILD's comment block is the
+#    ground-truth fork point — do NOT silently flip without updating
+#    ADR-0025 §"Slice 4 distroless variant decision".
+#
+# 3. Models NOT shipped in image. Engine reads model path via
+#    `AEGIS_MODEL_PATH` env var (`engine_cpp/cmd/engine/main.cc:68-73`)
+#    or default `models/ggml-tiny.en.bin` relative to CWD. Production
+#    image expects `/models` to be backed by some persistent storage
+#    that ldz provisions (EBS PV, S3+CSI driver, EFS — ldz's call
+#    based on AWS-side trade-offs). aegis-core's contract: image is
+#    storage-agnostic; engine works as long as the directory is
+#    mounted at runtime with the manifest-required gguf files. Open
+#    cross-repo: ldz issue #82 (filed in this slice to spec the
+#    model-storage requirement; ldz picks the AWS-side realization
+#    among EBS PV / S3+CSI / EFS based on their operational trade-
+#    offs). Image stays small (~50-100MB), model upgrades don't
+#    rebuild image, storage cost decoupled from artifact rotation.
+
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+
+# Stage the engine binary at /usr/local/bin/engine via the
+# pkg_files → pkg_tar pattern (Slice 1 lesson — Incident 12 in
+# docs/incidents.md): pkg_files's `renames` is the documented robust
+# rename mechanism; pkg_tar's `remap_paths` is fragile.
+pkg_files(
+    name = "engine_files",
+    srcs = ["//engine_cpp/cmd/engine:engine"],
+    attributes = pkg_attributes(mode = "0755"),
+    prefix = "/usr/local/bin",
+    renames = {
+        "//engine_cpp/cmd/engine:engine": "engine",
+    },
+)
+
+pkg_tar(
+    name = "engine_layer",
+    srcs = [":engine_files"],
+)
+
+oci_image(
+    name = "image",
+    base = "@distroless_static",
+    entrypoint = ["/usr/local/bin/engine"],
+    # Engine listens on :50051 for gRPC (engine_cpp/cmd/engine/main.cc:55).
+    # Informational metadata; NetworkPolicy is the actual enforcement
+    # layer in Phase 4c.
+    exposed_ports = ["50051/tcp"],
+    labels = {
+        "org.opencontainers.image.source": "https://github.com/BinHsu/aegis-core",
+        "org.opencontainers.image.title": "aegis-engine",
+        "org.opencontainers.image.description": "Aegis Engine — C++ inference engine (whisper.cpp + ggml + llama.cpp).",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+    },
+    tars = [":engine_layer"],
+    user = "nonroot",
+    visibility = ["//visibility:public"],
+)
+
+# Local smoke (CI use): `bazel run //packaging/engine:image_load`
+# loads into docker daemon. Same usage shape as the gateway image.
+oci_load(
+    name = "image_load",
+    image = ":image",
+    repo_tags = ["aegis-engine:dev-local"],
+)
+
+# ECR push target — consumed by .github/workflows/release-staging-image.yml.
+# Same repository as gateway image (single ECR repo, image type
+# distinguished by tag prefix: `staging-<sha>` for gateway,
+# `engine-staging-<sha>` for engine). When prod-cut splits ECR repos
+# (ldz #79 Q1 / Phase 4c+), this rule's repository attribute updates.
+oci_push(
+    name = "push_staging",
+    image = ":image",
+    repository = "251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core",
+    visibility = ["//visibility:public"],
+)
