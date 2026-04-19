@@ -314,7 +314,7 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 - [~] Produce SBOMs (Syft / CycloneDX) alongside every image (ARCH §10.1) — gateway image done in Slice 2; engine + frontend land with their respective image slices (4 / 5)
 
 ### Phase 4b: Sign & Scan
-- [ ] Cosign / Sigstore signing in GitHub Actions using OIDC (ARCH §10.1)
+- [x] Cosign / Sigstore signing in GitHub Actions using OIDC (ARCH §10.1) — keyless via `sigstore/cosign-installer` SHA-pinned in `release-staging-image.yml`. Both gateway + engine images signed by manifest digest after push; gateway SBOM (Slice 4a-2's CycloneDX) attached as signed CycloneDX attestation; Rekor public transparency log records every signing event. ADR-0028 documents the Sigstore + keyless choice. Engine SBOM attestation deferred (engine SBOM gen still pending — separate mini-slice). Verification side handed to ldz via cross-repo issue for Kyverno verify-image admission in EKS.
 - [ ] SLSA Level 3 provenance emission
 - [ ] Trivy container scan; block push on critical CVEs
 - [ ] kube-score + kube-bench manifest scan
