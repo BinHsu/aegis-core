@@ -14,21 +14,34 @@
 #   - Cosign / SLSA L3 (Phase 4b)
 
 load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 
-# Layer carrying the gateway binary at /usr/local/bin/gateway.
-# Consumes the explicit linux/amd64 cross-binary (ADR-0025 dev/CI split:
-# image is always a Linux artifact, regardless of host running the
-# build). remap_paths renames the cross-binary's filename
-# `gateway_linux_amd64` to the entrypoint-friendly `gateway` inside the
-# image — pkg_tar materialises DefaultInfo using the rule's name.
+# Stage the gateway cross-binary at /usr/local/bin/gateway via the
+# pkg_files → pkg_tar pattern. We use pkg_files (not pkg_tar's
+# remap_paths shortcut) because:
+#   - pkg_files's `renames` is the documented robust mechanism for
+#     renaming the in-tar file regardless of upstream basename;
+#   - pkg_tar's `remap_paths` matches as a path prefix and is
+#     sensitive to whether the tar entries carry a leading slash —
+#     fragile across rules_pkg versions.
+# The image entrypoint is /usr/local/bin/gateway (clean Unix
+# convention); the underlying cross-binary's filename
+# `gateway_linux_amd64` is an artefact of the go_cross_binary rule
+# name and is hidden from the runtime via this rename.
+pkg_files(
+    name = "gateway_files",
+    srcs = ["//gateway_go/cmd/gateway:gateway_linux_amd64"],
+    attributes = pkg_attributes(mode = "0755"),
+    prefix = "/usr/local/bin",
+    renames = {
+        "//gateway_go/cmd/gateway:gateway_linux_amd64": "gateway",
+    },
+)
+
 pkg_tar(
     name = "gateway_layer",
-    srcs = ["//gateway_go/cmd/gateway:gateway_linux_amd64"],
-    package_dir = "/usr/local/bin",
-    remap_paths = {
-        "/usr/local/bin/gateway_linux_amd64": "/usr/local/bin/gateway",
-    },
+    srcs = [":gateway_files"],
 )
 
 # Compose the image:
