@@ -135,7 +135,25 @@ jobs:
         # aws-actions/amazon-ecr-login v2.1.3 (released 2026-04-15)
         uses: aws-actions/amazon-ecr-login@56e477618cce98febf3d0a2c579775a8f99ea5c1
 
+      # Phase 4a Slice 2 — gateway image SBOM (CycloneDX), reused as
+      # signed attestation in the Cosign step further down. This step
+      # also lives in ci-baseline.yml's bazel-unit-tests job for PR
+      # validation; replicating here so release-time artifacts are
+      # self-contained (Cosign attest needs the file on disk in the
+      # same workflow run as the push + sign steps).
+      - name: Generate gateway image SBOM (CycloneDX)
+        # anchore/sbom-action v0.24.0 (released 2026-03-20)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: aegis-gateway:dev-local
+          format: cyclonedx-json
+          artifact-name: gateway.sbom.cdx.json
+          output-file: gateway.sbom.cdx.json
+          upload-artifact: true
+          upload-release-assets: false
+
       - name: Push gateway image to ECR (tag staging-<git_sha>)
+        id: push-gateway
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
@@ -148,10 +166,16 @@ jobs:
           TAG="staging-${GITHUB_SHA}"
           REPO="${ECR_REGISTRY}/${ECR_REPOSITORY}"
           echo "Pushing ${REPO}:${TAG}"
+          # Capture push output so we can extract the manifest digest
+          # for the downstream Cosign sign + attest steps. oci_push
+          # prints the digest as `<repo>@sha256:...` on its last lines.
           ./tools/bazelisk/bazelisk run //packaging/gateway:push_staging -- \
             --repository "${REPO}" \
-            --tag "${TAG}"
-          echo "::notice title=Gateway image pushed::${REPO}:${TAG}"
+            --tag "${TAG}" 2>&1 | tee /tmp/gateway-push.log
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/gateway-push.log | tail -1)
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REPO}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Gateway image pushed::${REPO}:${TAG} (${DIGEST})"
 
       # Phase 4a Slice 4 — C++ engine image. Built on the same runner
       # in the same workflow because:
@@ -180,6 +204,7 @@ jobs:
         run: ./tools/bazelisk/bazelisk build //packaging/engine:image
 
       - name: Push engine image to ECR (tag engine-staging-<git_sha>)
+        id: push-engine
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
@@ -193,5 +218,51 @@ jobs:
           echo "Pushing ${REPO}:${TAG}"
           ./tools/bazelisk/bazelisk run //packaging/engine:push_staging -- \
             --repository "${REPO}" \
-            --tag "${TAG}"
-          echo "::notice title=Engine image pushed::${REPO}:${TAG}"
+            --tag "${TAG}" 2>&1 | tee /tmp/engine-push.log
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/engine-push.log | tail -1)
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REPO}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Engine image pushed::${REPO}:${TAG} (${DIGEST})"
+
+      # Phase 4b mini-slice — Sigstore Cosign keyless signing.
+      # Signs both image manifests + attaches gateway SBOM as a signed
+      # attestation. Keyless = no long-lived signing key to manage; the
+      # GitHub OIDC token (we already have id-token: write for AWS) is
+      # exchanged with Sigstore Fulcio CA for an ephemeral cert,
+      # signature is recorded in Rekor public transparency log.
+      #
+      # Cost: $0/month (Sigstore Public Good Service), ~30s/run.
+      # Verification: Phase 4b later wires Kyverno verify-image policy
+      # in K8s admission via cross-repo coord with ldz; until then,
+      # signatures are verifiable but not yet enforced at deploy.
+      #
+      # ADR-0028 documents the Sigstore choice + keyless-vs-keyed
+      # rationale. Engine SBOM attestation deferred (engine SBOM
+      # generation is itself deferred per ROADMAP).
+      - name: Install Cosign
+        # sigstore/cosign-installer v4.1.1 (released 2026-03-26)
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003
+
+      - name: Sign gateway image (Cosign keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euxo pipefail
+          cosign sign --yes "${{ steps.push-gateway.outputs.ref }}"
+
+      - name: Attach gateway SBOM as Cosign attestation (CycloneDX predicate)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euxo pipefail
+          cosign attest --yes \
+            --predicate gateway.sbom.cdx.json \
+            --type cyclonedx \
+            "${{ steps.push-gateway.outputs.ref }}"
+
+      - name: Sign engine image (Cosign keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euxo pipefail
+          cosign sign --yes "${{ steps.push-engine.outputs.ref }}"
