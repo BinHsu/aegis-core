@@ -1,0 +1,151 @@
+name: Release staging image to ECR
+
+# Phase 4a Slice 3 — pushes the gateway OCI image to staging ECR
+# after every merge to main.
+#
+# Trust scope (per ldz #75 + #79): GitHub OIDC role
+# `github-actions-aegis-core-ecr` accepts only:
+#   sub              = repo:BinHsu/aegis-core:ref:refs/heads/main
+#   job_workflow_ref = BinHsu/aegis-core/.github/workflows/release-staging-image.yml@refs/heads/main
+#                      (latter pinned by ldz; this is why push lives in a
+#                      dedicated workflow file, not inside ci-baseline.yml —
+#                      tighter least-privilege blast radius for OIDC)
+#
+# Workflow does NOT trigger on PRs by design. PRs already validate
+# build + smoke + SBOM via ci-baseline.yml; ECR push is a release
+# concern that fires only after merge.
+
+on:
+  push:
+    branches: [main]
+    # Pure-docs / config-only commits that can't change the image bits
+    # don't need a re-push. Build / proto / infra commits do.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+
+# Least privilege: only this workflow gets id-token write. ci-baseline.yml
+# stays tokenless (`permissions: read-all` defaults).
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  ECR_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-ecr
+  ECR_REPOSITORY: aegis-core
+
+jobs:
+  push-staging-image:
+    name: Push staging gateway image to ECR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.bazel_cache
+            ${{ github.workspace }}/.bazelisk
+            /tmp/aegis-bazel-*
+          # Reuse bazel-unit's cache from the just-merged PR if available,
+          # otherwise fall back to push-specific cache. Same MODULE.bazel
+          # hash key keeps the buckets compatible.
+          key: bazel-push-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc') }}
+          restore-keys: |
+            bazel-push-${{ runner.os }}-
+            bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc') }}
+            bazel-unit-${{ runner.os }}-
+
+      # Same BuildBuddy wiring as ci-baseline.yml's bazel-unit-tests job.
+      # Forks without the secret degrade gracefully to local execution.
+      - name: Configure BuildBuddy remote cache
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          if [ -z "${BUILDBUDDY_API_KEY:-}" ]; then
+            echo "BUILDBUDDY_API_KEY not set — skipping remote cache (normal in forks)"
+            exit 0
+          fi
+          echo "::add-mask::$BUILDBUDDY_API_KEY"
+          cat > .bazelrc.user <<EOF
+          build --remote_cache=grpcs://remote.buildbuddy.io
+          build --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY
+          build --bes_backend=grpcs://remote.buildbuddy.io
+          build --bes_results_url=https://app.buildbuddy.io/invocation/
+          build --remote_timeout=3600
+          EOF
+
+      - name: Build gateway OCI image
+        run: ./tools/bazelisk/bazelisk build //packaging/gateway:image
+
+      # Defense-in-depth re-smoke: the image being pushed must still
+      # boot. ci-baseline.yml on the PR validated the same commit, but
+      # re-running on main pre-empts any race / artifact drift between
+      # PR validation and merge. ~30s of insurance for ~zero cost.
+      - name: Smoke-test image (boot + healthz + read-only rootfs)
+        run: |
+          set -euxo pipefail
+          ./tools/bazelisk/bazelisk run //packaging/gateway:image_load
+          docker run -d --name gw \
+            --read-only \
+            --user 65532:65532 \
+            -p 18080:8080 \
+            aegis-gateway:dev-local
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://localhost:18080/healthz > /tmp/healthz.json; then
+              echo "healthz returned 200 after ${i}s"
+              cat /tmp/healthz.json
+              break
+            fi
+            sleep 1
+            if [ "$i" = "10" ]; then
+              echo "ERROR: healthz never returned 200 within 10s"
+              docker logs gw
+              exit 1
+            fi
+          done
+          docker logs gw
+          docker stop gw
+          docker rm gw
+
+      # OIDC token → STS AssumeRoleWithWebIdentity → temporary creds
+      # exported as env vars for subsequent docker / aws CLI calls.
+      - name: Configure AWS credentials (OIDC)
+        # aws-actions/configure-aws-credentials v6.1.0 (released 2026-04-06)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ECR_ROLE_ARN }}
+          role-session-name: aegis-core-ecr-push-${{ github.run_id }}
+
+      # Populates ~/.docker/config.json with ECR auth so subsequent
+      # oci_push / docker push calls authenticate automatically.
+      # Output `registry` carries the canonical ECR hostname.
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        # aws-actions/amazon-ecr-login v2.1.3 (released 2026-04-15)
+        uses: aws-actions/amazon-ecr-login@56e477618cce98febf3d0a2c579775a8f99ea5c1
+
+      - name: Push gateway image to ECR (tag staging-<git_sha>)
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set -euxo pipefail
+          # Tag convention per ROADMAP §Phase 4a (line ~305):
+          # `staging-<git_sha>`. Full SHA (40 chars) for unambiguous
+          # traceability — kubelet truncates in pod descriptions but
+          # the image manifest digest is immutable so audit always
+          # back-traces to the exact commit.
+          TAG="staging-${GITHUB_SHA}"
+          REPO="${ECR_REGISTRY}/${ECR_REPOSITORY}"
+          echo "Pushing ${REPO}:${TAG}"
+          ./tools/bazelisk/bazelisk run //packaging/gateway:push_staging -- \
+            --repository "${REPO}" \
+            --tag "${TAG}"
+          echo "::notice title=Image pushed::${REPO}:${TAG}"

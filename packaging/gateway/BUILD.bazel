@@ -13,7 +13,7 @@
 #   - ECR push (Slice 3, GitHub Actions OIDC role)
 #   - Cosign / SLSA L3 (Phase 4b)
 
-load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 
@@ -81,4 +81,33 @@ oci_load(
     name = "image_load",
     image = ":image",
     repo_tags = ["aegis-gateway:dev-local"],
+)
+
+# ECR push target — Phase 4a Slice 3.
+#
+# `repository` is BUILD-time required by rules_oci v2 (the runtime
+# `--repository` flag is an OVERRIDE, not a substitute — empty BUILD
+# value fails analysis). The hardcoded value is fine: account ID +
+# region + repo path are already public via ldz #11 + #75 + the trust
+# policy ARN in the consuming workflow file; nothing secret leaks here.
+# Runtime override with --repository remains available for ad-hoc
+# pushes to alternate registries (preview / personal AWS, etc.).
+#
+# `remote_tags` is intentionally omitted: tags are git-sha-derived
+# (`staging-<git_sha>`), computable only at CI runtime. Pass via
+# `--tag staging-<sha>` at `bazel run` time.
+#
+# rules_oci's oci_push consults the standard docker config
+# (~/.docker/config.json) for registry auth, which the consuming
+# workflow's `aws-actions/amazon-ecr-login` step populates.
+#
+# CI invocation (from .github/workflows/release-staging-image.yml):
+#   bazel run //packaging/gateway:push_staging -- \
+#     --repository ${ECR_REGISTRY}/aegis-core \
+#     --tag staging-${GITHUB_SHA}
+oci_push(
+    name = "push_staging",
+    image = ":image",
+    repository = "251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core",
+    visibility = ["//visibility:public"],
 )
