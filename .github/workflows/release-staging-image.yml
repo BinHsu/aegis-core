@@ -28,9 +28,16 @@ on:
 
 # Least privilege: only this workflow gets id-token write. ci-baseline.yml
 # stays tokenless (`permissions: read-all` defaults).
+#
+# attestations: write — required by `actions/attest-build-provenance`
+# (Phase 4b SLSA L3 mini-slice, ADR-0029) to publish SLSA provenance
+# attestations to the GitHub-side attestation store. Same OIDC trust
+# scope (refs/heads/main + job_workflow_ref) gates issuance, so the
+# blast-radius widening is bounded.
 permissions:
   id-token: write
   contents: read
+  attestations: write
 
 env:
   # All AWS infra identifiers come from GitHub Repository Variables
@@ -260,9 +267,52 @@ jobs:
             --type cyclonedx \
             "${{ steps.push-gateway.outputs.ref }}"
 
+      # Phase 4b mini-slice 2 — Trivy CVE scan blocking on CRITICAL.
+      # ADR-0029 documents the threshold + tightening path. image-ref
+      # uses the @sha256: digest so we're scanning EXACTLY what we just
+      # signed (no late race against a re-tagged image).
+      - name: Trivy CVE scan — gateway image (block on CRITICAL)
+        # aquasecurity/trivy-action v0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.push-gateway.outputs.ref }}
+          severity: CRITICAL
+          exit-code: "1"
+          format: table
+          ignore-unfixed: true
+
+      # Phase 4b mini-slice 3 — SLSA Level 3 build provenance.
+      # In-toto v1 statement: this digest was produced by THIS workflow
+      # run, on a GitHub-hosted runner, from commit <git-sha> on `main`.
+      # Stored both in the GitHub attestation store + pushed to ECR
+      # alongside the image as an OCI artifact.
+      - name: Generate SLSA L3 build provenance — gateway
+        # actions/attest-build-provenance v4.1.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        with:
+          subject-name: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          subject-digest: ${{ steps.push-gateway.outputs.digest }}
+          push-to-registry: true
+
       - name: Sign engine image (Cosign keyless)
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
           set -euxo pipefail
           cosign sign --yes "${{ steps.push-engine.outputs.ref }}"
+
+      - name: Trivy CVE scan — engine image (block on CRITICAL)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.push-engine.outputs.ref }}
+          severity: CRITICAL
+          exit-code: "1"
+          format: table
+          ignore-unfixed: true
+
+      - name: Generate SLSA L3 build provenance — engine
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        with:
+          subject-name: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          subject-digest: ${{ steps.push-engine.outputs.digest }}
+          push-to-registry: true

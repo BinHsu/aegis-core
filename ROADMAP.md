@@ -315,6 +315,8 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 
 ### Phase 4b: Sign & Scan
 - [x] Cosign / Sigstore signing in GitHub Actions using OIDC (ARCH §10.1) — keyless via `sigstore/cosign-installer` SHA-pinned in `release-staging-image.yml`. Both gateway + engine images signed by manifest digest after push; gateway SBOM (Slice 4a-2's CycloneDX) attached as signed CycloneDX attestation; Rekor public transparency log records every signing event. ADR-0028 documents the Sigstore + keyless choice. Engine SBOM attestation deferred (engine SBOM gen still pending — separate mini-slice). Verification side handed to ldz via cross-repo issue for Kyverno verify-image admission in EKS.
+- [x] SLSA Level 3 provenance emission (ADR-0029) — `actions/attest-build-provenance` SHA-pinned generates in-toto v1 statements per image (gateway + engine), referencing exact Git commit + GitHub-hosted runner + workflow path. Pushed to ECR alongside the image as an OCI attestation artifact + stored in the GitHub attestation store. Same OIDC trust scope as Cosign; Kyverno admission (ldz #96) can validate both signed AND SLSA-attested.
+- [x] Trivy container scan; block push on critical CVEs (ADR-0029) — `aquasecurity/trivy-action` SHA-pinned scans gateway + engine images by `@sha256:` digest after push (no tag-race), `severity: CRITICAL` + `ignore-unfixed: true` initial threshold; `exit-code: 1` blocks workflow on CRITICAL findings. Tighten to `HIGH,CRITICAL` is a one-line change when ops bandwidth supports the triage.
 - [ ] SLSA Level 3 provenance emission
 - [ ] Trivy container scan; block push on critical CVEs
 - [ ] kube-score + kube-bench manifest scan
