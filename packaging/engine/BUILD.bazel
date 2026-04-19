@@ -53,6 +53,20 @@
 #    among EBS PV / S3+CSI / EFS based on their operational trade-
 #    offs). Image stays small (~50-100MB), model upgrades don't
 #    rebuild image, storage cost decoupled from artifact rotation.
+#
+#    HONEST GAP: today's engine main.cc:68-73 ASSUMES the model file
+#    exists at the configured path and crashes if missing — there
+#    is no manifest-driven pre-flight that walks `models/manifest.json`,
+#    verifies each `"required": true` model is present at the expected
+#    path with the expected SHA256, and fails loudly with an
+#    operator-readable error before starting the gRPC server. That
+#    pre-flight is real Phase 4c scope (tracked in ROADMAP Phase 4c
+#    "engine startup manifest validation"), not Slice 4 packaging
+#    scope. For Slice 4 we package today's engine as-is — production
+#    deployment without the pre-flight is acceptable for staging
+#    smoke (loud crash with a clear "couldn't open file X" message),
+#    not acceptable for prod (which the prod-cut PR / Phase 4c will
+#    block on the pre-flight landing).
 
 load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
@@ -109,9 +123,25 @@ oci_load(
 # distinguished by tag prefix: `staging-<sha>` for gateway,
 # `engine-staging-<sha>` for engine). When prod-cut splits ECR repos
 # (ldz #79 Q1 / Phase 4c+), this rule's repository attribute updates.
+#
+# `target_compatible_with = linux`: deliberately HERE (not on :image).
+# The build-the-image case has no shared-state side effect — harmless
+# if a Mac dev runs it (they get a broken local artifact, no
+# contamination). The push case uploads to a shared registry and
+# would pollute it with a Mach-O binary tagged as a release artifact.
+# Asymmetric blast radii get asymmetric defenses (CLAUDE.md
+# "Executing actions with care": hard-to-reverse operations need
+# guards even when the doctrine forbids them — Camp B trust covers
+# build, not push).
+#
+# Server-side defense-in-depth tracked separately in
+# aegis-aws-landing-zone#83 (ldz to add an ECR resource policy
+# denying ecr:PutImage from any principal other than the
+# github-actions-aegis-core-ecr OIDC role).
 oci_push(
     name = "push_staging",
     image = ":image",
     repository = "251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core",
+    target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//visibility:public"],
 )

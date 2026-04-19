@@ -105,9 +105,16 @@ oci_load(
 #   bazel run //packaging/gateway:push_staging -- \
 #     --repository ${ECR_REGISTRY}/aegis-core \
 #     --tag staging-${GITHUB_SHA}
+# `target_compatible_with = linux`: same Slice 4 reasoning as
+# packaging/engine/BUILD.bazel — pushing builds shared-state side
+# effect; even though gateway is pure-Go and cross-compiles cleanly
+# from Mac (`:gateway_linux_amd64` works), the push action itself
+# should only fire from CI on Linux runners. Server-side
+# defense-in-depth tracked in aegis-aws-landing-zone#83.
 oci_push(
     name = "push_staging",
     image = ":image",
     repository = "251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core",
+    target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//visibility:public"],
 )
