@@ -70,11 +70,21 @@ no Dockerfile-equivalent `useradd` action is required.
 | Slice | Scope | Image set |
 | --- | --- | --- |
 | 4a-1 (this ADR) | `rules_oci` wiring + Go gateway image; local-only, no push | `aegis-gateway` |
-| 4a-2 | SBOM via Syft (CycloneDX) attached to each image | (no new image) |
+| 4a-2 ✅ | SBOM via Syft (CycloneDX) — `anchore/sbom-action` SHA-pinned, runs after smoke step against the loaded `aegis-gateway:dev-local` image; output `gateway.sbom.cdx.json` uploaded as workflow artifact | (no new image) |
 | 4a-3 | GitHub Actions ECR push via OIDC role from ldz #74 | (no new image) |
 | 4a-4 | C++ engine image — exercises hermetic clang × distroless | `aegis-engine` |
 | 4a-5 | Frontend image — static asset packaging | `aegis-frontend` |
-| 4b   | Cosign signing + SLSA L3 + Trivy scan | (gates the above) |
+| 4b   | Cosign signing + SLSA L3 + Trivy scan; SBOM becomes Cosign attestation (anchore/sbom-action supports natively) | (gates the above) |
+
+#### Why SBOM lives in CI, not the Bazel graph
+
+The image is itself a Bazel artifact (`bazel build //packaging/gateway:image`), so a knee-jerk read of "hermetic everything" would put the SBOM-generating action in the Bazel graph too. We deliberately don't:
+
+- Camp B already says image-as-artifact is a CI concern, not a dev concern (devs run `bazel run :gateway` for development; nobody at dev time wants to inspect the image's package list).
+- SBOM tooling has a maintained official action (`anchore/sbom-action`); reimplementing that with `http_archive` + genrule is reinventing what the upstream maintainer ships, with no reproducibility win once we SHA-pin the action.
+- GitHub Actions are a different trust layer than build toolchains. Pinning `anchore/sbom-action@<sha>` is the same discipline as pinning `actions/checkout@v4` to a SHA — not an escalation of supply-chain surface.
+
+This split applies to the broader release-artifact-tooling family (Trivy in Phase 4b, Cosign signing, SLSA provenance): all of them live as SHA-pinned official actions in CI, none of them get a Bazel rule.
 
 ## Dev experience vs CI validation — Camp B / dev-CI split
 

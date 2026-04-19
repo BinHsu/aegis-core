@@ -304,14 +304,14 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 ### Phase 4a: Package
 - [~] Bazel `rules_oci`: package C++ engine, Go GW, and frontend into Distroless OCI images
   - [x] Slice 1 — `rules_oci` + `rules_pkg` wired; Go gateway `aegis-gateway` image local-buildable, distroless `static-debian12:nonroot` base pinned by digest (ADR-0025)
-  - [ ] Slice 2 — SBOM generation (Syft / CycloneDX) per image
+  - [x] Slice 2 — SBOM generation (CycloneDX via `anchore/sbom-action` SHA-pinned syft v0.24.0) — gateway image SBOM emitted as workflow artifact `gateway-sbom-cyclonedx`; Phase 4b will sign as Cosign attestation
   - [ ] Slice 3 — GitHub Actions ECR push via `github-actions-aegis-core-ecr` OIDC role (ldz #74; gated on ldz `terraform-apply-baseline.yml` per ldz #75)
-  - [ ] Slice 4 — C++ engine `aegis-engine` image (distroless `base-debian12` or `cc-debian12`, hermetic clang × dynamic-lib story)
-  - [ ] Slice 5 — Frontend `aegis-frontend` image (static asset packaging)
+  - [ ] Slice 4 — C++ engine `aegis-engine` image (distroless `base-debian12` or `cc-debian12`, hermetic clang × dynamic-lib story) + engine-image SBOM
+  - [ ] Slice 5 — Frontend `aegis-frontend` image (static asset packaging) + frontend-image SBOM
 - [~] Each image runs as non-root with dropped capabilities and read-only root filesystem except tmpfs mounts
   - [x] Gateway image: `user = "nonroot"` (uid 65532), entrypoint is binary path (no shell), distroless ships no package manager (Slice 1)
 - [ ] Image tagging convention: `prod-<semver>-<git_sha>`, `staging-<git_sha>`, `dev-<git_sha>` — wired in Slice 3 alongside ECR push
-- [ ] Produce SBOMs (Syft / CycloneDX) alongside every image (ARCH §10.1) — Slice 2
+- [~] Produce SBOMs (Syft / CycloneDX) alongside every image (ARCH §10.1) — gateway image done in Slice 2; engine + frontend land with their respective image slices (4 / 5)
 
 ### Phase 4b: Sign & Scan
 - [ ] Cosign / Sigstore signing in GitHub Actions using OIDC (ARCH §10.1)

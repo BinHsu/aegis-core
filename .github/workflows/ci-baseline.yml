@@ -246,6 +246,31 @@ jobs:
           docker stop gw
           docker rm gw
 
+      # Phase 4a Slice 2 — SBOM (CycloneDX) for the gateway image, per
+      # ADR-0025 §"Sequencing across slices" and ARCHITECTURE.md §10.1
+      # ("every release artifact ... produces a CycloneDX or SPDX SBOM
+      # via Syft"). Generated against the docker image that the smoke
+      # step just verified — `aegis-gateway:dev-local` is still loaded
+      # in the runner's docker daemon (only the container was removed,
+      # the image stays). Pin by commit SHA, not @v0, for reproducibility
+      # — bumping syft is a 1-line PR with the new SHA.
+      #
+      # Output is a workflow artifact `gateway-sbom-cyclonedx` retained
+      # 90 days; Slice 4a-3 (ECR push) will pull it via download-artifact
+      # to attach alongside the image; Phase 4b will sign it as a
+      # Cosign attestation (anchore/sbom-action supports `cosign-*`
+      # inputs natively at that point).
+      - name: Generate gateway image SBOM (CycloneDX)
+        # anchore/sbom-action v0.24.0 (released 2026-03-20)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: aegis-gateway:dev-local
+          format: cyclonedx-json
+          artifact-name: gateway.sbom.cdx.json
+          output-file: gateway.sbom.cdx.json
+          upload-artifact: true
+          upload-release-assets: false
+
       # ADR-0021 P3 — shared ggml runtime drift check.
       #
       # Layer 1: a cheap grep of GGML_VERSION_* from each archive's
