@@ -1,0 +1,141 @@
+name: Release staging frontend to CloudFront
+
+# Phase 4a Slice 5 — builds the React+Vite SPA bundle, uploads to S3,
+# invalidates CloudFront edge cache. ADR-0027 documents the strategy.
+#
+# Trust scope (per ldz #90 + #91): GitHub OIDC role
+# `github-actions-aegis-core-frontend` accepts only:
+#   sub              = repo:BinHsu/aegis-core:ref:refs/heads/main
+#   job_workflow_ref = BinHsu/aegis-core/.github/workflows/release-staging-frontend.yml@refs/heads/main
+#                      (latter pinned by ldz on the IAM trust policy;
+#                      same pattern as release-staging-image.yml)
+#
+# Workflow does NOT trigger on PRs by design. PRs already validate the
+# frontend via the existing `Frontend live-browser smoke (Playwright)`
+# job in ci-baseline.yml; release to S3 is a release-only concern that
+# fires only after merge to main.
+#
+# OWNERSHIP SPLIT (Camp B / asymmetric defense, ADR-0027 + ldz #90):
+#   - This workflow is the SINGLE WRITER to the frontend bucket.
+#   - ldz adds an S3 bucket policy denying s3:PutObject from any
+#     principal except this OIDC role (defense-in-depth, mirrors
+#     ECR resource policy in ldz #83).
+#   - Mac dev who runs `pnpm build` locally produces dist/ — that
+#     bundle never reaches S3. Only this workflow does.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only fire on actual frontend changes (or workflow file edits).
+      # Engine / gateway / proto / docs changes don't need a frontend redeploy.
+      - "frontend_web/**"
+      - "tools/scripts/frontend.sh"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - ".github/workflows/release-staging-frontend.yml"
+
+permissions:
+  id-token: write # OIDC token exchange to AWS
+  contents: read # checkout
+
+env:
+  AWS_REGION: eu-central-1
+  FRONTEND_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-frontend
+  # Build-time env injected into Vite — these end up baked into the
+  # JS bundle as string literals (substituted at `vite build` time).
+  # Per ADR-0027, the SPA reaches the gateway at the API subdomain
+  # (cross-origin from `aegis-app.` → `aegis-api.`).
+  VITE_AEGIS_GATEWAY_ENDPOINT: https://aegis-api.staging.binhsu.org
+  VITE_AEGIS_DEPLOY_MODE: cloud
+
+jobs:
+  release-staging-frontend:
+    name: Build + sync staging frontend bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.pnpm-store
+            ${{ github.workspace }}/.bazelisk
+            /tmp/aegis-bazel-*
+          # pnpm-lock.yaml hash drives cache key; lockfile bumps invalidate.
+          key: pnpm-frontend-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-frontend-${{ runner.os }}-
+
+      - name: Install frontend deps (hermetic Node + pnpm via aspect_rules_js)
+        run: ./tools/scripts/frontend.sh install
+
+      - name: Build production SPA bundle
+        # tools/scripts/frontend.sh build invokes `pnpm build` which runs
+        # `tsc -b && vite build`. VITE_* env vars from the workflow `env:`
+        # block are substituted into the bundle as `import.meta.env.*`
+        # values at build time — see ADR-0027 §"Build-time env injection".
+        run: ./tools/scripts/frontend.sh build
+
+      # OIDC token → STS AssumeRoleWithWebIdentity → temporary creds
+      # exposed as env vars for subsequent aws CLI calls.
+      - name: Configure AWS credentials (OIDC)
+        # aws-actions/configure-aws-credentials v6.1.0 (released 2026-04-06)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.FRONTEND_ROLE_ARN }}
+          role-session-name: aegis-core-frontend-deploy-${{ github.run_id }}
+
+      - name: Sync bundle to S3
+        env:
+          BUCKET: ${{ secrets.AEGIS_FRONTEND_BUCKET_STAGING }}
+        run: |
+          set -euxo pipefail
+          if [ -z "${BUCKET:-}" ]; then
+            echo "ERROR: secret AEGIS_FRONTEND_BUCKET_STAGING is not set."
+            echo "ldz must provision the bucket and the value must be added"
+            echo "to repo settings → Secrets → Actions before this workflow"
+            echo "can succeed. See aegis-aws-landing-zone#91 for status."
+            exit 1
+          fi
+          # --delete removes objects in S3 that aren't in dist/ — keeps
+          # the bucket exactly mirroring the latest build (Vite uses
+          # content-hashed filenames so this is safe; old hashes are
+          # what cache invalidation handles below).
+          aws s3 sync frontend_web/dist/ "s3://${BUCKET}/" \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html"
+          # index.html gets a short cache so users see new builds promptly
+          # without waiting for the year-long immutable TTL on the assets
+          # it references.
+          aws s3 cp frontend_web/dist/index.html "s3://${BUCKET}/index.html" \
+            --cache-control "public, max-age=60, must-revalidate" \
+            --content-type "text/html; charset=utf-8"
+
+      - name: Invalidate CloudFront edge cache
+        env:
+          DISTRIBUTION_ID: ${{ secrets.AEGIS_FRONTEND_DISTRIBUTION_ID_STAGING }}
+        run: |
+          set -euxo pipefail
+          if [ -z "${DISTRIBUTION_ID:-}" ]; then
+            echo "ERROR: secret AEGIS_FRONTEND_DISTRIBUTION_ID_STAGING is not set."
+            echo "See AEGIS_FRONTEND_BUCKET_STAGING comment above."
+            exit 1
+          fi
+          # Invalidation is THE single most important step for SPA deploys
+          # — without it, users see stale index.html pointing at
+          # already-deleted asset filenames. Vite's content-hashed asset
+          # names mean the "/*" invalidation pattern is correct (no fancy
+          # selective invalidation needed, and CloudFront's first 1000
+          # invalidations/month are free).
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id "${DISTRIBUTION_ID}" \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+          echo "::notice title=Frontend deployed::Bundle synced to s3://${{ secrets.AEGIS_FRONTEND_BUCKET_STAGING }}/, CloudFront invalidation ${INVALIDATION_ID} in flight"

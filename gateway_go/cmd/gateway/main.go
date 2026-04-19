@@ -47,6 +47,7 @@ import (
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
+	corspolicy "github.com/BinHsu/aegis-core/gateway_go/internal/cors"
 	gatewaygrpc "github.com/BinHsu/aegis-core/gateway_go/internal/grpc"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/logging"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
@@ -285,9 +286,21 @@ func main() {
 	// (ADR-0007), AND the Cloud-mode gRPC-Web bridge. The WebSocket
 	// endpoint shares the registry + issuer with the gRPC Gateway so
 	// a single token works on either transport.
+	// Origin allowlist policy: AEGIS_ALLOWED_ORIGINS (comma-separated
+	// origins) toggles between Local-mode permissive (default; ADR-0007
+	// LAN scope) and Cloud-mode strict allowlist (e.g.
+	// "https://aegis-app.staging.binhsu.org" — ADR-0027 split-subdomain
+	// frontend deploy). Built once at startup; immutable thereafter.
+	originPolicy := corspolicy.New()
+	if originPolicy.Permissive() {
+		logger.Info("CORS policy: permissive (Local mode default)", "env", corspolicy.EnvVar)
+	} else {
+		logger.Info("CORS policy: strict allowlist (Cloud mode)", "env", corspolicy.EnvVar)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", makeHealthHandler(engine, engineAddr, registry))
-	mux.HandleFunc("/lan-ip", corsPermissive(makeLANIPHandler()))
+	mux.HandleFunc("/lan-ip", corsAllowed(originPolicy, makeLANIPHandler()))
 	mux.HandleFunc("/ws/viewer", ws.Handler(ws.Config{
 		Registry: registry,
 		Issuer:   issuer,
@@ -297,13 +310,12 @@ func main() {
 	// gRPC-Web wrapper: same grpcSrv, spoken over HTTP/1.1 with
 	// grpc-web framing so browsers (which cannot speak native HTTP/2
 	// gRPC with trailers) can reach CreateMeeting / JoinAsViewer. The
-	// origin allowlist is permissive here because Local mode runs on
-	// the host's LAN; Cloud mode will replace this closure with an
-	// explicit allowlist tied to the Cognito-issued frontend origin
-	// (tracked in Phase 2 Known Gaps — ROADMAP.md).
+	// origin allowlist follows the same Policy used for native HTTP
+	// CORS (ADR-0027) so Local mode stays permissive and Cloud mode
+	// gets the strict subdomain allowlist for free.
 	wrappedGrpc := grpcweb.WrapServer(
 		grpcSrv,
-		grpcweb.WithOriginFunc(func(string) bool { return true }),
+		grpcweb.WithOriginFunc(originPolicy.Allow),
 		grpcweb.WithAllowNonRootResource(true),
 	)
 
@@ -537,12 +549,26 @@ func detectLANIPv4s() []string {
 // corsPermissive wraps a handler with permissive CORS headers — lets
 // the Vite dev server (cross-origin at http://*:5173) fetch
 // /lan-ip from the gateway at :8080 without preflight surprises.
-// Mirrors the grpc-web wrapper's permissive posture for Local mode;
-// Cloud mode will replace this with an origin allowlist alongside
-// the Cognito wiring (Phase 2 Known Gaps).
-func corsPermissive(h http.HandlerFunc) http.HandlerFunc {
+// corsAllowed wraps a handler with CORS headers driven by a Policy.
+//
+// Permissive policy (Local mode) → `Access-Control-Allow-Origin: *`
+// (preserves pre-Slice-5 behaviour exactly).
+//
+// Strict policy (Cloud mode) → echoes the request's Origin header back
+// when the Policy allows it (with `Vary: Origin` so caches don't mix
+// responses), or omits the header entirely when the origin is denied
+// (browser sees opaque "CORS error", which is the correct denial signal
+// — distinct from "no CORS configured at all").
+func corsAllowed(p *corspolicy.Policy, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		switch {
+		case p.Permissive():
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		case p.Allow(origin):
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "content-type")
 		if r.Method == http.MethodOptions {
