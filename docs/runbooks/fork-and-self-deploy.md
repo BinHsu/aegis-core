@@ -3,145 +3,149 @@
 | Field | Value |
 | --- | --- |
 | Audience | **Fork operator** who wants the deploy chain (ECR push, S3+CloudFront frontend) to land in their own AWS account, not the upstream's |
-| Applies to | All Phase 4a release workflows (`release-staging-image.yml`, `release-staging-frontend.yml`) and the `oci_push` Bazel rules in `packaging/{gateway,engine}/BUILD.bazel` |
-| Not applicable to | Casual cloners. Local `bazel build` + `pnpm dev` work end-to-end without any AWS — same hermetic story for everyone. This runbook only matters if you want CI to deploy somewhere. |
-| Estimated time | ~30 minutes (5 min find/replace + provision time on the AWS side) |
+| Applies to | All Phase 4a release workflows (`release-staging-image.yml`, `release-staging-frontend.yml`) |
+| Not applicable to | Casual cloners. Local `bazel build` + `pnpm dev` work end-to-end without any AWS — no setup. This runbook only matters if you want CI to deploy somewhere. |
+| Estimated time | ~30 minutes (10 min setting GH Variables + provision time on the AWS side) |
 | Cost | Whatever AWS charges in your account — for the demo-horizon footprint upstream uses, ~$1/month total (ECR + S3 + CloudFront + Route53). |
 | Last reviewed | 2026-04-19 |
 
 ## Purpose
 
-aegis-core's CI workflows hardcode AWS resource identifiers (account ID, role ARNs, S3 bucket names, CloudFront distribution IDs, ECR repo paths) at the workflow `env:` block / Bazel rule attribute level rather than via GitHub Actions secrets. That is the right call for the upstream operator (`BinHsu`) — values are debuggable from `git blame`, the workflow YAML is the truth, real secrets stay reserved for actual credentials. See ADR-0027 §"Why hardcode" and the matching commit on PR #35 for the detailed reasoning.
+aegis-core's release workflows source AWS infra identifiers (account ID, role names, S3 bucket name, CloudFront distribution ID, region, domains) from **GitHub Repository Variables**, not from hardcoded values or GitHub Secrets. This is the design fork-friendliness rests on: a fork operator overrides the Variables in their fork's repo settings, and the same workflow YAML deploys to their AWS account with **zero code edits**. ADR-0027 §"GH Variables over hardcode/Secrets" documents the rationale.
 
-The cost of that decision is **fork friction**. A forker who runs the same CI in their fork will see workflows fail loudly at the OIDC step (`Not authorized to perform sts:AssumeRoleWithWebIdentity`) because the hardcoded role ARNs point at upstream's AWS account. This runbook is the explicit guide to fixing that — five touch points across four files.
+The work for a forker is therefore:
+1. Provision the AWS infra in their own account (via forked `aegis-aws-landing-zone` Terraform — strongly recommended)
+2. Read the values out of Terraform outputs (or AWS CLI as fallback)
+3. Set 9 Repository Variables in their forked aegis-core
+4. Push to `main` and watch the workflows land green
 
 ## Prerequisites
 
 - Forked both `BinHsu/aegis-core` and `BinHsu/aegis-aws-landing-zone` on GitHub.
 - An AWS account you own (not upstream's `251774439261`).
-- AWS CLI configured locally with admin access for the one-time bootstrap (you can later restrict).
-- Terraform installed if you want to use `aegis-aws-landing-zone`'s IaC; otherwise you can hand-roll the resources.
+- AWS CLI configured locally with admin (or at least sufficient IAM/S3/CloudFront/ECR read perms) for the one-time bootstrap.
+- Terraform installed if using the recommended primary path.
+- `gh` CLI authenticated to your GitHub account, or browser access to your fork's Settings.
 
-## Step 0 — Decide your account ID
-
-Pick (or note) **your** AWS account ID. Below referred to as `<YOUR_ACCOUNT>`. Find via:
-
-```bash
-aws sts get-caller-identity --query Account --output text
-```
-
-The remainder of this runbook treats `251774439261` as the upstream value to **search-and-replace** with `<YOUR_ACCOUNT>` everywhere it appears.
-
-## Step 1 — Provision your AWS infra via the forked landing-zone
+## Step 1 — Provision AWS infra via your forked landing-zone
 
 In your fork of `aegis-aws-landing-zone`:
 
-1. Create a `terraform/environments/staging/` set targeting `<YOUR_ACCOUNT>` — the Terraform code already parameterizes account / region / domain via variables, so you just need to point them at your values.
-2. Apply the `bootstrap` layer (creates the `aegis-core` ECR repo + the OIDC roles `github-actions-aegis-core-ecr` and `github-actions-aegis-core-frontend`).
-3. Apply the `edge` layer if you want the frontend deploy chain (S3 bucket + CloudFront + ACM cert + Route53 record).
-4. Note the four output values you will need in Step 2:
-   - **ECR push role ARN**: `arn:aws:iam::<YOUR_ACCOUNT>:role/github-actions-aegis-core-ecr`
-   - **Frontend deploy role ARN**: `arn:aws:iam::<YOUR_ACCOUNT>:role/github-actions-aegis-core-frontend`
-   - **Frontend S3 bucket name** (default convention: `aegis-staging-frontend-<YOUR_ACCOUNT>`)
-   - **CloudFront distribution ID** (opaque, e.g. `EXAMPLE0123456`)
+1. Edit `terraform/environments/staging/` (or your equivalent) to target **your** AWS account / region / domain. The Terraform code parameterizes these via variables.
+2. Apply the `bootstrap` layer — provisions:
+   - ECR repo `aegis-core`
+   - OIDC role `github-actions-aegis-core-ecr` with trust policy bound to `repo:<YOUR_GITHUB_USER>/aegis-core:ref:refs/heads/main`
+   - OIDC role `github-actions-aegis-core-cache` (for Bazel remote cache, optional)
+3. Apply the `edge` layer — provisions:
+   - S3 bucket for frontend (default name: `aegis-staging-frontend-<YOUR_ACCOUNT>`)
+   - CloudFront distribution
+   - ACM certificate (in `us-east-1`)
+   - Route53 record for `aegis-app.<your-staging-subdomain>`
+   - OIDC role `github-actions-aegis-core-frontend` with trust scope to your fork
 
-If you also forked the domain off Cloudflare/your registrar, swap `binhsu.org` for your own domain in the Route53 + ACM resources.
+4. **Update both OIDC roles' trust policies** so the `sub` condition is your repo (not `BinHsu/aegis-core`) and `job_workflow_ref` (if the trust policy pins it) targets the corresponding workflow file in your repo. Your forked Terraform should accept both as variables — review before applying.
 
-## Step 2 — Find/replace in your aegis-core fork
+## Step 2 — Read the values you'll plug into GitHub Variables
 
-Five touch points, four files. The values below are upstream's; replace with **yours** from Step 1.
+### Primary path — Terraform outputs (preferred)
 
-### 2a. `.github/workflows/release-staging-image.yml`
+If your fork of `aegis-aws-landing-zone` declares outputs for the resources (per aegis-aws-landing-zone#93 once landed), this is one command:
 
-```diff
--  ECR_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-ecr
-+  ECR_ROLE_ARN: arn:aws:iam::<YOUR_ACCOUNT>:role/github-actions-aegis-core-ecr
+```bash
+cd /path/to/your/aegis-aws-landing-zone/terraform/environments/staging
+terraform output -json > /tmp/aegis-staging-outputs.json
 ```
 
-(Search for `251774439261` in the file to catch any other references — there should be one in the env block.)
+Pull the values you need from the JSON:
 
-### 2b. `.github/workflows/release-staging-frontend.yml`
-
-```diff
--  FRONTEND_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-frontend
--  FRONTEND_BUCKET: aegis-staging-frontend-251774439261
--  FRONTEND_DISTRIBUTION_ID: E5PYHGEEZQ7M8
--  VITE_AEGIS_GATEWAY_ENDPOINT: https://aegis-api.staging.binhsu.org
-+  FRONTEND_ROLE_ARN: arn:aws:iam::<YOUR_ACCOUNT>:role/github-actions-aegis-core-frontend
-+  FRONTEND_BUCKET: <your-frontend-bucket>
-+  FRONTEND_DISTRIBUTION_ID: <your-distribution-id>
-+  VITE_AEGIS_GATEWAY_ENDPOINT: https://aegis-api.<your-staging-subdomain>
+```bash
+jq -r .aegis_core_ecr_role_arn.value      /tmp/aegis-staging-outputs.json
+jq -r .frontend_push_role_arn.value       /tmp/aegis-staging-outputs.json
+jq -r .frontend_s3_bucket_name.value      /tmp/aegis-staging-outputs.json
+jq -r .frontend_cloudfront_distribution_id.value /tmp/aegis-staging-outputs.json
+jq -r .frontend_alternate_domain_name.value /tmp/aegis-staging-outputs.json
 ```
 
-### 2c. `packaging/gateway/BUILD.bazel`
+(Output names listed match aegis-core's request in ldz issue #93. Adjust if your fork renames them.)
 
-```diff
- oci_push(
-     name = "push_staging",
-     ...
--    repository = "251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core",
-+    repository = "<YOUR_ACCOUNT>.dkr.ecr.<your-region>.amazonaws.com/aegis-core",
-     ...
- )
+### Fallback path — AWS CLI queries (if outputs aren't declared yet)
+
+For each value, the AWS CLI command from a normal AWS user's perspective (assumes you have read perms in the account):
+
+| Value you need | AWS CLI command | Where it lives |
+| --- | --- | --- |
+| AWS account ID | `aws sts get-caller-identity --query Account --output text` | Your STS / IAM tokens |
+| AWS region | (you chose it; e.g. `eu-central-1`) | Your decision |
+| ECR repo name | `aws ecr describe-repositories --query 'repositories[?contains(repositoryName, \`aegis-core\`)].repositoryName' --output text` | ECR console / CLI |
+| ECR push role name | `aws iam list-roles --query 'Roles[?contains(RoleName, \`aegis-core-ecr\`)].RoleName' --output text` | IAM console / CLI |
+| Frontend push role name | `aws iam list-roles --query 'Roles[?contains(RoleName, \`aegis-core-frontend\`)].RoleName' --output text` | IAM console / CLI |
+| Frontend S3 bucket | `aws s3api list-buckets --query 'Buckets[?contains(Name, \`aegis-staging-frontend\`)].Name' --output text` | S3 console / CLI |
+| Frontend CloudFront ID | `aws cloudfront list-distributions --query 'DistributionList.Items[?Aliases.Items[?contains(@, \`aegis-app.\`)]].Id' --output text` | CloudFront console / CLI |
+| Frontend domain | (you chose the subdomain in Step 1) | Your DNS provider / Route53 zone |
+| Gateway domain | (you chose the subdomain in Step 1; not yet provisioned by ldz until Phase 4c) | Your DNS provider / Route53 zone |
+
+If you used the AWS Console to provision (no Terraform), find each in the corresponding service's console.
+
+## Step 3 — Set the 9 GitHub Repository Variables
+
+Either via the web UI at `https://github.com/<YOUR_GITHUB_USER>/aegis-core/settings/variables/actions`, or via `gh`:
+
+```bash
+cd /path/to/your/aegis-core
+gh variable set AWS_ACCOUNT_ID                       --body "<your-account-id>"
+gh variable set AWS_REGION                            --body "<your-region>"
+gh variable set ECR_REPO_NAME                         --body "aegis-core"
+gh variable set ECR_PUSH_ROLE_NAME                    --body "<your-ecr-role-name>"
+gh variable set FRONTEND_PUSH_ROLE_NAME               --body "<your-frontend-role-name>"
+gh variable set FRONTEND_S3_BUCKET                    --body "<your-frontend-bucket>"
+gh variable set FRONTEND_CLOUDFRONT_DISTRIBUTION_ID   --body "<your-distribution-id>"
+gh variable set FRONTEND_DOMAIN                       --body "<your-frontend-subdomain>"
+gh variable set GATEWAY_DOMAIN                        --body "<your-gateway-subdomain>"
 ```
 
-(Adjust the region too if you're not in `eu-central-1`.)
+Verify with:
 
-### 2d. `packaging/engine/BUILD.bazel`
+```bash
+gh variable list
+```
 
-Same pattern as 2c — same `repository` field, same value swap.
+(Variables are non-encrypted and readable from both UI and CLI — that's the design. Use Secrets only for actual credentials.)
 
-### 2e. (optional) `MODULE.bazel` distroless digest
+## Step 4 — Push to main and verify
 
-Leave as-is unless you are mirroring `gcr.io/distroless/static-debian12` to a private registry. The digest pin is content-addressed and works from any registry that hosts the same image.
+Any commit to your fork's `main` triggers the relevant release workflow(s) (or use `workflow_dispatch` from the GH Actions UI for a clean test).
 
-## Step 3 — Wire the IAM trust policies on your AWS side
+Expected outcome:
 
-The OIDC roles your forked `aegis-aws-landing-zone` provisioned have trust policies pinned to `repo:BinHsu/aegis-core:ref:refs/heads/main` AND a `job_workflow_ref` condition pinned to upstream's workflow file path. **Both must be updated** for your fork's CI to assume the role:
-
-In your forked landing-zone, edit the OIDC role definitions to substitute:
-- `repo:BinHsu/aegis-core:ref:refs/heads/main` → `repo:<YOUR_GITHUB_USER>/aegis-core:ref:refs/heads/main`
-- `job_workflow_ref` value (if pinned) — same workflow filename, your repo prefix
-
-Re-apply Terraform; the trust policy update is a one-line PR.
-
-## Step 4 — (Optional) Disable the upstream-only paths in your fork
-
-Two workflows are aware of `BUILDBUDDY_API_KEY` (Bazel remote cache). If you don't have a BuildBuddy account:
-
-- Just leave the secret unset in your repo. The workflow already degrades gracefully — see [`docs/runbooks/buildbuddy-cache-setup.md`](buildbuddy-cache-setup.md) — and runs cold without remote caching.
-
-## Verification
-
-Push any commit to your fork's `main` branch. Both release workflows fire:
-
-- `release-staging-image.yml` — should reach the OIDC step, get a token from `sts:AssumeRoleWithWebIdentity` against your role, push gateway + engine images to your ECR. Verify with:
+- **`release-staging-image.yml`** — pushes gateway + engine images to your ECR. Verify:
   ```bash
   aws ecr describe-images \
     --repository-name aegis-core \
     --region <your-region> \
     --query 'imageDetails[].imageTags[]'
   ```
-- `release-staging-frontend.yml` — should similarly reach OIDC, sync `dist/` to your S3 bucket, invalidate your CloudFront. Verify with:
+- **`release-staging-frontend.yml`** — syncs `frontend_web/dist/` to your S3 bucket, invalidates CloudFront. Verify:
   ```bash
   curl -vI https://<your-frontend-domain>/
   # → HTTP/2 200 from CloudFront
   ```
 
-If OIDC still fails, the trust policy on your side likely still references upstream's repo. Walk back through Step 3.
+If OIDC fails (`Not authorized to perform sts:AssumeRoleWithWebIdentity`), the trust policy on your AWS side still references `BinHsu/aegis-core`. Walk back to Step 1.4.
 
-## Why this runbook exists (the design honesty section)
+## Why this design (forker-friendliness via Variables, not hardcode)
 
-aegis-core could have been built with all infra IDs as GitHub Secrets, making fork setup zero-edit (just create your own secrets). We didn't, and the trade-off is documented in ADR-0027:
+aegis-core's earlier design hardcoded these values in workflow YAML / `BUILD.bazel` files. That worked but cost forkers a 5-touchpoint find/replace across 4 files. The migration to GitHub Variables (PR #35, ADR-0027 §"GH Variables over hardcode/Secrets") makes fork setup zero-code-edit at the cost of needing this runbook to know what to set.
 
-- **For upstream operator**: secret-managed IDs would have made daily debugging awkward (can't read back from UI/CLI; cross-reference required). Hardcoded values are debuggable from `git blame` and the workflow YAML is the truth.
-- **For fork operators**: the cost is this 30-minute setup. Honest one-time tax for a portfolio-grade repo where the upstream is the canonical case.
+GitHub Secrets were considered as the home for these values but rejected:
+- Secrets are write-only-readable from human paths (UI / `gh secret list` shows names only) — debugging requires runtime CI inspection
+- Naming is misleading: bucket names + role ARNs aren't credentials, they're config
+- Variables (added 2023) are the correct GitHub feature for non-credential repository config: encrypted at rest, readable from UI/CLI for ops debugging
 
-If the trade-off ever inverts (significant fork community materializes), the migration is mechanical — flip each `env:` reference back to `${{ secrets.NAME || 'upstream-default' }}`, remove the hardcoded values, and add a section on how upstream operator should set their own secrets. That PR would be ~50 lines of YAML.
+Real secrets (BUILDBUDDY_API_KEY, future Cosign signing keys) stay in GitHub Secrets where they belong.
 
 ## Related
 
-- [ADR-0027 Frontend serving strategy](../adr/0027-frontend-serving-strategy.md) — the original design + the "why hardcode" rationale that PR #35 added.
-- [ADR-0025 OCI packaging strategy](../adr/0025-oci-packaging-strategy.md) — Camp B doctrine + ECR push posture, which informs why the same hardcode-not-secret pattern applies to image release too.
+- [ADR-0027 Frontend serving strategy](../adr/0027-frontend-serving-strategy.md) — the canonical design + the GH Variables decision rationale.
+- [ADR-0025 OCI packaging strategy](../adr/0025-oci-packaging-strategy.md) — Camp B doctrine + ECR push posture.
 - [`docs/runbooks/buildbuddy-cache-setup.md`](buildbuddy-cache-setup.md) — sister runbook for the optional BuildBuddy remote cache; also fork-aware.
-- [aegis-aws-landing-zone](https://github.com/BinHsu/aegis-aws-landing-zone) — the Terraform repo whose `staging/{bootstrap,edge}/` Terraservices land the AWS resources this runbook references.
+- [aegis-aws-landing-zone](https://github.com/BinHsu/aegis-aws-landing-zone) — the Terraform repo whose `staging/{bootstrap,edge}/` Terraservices land the AWS resources this runbook references; ldz #93 tracks the Terraform outputs request that makes Step 2 (primary path) one command.

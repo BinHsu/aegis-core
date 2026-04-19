@@ -49,23 +49,24 @@ permissions:
   contents: read # checkout
 
 env:
-  AWS_REGION: eu-central-1
-  # AWS infra identifiers — public values from ldz #91 provisioning.
-  # These are NOT secrets (S3 bucket names + CloudFront distribution
-  # IDs + IAM ARNs are AWS resource identifiers, not credentials);
-  # hardcoding here matches the same pattern as the ECR role ARN in
-  # release-staging-image.yml. Reviewer reads the workflow → sees the
-  # truth, no need to cross-reference GH Settings → Secrets. Real
-  # secrets (BUILDBUDDY_API_KEY, future Cosign signing keys) stay in
-  # GH Secrets where they belong.
-  FRONTEND_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-frontend
-  FRONTEND_BUCKET: aegis-staging-frontend-251774439261
-  FRONTEND_DISTRIBUTION_ID: E5PYHGEEZQ7M8
-  # Build-time env injected into Vite — these end up baked into the
-  # JS bundle as string literals (substituted at `vite build` time).
-  # Per ADR-0027, the SPA reaches the gateway at the API subdomain
-  # (cross-origin from `aegis-app.` → `aegis-api.`).
-  VITE_AEGIS_GATEWAY_ENDPOINT: https://aegis-api.staging.binhsu.org
+  # All AWS infra identifiers come from GitHub Repository Variables
+  # (`gh variable list`, also visible at Settings → Secrets and
+  # variables → Actions → Variables tab). Variables are non-encrypted,
+  # readable from UI/CLI for debugging, and forker-friendly: a fork
+  # operator overrides them in their repo settings without editing
+  # this YAML at all. ADR-0027 §"GH Variables over hardcode/Secrets"
+  # documents the pivot. Real secrets (BUILDBUDDY_API_KEY, future
+  # Cosign keys) stay in GH Secrets.
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  FRONTEND_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.FRONTEND_PUSH_ROLE_NAME }}
+  FRONTEND_BUCKET: ${{ vars.FRONTEND_S3_BUCKET }}
+  FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_CLOUDFRONT_DISTRIBUTION_ID }}
+  # Build-time env injected into Vite — baked into the JS bundle as
+  # string literals at `vite build` time. Per ADR-0027 the SPA reaches
+  # the gateway at the API subdomain (cross-origin `aegis-app.` →
+  # `aegis-api.`); the GATEWAY_DOMAIN variable holds just the
+  # hostname so the protocol prefix is composed here.
+  VITE_AEGIS_GATEWAY_ENDPOINT: https://${{ vars.GATEWAY_DOMAIN }}
   VITE_AEGIS_DEPLOY_MODE: cloud
 
 jobs:
