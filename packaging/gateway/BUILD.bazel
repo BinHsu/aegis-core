@@ -1,0 +1,71 @@
+# Phase 4a Slice 1 — Go Gateway distroless OCI image (local-only).
+#
+# Strategy in ADR-0025; per-attribute rationale inline below.
+#
+# Targets:
+#   //packaging/gateway:image         — OCI image directory (CI smoke target;
+#                                       no docker daemon needed to build)
+#   //packaging/gateway:image_load    — wraps :image for `docker load`
+#                                       (`bazel run` invokes the loader)
+#
+# NOT in this slice (deferred):
+#   - SBOM generation (Slice 2, Syft + CycloneDX)
+#   - ECR push (Slice 3, GitHub Actions OIDC role)
+#   - Cosign / SLSA L3 (Phase 4b)
+
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+
+# Layer carrying the gateway binary at /usr/local/bin/gateway.
+# Consumes the explicit linux/amd64 cross-binary (ADR-0025 dev/CI split:
+# image is always a Linux artifact, regardless of host running the
+# build). remap_paths renames the cross-binary's filename
+# `gateway_linux_amd64` to the entrypoint-friendly `gateway` inside the
+# image — pkg_tar materialises DefaultInfo using the rule's name.
+pkg_tar(
+    name = "gateway_layer",
+    srcs = ["//gateway_go/cmd/gateway:gateway_linux_amd64"],
+    package_dir = "/usr/local/bin",
+    remap_paths = {
+        "/usr/local/bin/gateway_linux_amd64": "/usr/local/bin/gateway",
+    },
+)
+
+# Compose the image:
+#   - base: distroless static-debian12:nonroot pulled by digest in MODULE.bazel
+#   - user: "nonroot" — ships as uid 65532; satisfies ROADMAP §Phase 4a
+#     "non-root with dropped capabilities and read-only root filesystem"
+#   - exposed_ports: 8080/tcp (HTTP/healthz) + 9090/tcp (gRPC) match the
+#     current hardcoded listeners in gateway_go/cmd/gateway/main.go;
+#     informational metadata only — kubelet / container runtime ignores it
+#     and a NetworkPolicy is the actual enforcement layer in Phase 4c.
+#   - labels: OCI image-spec annotations consumed by registries, scanners,
+#     and `docker inspect`. Tag-level provenance (git SHA, semver) lands
+#     in Slice 3 alongside ECR push.
+oci_image(
+    name = "image",
+    base = "@distroless_static",
+    entrypoint = ["/usr/local/bin/gateway"],
+    exposed_ports = [
+        "8080/tcp",
+        "9090/tcp",
+    ],
+    labels = {
+        "org.opencontainers.image.source": "https://github.com/BinHsu/aegis-core",
+        "org.opencontainers.image.title": "aegis-gateway",
+        "org.opencontainers.image.description": "Aegis Gateway — gRPC + gRPC-Web + WebRTC entry point.",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+    },
+    tars = [":gateway_layer"],
+    user = "nonroot",
+    visibility = ["//visibility:public"],
+)
+
+# Local smoke: `bazel run //packaging/gateway:image_load` loads the image
+# into the host docker daemon under the tag below. Not invoked by CI —
+# CI builds :image directly (no docker daemon on the runner needed).
+oci_load(
+    name = "image_load",
+    image = ":image",
+    repo_tags = ["aegis-gateway:dev-local"],
+)
