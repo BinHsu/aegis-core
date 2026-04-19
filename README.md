@@ -176,7 +176,7 @@ citing phase progress in prose elsewhere — it drifts.
 | **Phase 3a** | Platform foundations (hermetic Node via `aspect_rules_js`, Opus-on-engine, gateway N:N topology, RAG corpus pipeline, engine-owned inference) | ✅ Done |
 | **Phase 3b** | Engine RAG inference: shared ggml runtime, GGMLEmbedder (bge-m3), Qdrant C++ client, `engine seed` subcommand, cloud-cache strategy (ADR-0014 β/δ) | ✅ Done — all seven slices landed; Slice 7 validation PASS (mean cos-sim 0.9659 vs FP reference, threshold 0.95) |
 | **Phase 3c** | Pure-web host + viewer UIs (React + Vite): provider scaffolding, RAG opt-in, consent flows (ADR-0024), curated speaker labels (ARCH §9.2), transcript export (MD + JSON), Playwright cross-WebView smoke | ✅ Done — Slices 1-6 landed; 8-job CI matrix (adds chromium + webkit live-browser gate) |
-| **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 🚧 4a Slice 1 landed: `rules_oci` wiring + Go Gateway distroless image (ADR-0025) with mandatory CI runtime smoke (`docker run --read-only --user 65532:65532` + `/healthz` 200); SBOM, ECR push, engine + frontend images, Cosign all queued |
+| **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability | 🚧 4a Slices 1–2 landed: `rules_oci` wiring + Go Gateway distroless image (ADR-0025) with mandatory CI runtime smoke (`docker run --read-only --user 65532:65532` + `/healthz` 200); CycloneDX SBOM via syft (`anchore/sbom-action` SHA-pinned). ECR push, engine + frontend images, Cosign / SLSA / Trivy all queued |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
 
 See [ROADMAP.md](ROADMAP.md) for the full phase-by-phase checklist.

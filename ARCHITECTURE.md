@@ -296,7 +296,7 @@ Bazel hermeticity gives Aegis a strong **build reproducibility** foundation, but
 
 #### 10.1 Supply Chain Integrity
 
-- **SBOM (Software Bill of Materials)**: every release artifact (C++ engine binary, Go Gateway binary, frontend bundle, container image) produces a CycloneDX or SPDX SBOM via **Syft**. SBOMs are published alongside artifacts and consumed by downstream license / vulnerability tooling.
+- **SBOM (Software Bill of Materials)**: every release artifact (C++ engine binary, Go Gateway binary, frontend bundle, container image) produces a CycloneDX or SPDX SBOM via **Syft**. SBOMs are published alongside artifacts and consumed by downstream license / vulnerability tooling. **Live as of Phase 4a-2**: gateway container image SBOM (CycloneDX JSON) emitted by `anchore/sbom-action` SHA-pinned in `.github/workflows/ci-baseline.yml`, uploaded as workflow artifact `gateway-sbom-cyclonedx`. Engine + frontend image SBOMs land with their respective image slices (4a-4, 4a-5); Phase 4b promotes the SBOM into a signed Cosign attestation attached to the pushed image.
 - **Artifact signing**: all container images and release binaries are signed with **Cosign / Sigstore** using GitHub Actions OIDC tokens (keyless signing via Fulcio). Signatures are verified at deployment admission in EKS (Kyverno `verify-image` policy).
 - **SLSA Level 3 provenance**: release pipelines emit SLSA provenance statements referencing the exact Git commit, build runner, and transitive dependency set. Provenance is signed and stored alongside artifacts.
 - **Dependency pinning**: all third-party dependencies (C++ via Bazel `http_archive` with SHA256, Go via `go.sum`, JavaScript via `package-lock.json`) are pinned by cryptographic hash. No floating tags.
