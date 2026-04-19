@@ -1,5 +1,20 @@
-load("@rules_go//go:def.bzl", "go_binary")
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary")
 
+# Default `bazel run :gateway` produces a host-native binary (Mach-O on
+# Mac dev box, ELF on CI / prod Linux runners). Intentionally NO
+# `pure`/`static` attributes here:
+#   - `static = "on"` is rules_go-documented as Linux-only; on macOS
+#     it silently triggers a platform transition to linux_amd64,
+#     turning `bazel run :gateway` into a Linux-only binary that
+#     cannot exec on Apple Silicon — breaks dev workflow (ADR-0025
+#     Camp B / dev-CI split).
+#   - All current deps (grpc-go, protobuf-go, grpcweb, pion/webrtc)
+#     are pure Go with no cgo; the resulting binary is therefore
+#     self-contained on any OS without needing `pure = "on"`. If a
+#     future dep introduces cgo, the cross-compile to linux_amd64
+#     for the OCI image (see :gateway_linux_amd64 below) will fail
+#     loudly at link time on Mac dev boxes — that's a feature,
+#     forcing the discussion before merge.
 go_binary(
     name = "gateway",
     srcs = ["main.go"],
@@ -27,4 +42,19 @@ go_binary(
         "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//keepalive",
     ],
+)
+
+# Explicit linux/amd64 cross-compile target. ADR-0025 Camp B / dev-CI
+# split: //packaging/gateway:image consumes this so the image is always
+# a Linux artifact regardless of the host running `bazel build`. Devs
+# can also `bazel build :gateway_linux_amd64` directly to inspect "what
+# does my code look like as a Linux ELF" without needing Docker.
+#
+# When Slice 3 (multi-arch image_index) lands, sibling targets
+# :gateway_linux_arm64 etc. get added here; YAGNI for Slice 1.
+go_cross_binary(
+    name = "gateway_linux_amd64",
+    platform = "@rules_go//go/toolchain:linux_amd64",
+    target = ":gateway",
+    visibility = ["//visibility:public"],
 )

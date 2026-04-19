@@ -48,7 +48,9 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
 - [x] Add `rules_cc`, `grpc`, `apple_support` bazel_deps — Session 2 (cold grpc build 5m14s)
 - [x] Add `rules_foreign_cc` 0.15.1 + whisper.cpp v1.8.4 via http_archive+SHA256, CMake build — Session 4a (cold +7m38s)
 - [x] Add `rules_go` 0.52.0 + `gazelle` 0.50.0 bazel_deps + Go 1.24.12 hermetic SDK — Session 5
-- [ ] Add `rules_nodejs`, `rules_rust`, `rules_oci` bazel_deps — Phase 3/4
+- [x] Add `rules_nodejs` (via `aspect_rules_js`) bazel_dep — Phase 3 (ADR-0015)
+- [x] Add `rules_oci` + `rules_pkg` bazel_deps — Phase 4a Slice 1 (ADR-0025)
+- [ ] Add `rules_rust` bazel_dep — Phase 4 Tauri
 - [x] Configure `.bazelrc` with CPU default, metal/cuda/cpu configs, `try-import %workspace%/.bazelrc.user` (ADR-0009)
 - [x] `.bazelversion` pinning Bazel 7.4.1
 - [x] Add `tools/bazelisk/bazelisk` wrapper — downloads bazelisk locally, forces `--output_user_root=./.bazel_cache` (CLAUDE.md Rule 6)
@@ -300,10 +302,16 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 > *"Make it deployable. Sign it. Roll it out safely."*
 
 ### Phase 4a: Package
-- [ ] Bazel `rules_oci`: package C++ engine, Go GW, and frontend into Distroless OCI images
-- [ ] Each image runs as non-root with dropped capabilities and read-only root filesystem except tmpfs mounts
-- [ ] Image tagging convention: `prod-<semver>-<git_sha>`, `staging-<git_sha>`, `dev-<git_sha>`
-- [ ] Produce SBOMs (Syft / CycloneDX) alongside every image (ARCH §10.1)
+- [~] Bazel `rules_oci`: package C++ engine, Go GW, and frontend into Distroless OCI images
+  - [x] Slice 1 — `rules_oci` + `rules_pkg` wired; Go gateway `aegis-gateway` image local-buildable, distroless `static-debian12:nonroot` base pinned by digest (ADR-0025)
+  - [ ] Slice 2 — SBOM generation (Syft / CycloneDX) per image
+  - [ ] Slice 3 — GitHub Actions ECR push via `github-actions-aegis-core-ecr` OIDC role (ldz #74; gated on ldz `terraform-apply-baseline.yml` per ldz #75)
+  - [ ] Slice 4 — C++ engine `aegis-engine` image (distroless `base-debian12` or `cc-debian12`, hermetic clang × dynamic-lib story)
+  - [ ] Slice 5 — Frontend `aegis-frontend` image (static asset packaging)
+- [~] Each image runs as non-root with dropped capabilities and read-only root filesystem except tmpfs mounts
+  - [x] Gateway image: `user = "nonroot"` (uid 65532), entrypoint is binary path (no shell), distroless ships no package manager (Slice 1)
+- [ ] Image tagging convention: `prod-<semver>-<git_sha>`, `staging-<git_sha>`, `dev-<git_sha>` — wired in Slice 3 alongside ECR push
+- [ ] Produce SBOMs (Syft / CycloneDX) alongside every image (ARCH §10.1) — Slice 2
 
 ### Phase 4b: Sign & Scan
 - [ ] Cosign / Sigstore signing in GitHub Actions using OIDC (ARCH §10.1)
@@ -322,6 +330,8 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 - [ ] Graceful shutdown verified end-to-end under rolling update (ADR-0006)
 - [ ] Audio-namespace Kyverno / Gatekeeper policies (ADR-0005 R6): reject PVC, reject hostPath
 - [ ] Velero backup schedule explicitly excludes `aegis-audio` namespace (ADR-0005 R6)
+- [ ] **Post-deploy E2E suite against staging** — Playwright / API-level happy-path drive (CreateMeeting → audio → transcript → JoinAsViewer → EndMeeting) executed against the deployed staging URL after every ArgoCD sync. Today (Phase 4a) the only post-deploy verification is the kubelet `/healthz` probe (extremely narrow) and a human walking through the UI. Closing this gap converts "human notices the demo broke" into "machine blocks the next promotion."
+- [ ] **Synthetic monitoring against staging + prod** — external probe (CloudWatch Synthetics, Better Uptime, or equivalent) hits public endpoints every N minutes and pages oncall on SLO-burn. Pairs with the canary gate above so a regression that escapes canary still gets caught within minutes.
 
 ### Phase 4d: Observability Wiring + Build Cache Decision
 

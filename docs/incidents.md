@@ -1172,6 +1172,150 @@ convenience.
 
 ---
 
+## Incident 12 — `pkg_tar` `remap_paths` silently no-ops; CI smoke fails twice on PR #28
+
+**Date**: 2026-04-19  **Severity**: S4  **Duration**: ~25 min end-to-end (two failed CI runs → local tar inspection → fix)
+**Related commits**: `aa111c4` (initial Slice 1), `c142fb0` (false-fix CI tag), `356201d` (real fix: pkg_files+renames)
+
+### Symptom
+
+Phase 4a Slice 1 introduced an OCI image build for the Go gateway,
+plus a CI smoke step that loads the image into Docker and curls
+`/healthz`. The smoke step failed twice with two different-looking
+errors before resolving.
+
+**Failure A** (`aa111c4`):
+```
+Loaded image: aegis-gateway:dev-local
++ docker run … aegis-gateway:ci-smoke
+Unable to find image 'aegis-gateway:ci-smoke' locally
+docker: Error response from daemon: pull access denied for aegis-gateway,
+  repository does not exist or may require 'docker login'
+```
+
+**Failure B** (`c142fb0`, after first "fix"):
+```
++ docker run … aegis-gateway:dev-local
+docker: Error response from daemon: failed to create task for container:
+  failed to create shim task: OCI runtime create failed: runc create
+  failed: unable to start container process: error during container
+  init: exec: "/usr/local/bin/gateway": stat /usr/local/bin/gateway:
+  no such file or directory
+```
+
+### Root cause
+
+Two separate bugs stacked, with the second one masked by the first.
+
+1. **`oci_load.repo_tags` is not overridable via `bazel run -- <tag>`.**
+   The first CI step did `bazel run //packaging/gateway:image_load --
+   aegis-gateway:ci-smoke`, expecting the trailing argument to set
+   the loaded tag. `oci_load` reads `repo_tags` from its BUILD
+   attribute (hard-coded to `aegis-gateway:dev-local` in our case)
+   and ignores positional argv. Image got loaded under `dev-local`;
+   `docker run aegis-gateway:ci-smoke` then failed because no such
+   tag existed locally.
+
+2. **`pkg_tar`'s `remap_paths` shortcut silently fails on
+   leading-slash mismatch.** The actual binary inside the layer tar
+   was `usr/local/bin/gateway_linux_amd64` (the cross-binary's rule
+   name), not the entrypoint-friendly `gateway`. The original
+   BUILD.bazel declared:
+   ```bzl
+   pkg_tar(
+       …,
+       remap_paths = {
+           "/usr/local/bin/gateway_linux_amd64": "/usr/local/bin/gateway",
+       },
+   )
+   ```
+   Tar entries are conventionally relative (no leading slash), so
+   the rename key never matched any path in the tar — silently. No
+   warning, no error. The image was built with the wrong entrypoint
+   path, and `runc` reported the container init failure only at
+   runtime.
+
+### Detection
+
+Failure A's "pull access denied" was a misleading red herring — the
+real issue was a tag mismatch, not a registry auth problem. Reading
+the line two above (`Loaded image: aegis-gateway:dev-local`)
+made the mismatch visible.
+
+Failure B was caught by extracting the layer tar locally:
+```bash
+tar -tvf bazel-bin/packaging/gateway/gateway_layer.tar
+# usr/local/bin/gateway_linux_amd64   <— wrong filename
+```
+That immediately confirmed the rename did not happen.
+
+A red herring during attempt to fix Failure B: my first `remap_paths`
+correction (removing the leading slash) ran `bazel build` and got
+"up-to-date" — the action cache decided the change wasn't material
+and didn't rebuild. The tar still showed the old filename, but for
+~5 minutes I assumed the fix had taken effect and was confused why
+the path was unchanged. Cache invalidation gotcha.
+
+### Resolution
+
+Two-step fix across two commits:
+
+- `c142fb0`: drop the misleading `bazel run -- <tag>` argv override
+  in CI; reference the BUILD-defined `aegis-gateway:dev-local` tag
+  directly. Comment in the workflow file records why argv override
+  doesn't work.
+- `356201d`: replace `pkg_tar(..., remap_paths = ...)` with the
+  documented `pkg_files(..., renames = ...) → pkg_tar(srcs = …)`
+  pattern. `renames` works on label keys, not tar paths, and is
+  the rules_pkg-recommended mechanism for renaming files inside a
+  package. Local verification: `tar -tvf` now shows
+  `usr/local/bin/gateway` as expected.
+
+### Prevention
+
+- **Use `pkg_files` + `renames` over `pkg_tar.remap_paths` for any
+  rename that matters.** `remap_paths` is the convenient shortcut
+  that fails silently; `pkg_files` is the verbose but correct
+  pattern. The `packaging/gateway/BUILD.bazel` comment block
+  records this tradeoff so future contributors don't re-discover it.
+- **Always `tar -tvf` the output of a packaging rule before
+  building the image on top.** Image-build-then-debug-at-runtime
+  is a slow loop; checking the tar directly is sub-second. This
+  belongs in any future packaging slice's pre-PR checklist.
+- **CI smoke must `set -euxo pipefail`** (already in place in this
+  step) AND echo the tag actually used — the `set -x` trace was the
+  load-bearing diagnostic for Failure A; without it the mismatch
+  would have been invisible in the GitHub Actions log.
+- No new ADR or CI gate warranted. The pattern is documented in
+  `packaging/gateway/BUILD.bazel`; future packaging slices (engine
+  Slice 4, frontend Slice 5) inherit the convention by example.
+
+### Lessons
+
+1. **Convenience APIs that fail silently are worse than verbose
+   APIs that fail loud.** rules_pkg's `remap_paths` is one line
+   shorter than `pkg_files + renames`, but the silent no-op cost
+   ~25 minutes of CI cycles + log-reading. The verbose pattern's
+   extra rule declaration is a one-time cost; the silent-failure
+   class of bug is a recurring tax. Prefer verbose.
+2. **"Fixed locally, build says up-to-date" is a smell.** Bazel's
+   action cache is fast and aggressive; an attribute change that
+   "should" trigger a rebuild but doesn't usually means the change
+   wasn't structurally meaningful (wrong attribute name, wrong
+   key format, no-op edit). Re-extract the actual output file
+   instead of trusting that the build re-ran.
+3. **Two stacked bugs with different-looking errors are
+   indistinguishable from one bug until you fix the first.**
+   Failure A and Failure B were genuinely different root causes,
+   but the workflow ("smoke failed → look at last error → guess →
+   push fix") only surfaces them sequentially. Mitigation: when
+   the surface error changes after a fix, treat it as a NEW
+   incident, not a continuation. Otherwise it's tempting to assume
+   the fix "almost worked" and patch around the new symptom rather
+   than read it cleanly.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a

@@ -303,6 +303,10 @@ Bazel hermeticity gives Aegis a strong **build reproducibility** foundation, but
 - **Model provenance**: every `.gguf` / `.bin` model file in `/models` has a corresponding `manifest.json` entry with SHA256, origin URL, license, and a PGP-signed attestation. The model loader refuses to `mmap` a file whose hash does not match its manifest entry. See `/models/README.md`.
 - **License scanning**: a license scanner (ScanCode, FOSSA, or equivalent) runs on every PR. Merges to `main` are blocked if any new dependency introduces a license incompatible with the project's stated license terms (GPL/AGPL in particular).
 
+##### 10.1.1 OCI image construction
+
+Container images are built via **`rules_oci` v2** as Bazel actions — no `Dockerfile` and no Docker daemon participate in the build. Base images are **distroless** (`gcr.io/distroless/static-debian12:nonroot` for fully-static Go binaries; `base-debian12` / `cc-debian12` variants reserved for the C++ engine when Slice 4 lands), pinned by **SHA256 manifest-list digest** rather than by tag. Each image runs as **uid/gid 65532 (`nonroot`)**, ships no shell or package manager, and is read-only-rootfs-compatible. Multi-arch (`linux/amd64` + `linux/arm64/v8`) is enabled at the `oci.pull` extension level so EKS Graviton nodepools consume the same image index. Full rationale: ADR-0025; first wiring is in `packaging/gateway/BUILD.bazel`.
+
 #### 10.2 Static Analysis (SAST)
 
 | Language | Tools |

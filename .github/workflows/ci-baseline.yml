@@ -183,13 +183,68 @@ jobs:
           EOF
           echo "BuildBuddy cache configured. Invocation dashboard: https://app.buildbuddy.io/"
 
-      - name: Build proto + engine + gateway
+      - name: Build proto + engine + gateway + gateway OCI image
         run: |
+          # //packaging/gateway:image is the Phase 4a Slice 1 OCI smoke
+          # target — builds the distroless layered image. ADR-0025.
           ./tools/bazelisk/bazelisk build \
             //proto/aegis/v1:aegis_cc_grpc \
             //proto/aegis/v1:aegis_go_proto \
             //engine_cpp/cmd/engine:engine \
-            //gateway_go/cmd/gateway:gateway
+            //gateway_go/cmd/gateway:gateway \
+            //packaging/gateway:image
+
+      # ADR-0025 Camp B / dev-CI split: dev boxes never need Docker
+      # (host-native binary suffices for development). CI is the SOLE
+      # gate that proves "image actually boots inside a container", and
+      # is the leftmost gate in the promotion chain to staging
+      # (Trivy / Cosign / ECR push / ArgoCD sync land downstream in
+      # Slices 4a-3 and Phase 4b). Skipping this would make Camp B
+      # untenable.
+      #
+      # Verifies, in order:
+      #   1. image loads into runner Docker (validates rules_oci output)
+      #   2. container starts as nonroot under read-only rootfs
+      #      (validates ADR-0025 runtime posture, not just BUILD claims)
+      #   3. /healthz returns 200 within 10s (validates the static-linked
+      #      gateway binary actually executes inside distroless — catches
+      #      missing /etc/passwd, DNS, certs, etc.)
+      #   4. container is removed cleanly (no leak into next CI run)
+      - name: Smoke-test gateway OCI image (boot + healthz + read-only rootfs)
+        run: |
+          set -euxo pipefail
+          # The image_load target's repo_tags are defined in
+          # packaging/gateway/BUILD.bazel as "aegis-gateway:dev-local";
+          # `bazel run` does NOT accept a tag override as a positional
+          # argument (oci_load reads repo_tags from the BUILD attribute,
+          # not from argv). Aligning the docker tag below.
+          ./tools/bazelisk/bazelisk run //packaging/gateway:image_load
+          docker run -d --name gw \
+            --read-only \
+            --user 65532:65532 \
+            -p 18080:8080 \
+            aegis-gateway:dev-local
+          # Wait up to 10s for /healthz to return 200; the gateway tries
+          # to dial the C++ engine on startup, which fails (engine isn't
+          # in this CI step), but per main.go:440-443 /healthz still
+          # returns 200 with engine.reachable=false. That's the expected
+          # boot-up shape and what we're validating here.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://localhost:18080/healthz > /tmp/healthz.json; then
+              echo "healthz returned 200 after ${i}s"
+              cat /tmp/healthz.json
+              break
+            fi
+            sleep 1
+            if [ "$i" = "10" ]; then
+              echo "ERROR: healthz never returned 200 within 10s"
+              docker logs gw
+              exit 1
+            fi
+          done
+          docker logs gw
+          docker stop gw
+          docker rm gw
 
       # ADR-0021 P3 — shared ggml runtime drift check.
       #

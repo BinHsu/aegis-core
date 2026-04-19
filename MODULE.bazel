@@ -217,12 +217,56 @@ npm.npm_translate_lock(
 use_repo(npm, "npm")
 
 # -----------------------------------------------------------------------------
+# OCI packaging — Phase 4a. ADR-0025 documents the strategy
+# (rules_oci over Dockerfile/ko/Buildah, distroless static-debian12:nonroot
+# over scratch/Alpine/Wolfi, digest pinning, non-root + read-only rootfs).
+#
+# rules_pkg supplies pkg_tar, used to layer Bazel-built binaries into the
+# image. rules_oci pulls the base, composes layers, and produces the OCI
+# image directory (oci_load adds local `docker load` for smoke testing —
+# CI does NOT need oci_load, just builds the oci_image target).
+# -----------------------------------------------------------------------------
+bazel_dep(name = "rules_oci", version = "2.0.1")
+bazel_dep(name = "rules_pkg", version = "1.0.1")
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+
+# Distroless static-debian12:nonroot — pinned by SHA256 manifest-list
+# digest (NOT the tag). Digest captured 2026-04-19 via:
+#   curl -sI https://gcr.io/v2/distroless/static-debian12/manifests/nonroot \
+#     -H "Accept: application/vnd.oci.image.index.v1+json"
+# Re-pin when bumping; record provenance in the commit message.
+#
+# Why static-debian12 + nonroot variant:
+#   - Pure-Go binaries linked with pure=on/static=on need only a static base.
+#   - The :nonroot variant ships a uid/gid 65532 user so we don't have to
+#     synthesize one ourselves; combined with oci_image `user = "nonroot"`
+#     it satisfies the "non-root + dropped caps" line in ROADMAP §Phase 4a.
+#
+# Multi-arch: pull both linux/amd64 and linux/arm64/v8 so future EKS
+# nodepools (Graviton-friendly) can consume the same image index.
+oci.pull(
+    name = "distroless_static",
+    digest = "sha256:a9329520abc449e3b14d5bc3a6ffae065bdde0f02667fa10880c49b35c109fd1",
+    image = "gcr.io/distroless/static-debian12",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+)
+use_repo(
+    oci,
+    "distroless_static",
+    "distroless_static_linux_amd64",
+    "distroless_static_linux_arm64_v8",
+)
+
+# -----------------------------------------------------------------------------
 # Phase 4+ dependencies (added as each component comes online):
 #
-#   bazel_dep(name = "rules_oci",        version = "2.0.1")    # Phase 4 packaging
 #   bazel_dep(name = "rules_rust",       version = "0.54.0")   # Phase 4 Tauri
 #
-# They are commented here, not added, because:
+# Commented here, not added, because:
 #   (a) Each dep adds build graph surface and possible version conflicts.
 #   (b) We unblock one language at a time with a verified checkpoint.
 # -----------------------------------------------------------------------------
