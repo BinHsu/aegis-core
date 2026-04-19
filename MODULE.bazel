@@ -148,8 +148,12 @@ go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 
 # Pinned >= 1.24.12 because gazelle 0.50.0's go_repository_tools has a
 # go.work requiring go >= 1.24.12 (running lower errors out during
-# external repo setup). Bump gazelle to go along.
-go_sdk.download(version = "1.24.12")
+# external repo setup). Bumped to 1.24.13 (2026-04-19) per Trivy
+# CRITICAL finding CVE-2025-68121 — crypto/tls incorrect certificate
+# validation during TLS session resumption (fixed in 1.24.13). Phase 4b
+# mini-slice 2 caught this on its first real run; demonstrates the
+# scan-on-push gate doing its job. ADR-0029.
+go_sdk.download(version = "1.24.13")
 
 # go_deps extension resolves gateway_go/go.mod into Bazel repositories
 # so rules_go targets can depend on Go module deps like grpc-go and
