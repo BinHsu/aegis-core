@@ -10,7 +10,7 @@
 
 ## Context
 
-Slice 4 deliberately keeps models out of the engine OCI image (~50-100 MB image vs ~1.5 GB if baked in; ADR-0025 §"Slice 4 distroless variant decision"). Engine reads `/models` at runtime from a Kubernetes-mounted directory backed by ldz-provisioned storage. Recommended realization (ldz #82): **Amazon S3 Files** (April 2026 launch, EFS-backed S3 bucket-as-filesystem) — ~1ms `mmap` latency, native multi-pod attach with NFS close-to-open consistency, IAM-based access via the existing engine IRSA role, no separate CSI driver or PVC lifecycle. The contract below is storage-agnostic; engine doesn't know what's behind `/models`.
+Slice 4 deliberately keeps models out of the engine OCI image (~50-100 MB image vs ~1.5 GB if baked in; ADR-0025 §"Slice 4 distroless variant decision"). Engine reads `/models` at runtime from a Kubernetes-mounted directory backed by ldz-provisioned storage. **Storage realization: Amazon S3 Files** (April 2026 launch, EFS-backed S3 bucket-as-filesystem; FYI to ldz at [aegis-aws-landing-zone#85](https://github.com/BinHsu/aegis-aws-landing-zone/issues/85)). Chosen for ~1ms `mmap` latency, native multi-pod attach with NFS close-to-open consistency, IAM-based access via the existing engine IRSA role, and managed-service ops profile. RD owns the call; ldz pushes back with technical reasons if there's a real blocker, otherwise this is the binding choice. The contract below is storage-shape-agnostic — engine doesn't know what's behind `/models`.
 
 The follow-on architectural question, surfaced during Slice 4 review: **what happens during a rolling deployment** when:
 
@@ -50,7 +50,7 @@ Three approaches were considered:
 
 #### Storage responsibilities (ldz)
 
-Recommended realization is **Amazon S3 Files** (see ldz #82 amendment 3) — managed service, IAM-native, ~1ms latency, multi-pod read by default. The five responsibilities below are storage-shape-agnostic; ldz can pick a different backing if S3 Files turns out unsuitable in eu-central-1.
+Storage realization is **Amazon S3 Files** (FYI to ldz at #85 — RD-owned decision per the responsibility-split principle: aegis-core picks the architecture, ldz executes). The five responsibilities below are storage-shape-agnostic; if a real technical blocker forces an alternative backing, that's a fresh ADR-amendment cycle, not an infra-team-discretion call.
 
 1. **Flat directory layout.** A single `/models` directory at the mount root holds all currently-required model files across all currently-deployed engine versions. No subdirectories required by the contract (though ldz may organize internally however helps their backup / lifecycle tooling). With S3 Files: this maps to a flat S3 bucket prefix; with EBS / EFS / Mountpoint CSI: a flat directory at the mount root.
 
