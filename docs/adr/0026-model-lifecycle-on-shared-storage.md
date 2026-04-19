@@ -79,9 +79,9 @@ Premature to commit either today. ldz multi-region work is the trigger.
 
 2. **Walk the manifest at startup, before serving traffic.** For each entry where `"required": true`:
    - Compute path: `${AEGIS_MODEL_PATH:-/models}/<model_name>/<sha256>.<ext>`
-   - HEAD-check: file exists, size matches manifest's expected bytes
-   - **Trust by construction** — do NOT recompute SHA at startup. Filename IS the SHA; if file exists at that path, content is correct by CAS invariant. (Saves ~10s/GB of unnecessary hashing.)
-   - If any required file missing or wrong-size: fail fast with operator-readable diagnostic (model_name, expected sha, expected size, actual size, expected path)
+   - **Stat-check**: file exists, size matches manifest's expected bytes
+   - **SHA-256 verify**: compute SHA-256 of the file's bytes, compare to manifest. Trust-by-construction (filename = SHA) is rejected as defense-in-depth: bit rot, partial-write during populator, S3 silent corruption, or compromised populator can all produce a file at the right path with wrong content. The ~10s/GB SHA recompute cost is a worthwhile production tax. (Reversed from earlier ADR-0026 v2 wording — see §"Revision 2026-04-19 (second pivot)" below.)
+   - If any required file missing, wrong-size, or wrong-SHA: fail fast with operator-readable diagnostic (model_name, expected sha, expected size, actual size, actual sha, expected path) — auto-recovery deliberately deferred (see §"Future option: pod self-recovery").
    - Only after all required entries pass, start the gRPC server.
 
 3. **Pure read-only.** IRSA permission scope is `s3:GetObject` on the model bucket prefix. Engine code has zero S3-write paths. K8s mount is `readOnly: true` (defense-in-depth — IAM is the real layer).
@@ -119,6 +119,34 @@ Premature to commit either today. ldz multi-region work is the trigger.
 
 5. **No prune Job today** — see "Pruning deferred" below.
 
+### Revision 2026-04-19 (second pivot) — pod SHA-verifies, prune stays simple
+
+The first version of this ADR's Responsibility 2 (above) optimized away the SHA-256 recompute on the argument that "filename IS the SHA, so existence at the path implies correct content by CAS invariant." That is **theoretically true but operationally fragile**:
+
+- Bit rot in S3 (rare but documented)
+- Partial-write during a CI populator interruption (network blip during `aws s3 cp`)
+- Silent corruption from a compromised populator (signed-image attack surface)
+- Population from a wrong upstream (HuggingFace mirror serving an unexpected file)
+
+In each case, a file ends up at `<sha>.gguf` whose contents don't actually hash to that SHA. Pod that mmaps it gets bad data; symptoms surface much later as inference garbage, not as a clean "corruption" signal.
+
+Reviewer (user) called this out 2026-04-19. Reversed: **pod re-computes SHA on startup; trust-by-construction is rejected**. Cost is ~10s/GB once per pod startup (Linux-native crypto, blake-style streaming hash); for our ~2 GB model set that's ~20s added to first-traffic readiness. Production-acceptable; staging absorbs it; demo unchanged (engine isn't the slow path on demo cold start).
+
+**Side benefit — pruning safety**: with the pod SHA-check in place, a too-aggressive prune Job that deletes a still-referenced model file produces an immediate, loud, operator-readable pod startup failure rather than silent data corruption. This means the prune Job (when it eventually lands per "Pruning deferred" below) can stay structurally simple — time-based or latest-N retention, no complex reference-counted gymnastics. **The pod check is the safety net.** "Make wrong things visible" beats "prevent wrong things at the cost of complexity" — same philosophy as Slice 1's Camp B + Slice 4's asymmetric defense.
+
+### Future option: pod self-recovery (deferred)
+
+Today: pod fail-fast on missing/corrupt model. Operator decides recovery (re-run CI populator, re-trigger release workflow, manual `aws s3 cp` from break-glass runbook).
+
+Future option (NOT live, NOT in this ADR's responsibility split): pod could pull-from-upstream + push-back-to-S3 on startup miss/corrupt, self-healing without operator. This requires:
+
+- Engine IRSA gains `s3:PutObject` on the model bucket prefix (cross-repo amendment to ldz #85's IAM ask)
+- Race coordination if multiple pods cold-start simultaneously and all try to recover
+- Bandwidth tax (each pod that hits the recovery path downloads ~1.5 GB)
+- Auto-recovery hides root causes (the very reason we picked CI populator in the first place)
+
+Trigger to revisit: if operator-recovery cycles become repetitive AND we have observability to detect recovery loops cleanly, the trade tilts toward self-recovery. Until then, fail-fast keeps root causes visible.
+
 ### Pruning — deferred
 
 The first version of this ADR specified a reference-counted prune Job. That has been **explicitly deferred** because:
@@ -134,8 +162,8 @@ Trade ratio is overwhelmingly against pruning at this scale. Revisit when accumu
 | Property | Filename-as-version (rejected) | CAS (chosen) |
 | --- | --- | --- |
 | Multi-version coexistence | Naming convention discipline | Structural — different SHA = different path |
-| SHA verification cost | Recompute on every startup (~10s/GB) | Zero (filename IS the SHA) |
-| "Wrong content at right path" failure mode | Real (manifest-vs-file divergence) | Impossible by construction |
+| SHA verification cost | Recompute on every startup (~10s/GB) | ~10s/GB (reversed 2026-04-19, see §"Revision second pivot" — bit rot / partial-write / compromised populator can defeat the CAS invariant; pod re-verifies as defense-in-depth) |
+| "Wrong content at right path" failure mode | Real (manifest-vs-file divergence) | Possible (S3 corruption / partial-write); detected by pod SHA-verify on startup |
 | Operator investigation complexity | High ("which is wrong: file or manifest?") | Low ("file missing or right-size present") |
 | Self-healing potential | Risky (engine writing back is auth expansion) | CI populates as build-time guarantee |
 | Operational analogy | Custom convention | Docker registry / git / Sigstore — well-trodden |
