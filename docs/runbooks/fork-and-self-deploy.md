@@ -47,9 +47,15 @@ In your fork of `aegis-aws-landing-zone`:
 
 ## Step 2 — Read the values you'll plug into GitHub Variables
 
-### Primary path — Terraform outputs (preferred)
+Two paths, depending on whether your fork of `aegis-aws-landing-zone` declares Terraform outputs for the staging resources. **The fallback (AWS CLI) path is the canonical one today** — the Terraform-output path is conditional on aegis-aws-landing-zone#95 resolving (asking ldz to confirm output names or add them). Use whichever fits your provisioning approach:
 
-If your fork of `aegis-aws-landing-zone` declares outputs for the resources (per aegis-aws-landing-zone#93 once landed), this is one command:
+- **Provisioned via forked ldz Terraform AND outputs exist** → use the Terraform-output path
+- **Provisioned via console, CDK, hand-rolled Terraform, or any other way** → use the AWS CLI path
+- **Don't know yet** → AWS CLI path; revisit later if ldz adds outputs
+
+### Path A — Terraform outputs (conditional on ldz #95)
+
+If your fork of `aegis-aws-landing-zone` declares outputs for the resources (per aegis-aws-landing-zone#95 once that issue resolves with either "outputs exist with these names" or "outputs added in this PR"), this is one command:
 
 ```bash
 cd /path/to/your/aegis-aws-landing-zone/terraform/environments/staging
@@ -66,9 +72,9 @@ jq -r .frontend_cloudfront_distribution_id.value /tmp/aegis-staging-outputs.json
 jq -r .frontend_alternate_domain_name.value /tmp/aegis-staging-outputs.json
 ```
 
-(Output names listed match aegis-core's request in ldz issue #93. Adjust if your fork renames them.)
+(Output names listed are aegis-core's _suggested_ schema in ldz issue #95. The actual names will follow whatever convention ldz commits to in that issue's resolution; adjust the `jq` keys to match.)
 
-### Fallback path — AWS CLI queries (if outputs aren't declared yet)
+### Path B — AWS CLI queries (canonical today, ldz-agnostic)
 
 For each value, the AWS CLI command from a normal AWS user's perspective (assumes you have read perms in the account):
 
