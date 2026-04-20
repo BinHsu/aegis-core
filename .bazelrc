@@ -39,6 +39,18 @@ build --action_env=DEVELOPER_DIR=/Library/Developer/CommandLineTools
 build --host_action_env=DEVELOPER_DIR=/Library/Developer/CommandLineTools
 build --repo_env=DEVELOPER_DIR=/Library/Developer/CommandLineTools
 build --xcode_version_config=@bazel_tools//tools/cpp:host_xcodes
+
+# Stable action environment — prevents cache invalidation when running
+# from different shells with different PATH (e.g., interactive terminal
+# vs editor / tooling subprocess). Without this, every cross-shell
+# `bazel run` sees "Effective client environment has changed" and
+# re-compiles all C++ sources including the rules_foreign_cc-wrapped
+# llama.cpp + whisper.cpp — ~10 minutes of wasted CPU per invocation.
+# The flag enforces a normalized PATH that doesn't inherit from the
+# caller's shell. Individual env vars we actually need (like
+# DEVELOPER_DIR above) are still propagated via explicit --action_env.
+# Diagnosed 2026-04-20 via `--explain` showing PATH-diff-induced misses.
+build --incompatible_strict_action_env
 # Override Bazel's ancient macOS 10.11 minimum / SDK defaults. Apple Silicon
 # machines cannot build against 10.11; use a currently-available SDK.
 build --macos_minimum_os=11.0
