@@ -1,0 +1,39 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aegis-engine
+  namespace: aegis
+  labels:
+    app.kubernetes.io/name: aegis-engine
+    app.kubernetes.io/part-of: aegis-core
+  annotations:
+    aegis.binhsu.org/policy-rationale: ldz-54-default-deny-allowlist
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aegis-engine
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Engine accepts gRPC (port 50051) only from the gateway.
+    # This enforces ADR-0017's topology: gateway is the only
+    # in-cluster caller of engine's gRPC service; no human
+    # or other pod should be able to dial engine directly.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aegis-gateway
+      ports:
+        - port: 50051
+          protocol: TCP
+  egress:
+    # HTTPS egress placeholder. Engine today (C-1) has no
+    # network egress surface — model files come from a mounted
+    # volume (C-3 will populate via S3+CSI or similar). This
+    # rule stays narrow + stub-shaped so C-3 / future qdrant
+    # client land without touching this file for policy widening.
+    # No `to` = any destination on 443; tighten to specific
+    # IPs/FQDNs when C-3 concretises the egress target.
+    - ports:
+        - port: 443
+          protocol: TCP
+    # DNS egress: allowed by ldz's default-deny baseline.

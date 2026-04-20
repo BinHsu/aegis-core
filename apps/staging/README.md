@@ -2,10 +2,10 @@
 
 This directory is the **GitOps source of truth** for the Cloud-mode
 EKS deployment of Aegis Core in the staging environment. ArgoCD
-running in the
-[`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
-cluster polls this path recursively and reconciles whatever Kubernetes
-manifests live below it onto the `aegis-staging` cluster.
+running in the [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+cluster polls this path recursively (`path: apps/staging` +
+`recurse: true`) and reconciles whatever Kubernetes manifests live
+below it onto the `aegis-staging` cluster.
 
 The contract is documented in
 [`aegis-aws-landing-zone#54`](https://github.com/BinHsu/aegis-aws-landing-zone/issues/54)
@@ -24,57 +24,75 @@ If you cloned this repo to try the **single-machine experience** —
 — then **this directory has nothing to do with you**. Local mode runs
 the C++ engine and the Go gateway as plain subprocesses on your
 laptop; there is no Kubernetes, no ArgoCD, no EKS, no AWS. You can
-ignore this entire `apps/` tree and the demo still works end-to-end
-(see the README's [Quick Start](../../README.md#quick-start) section).
+ignore this entire `apps/` tree and the demo still works end-to-end.
+Per ADR-0031 §"LOCAL mode posture", mTLS is also bypassed in LOCAL
+mode — plaintext gRPC over localhost, by design.
 
-This tree exists so that **when** an Aegis-Core component is ready to
-ship to the Cloud-mode EKS cluster — Phase 4a (OCI packaging) and
-later — its Deployment / Service / Ingress / ConfigMap manifests
-land here without needing a separate "infra" PR cycle. The application
-team owns its own Kubernetes spec; the platform team
-(`aegis-aws-landing-zone`) owns the cluster the spec runs on.
+## Current state — Phase 4c C-1 foundation landed
 
-## Current state — empty (deliberately)
+| Component | Resource kinds |
+|---|---|
+| Gateway | `Deployment` · `Service` (ClusterIP) · `Ingress` (ALB) · `ServiceAccount` · `NetworkPolicy` |
+| Engine | `Deployment` · `Service` (**headless**, ADR-0017) · `ServiceAccount` (IRSA-annotated) · `NetworkPolicy` |
 
-Phase 3 ships the frontend dev experience and the Local-mode bundle.
-Nothing here yet. The directory carries this README so:
+**Not here yet** (tracked in ROADMAP Phase 4c):
 
-1. The path **exists** in version control. ArgoCD's root Application
-   has `path: apps/staging`, so without a tracked file at this path
-   GitHub would not preserve the directory.
-2. Future contributors landing K8s manifests have one canonical place
-   to look (and a contract issue to read first).
+- `Rollout` CRD replacing `Deployment` — C-5a, ADR-0030
+- cert-manager `Certificate` CRs for mTLS — C-2, ADR-0031
+- `ServiceMonitor` (Prometheus scrape targets) — lands with Phase 4d observability
+- `PodDisruptionBudget` — worth adding once replica counts reflect real load
+- Model `PersistentVolumeClaim` or S3-CSI mount — C-3, ADR-0026
 
-## When you're ready to add something here
+## Convention
 
-Sketch:
+| Decision | Value | Reference |
+|---|---|---|
+| Layout | Single directory per env under `apps/` (plain YAML, no Kustomize/Helm) | Phase 4c C-1 |
+| Image registry | `251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core` | ldz #54 platform contract |
+| Image tag format | `staging-<git_sha>` (gateway) · `engine-staging-<git_sha>` (engine) | ADR-0025, Phase 4a Slice 3 |
+| Security posture | distroless nonroot + readOnly rootfs + drop ALL caps | ADR-0025 |
+| Namespace | `aegis` (Terraform-managed by ldz — do NOT create here) | ldz #54 |
+| Service topology | Gateway: ClusterIP + ALB Ingress · Engine: **Headless** (gRPC round-robin DNS) | ADR-0017 |
+| mTLS | cert-manager-issued certs in CLOUD (absent in C-1; arrives in C-2) | ADR-0031 |
+| Progressive delivery | Plain `Deployment` in C-1; `Rollout` CRD replacement in C-5a | ADR-0030 |
 
-```
-apps/staging/
-├── README.md           ← this file
-├── gateway/            ← Phase 4a candidate: Go Gateway Deployment + Service + Ingress
-│   └── …
-├── engine/             ← Phase 4a candidate: C++ Engine Deployment + Service (internal-only)
-│   └── …
-└── frontend/           ← Phase 4a candidate: static bundle Deployment + ALB
-    └── …
-```
+## Platform guarantees from ldz #54
 
-Conventions you can rely on (per landing-zone#54 contract, Phase 3c
-state):
+- **AWS Load Balancer Controller** pre-installed — `Ingress` translates to ALB automatically
+- **Default-deny NetworkPolicy** already on `aegis` ns — we add explicit allow rules below
+- **Kyverno Audit mode** — our Deployments satisfy all 4 baseline policies (non-privileged, no host-ns, resource limits present, `app.kubernetes.io/name` labelled)
+- **Karpenter vCPU cap: 4 total** — our requests sum to 1.2 vCPU; fits comfortably
+- **IRSA role pre-provisioned**: `aegis-staging-aegis-engine` with trust scope `system:serviceaccount:aegis:aegis-engine`. Engine SA carries the `eks.amazonaws.com/role-arn` annotation; permission policy on the role is currently empty (skeleton — attaches when engine gains AWS API surface).
 
-- ArgoCD scans this path recursively with `CreateNamespace=true`, so
-  any namespace referenced in your manifests is auto-created.
-- IRSA roles use the naming convention `aegis-staging-<app-name>` —
-  request new roles via a `cross-repo` issue on `aegis-aws-landing-zone`.
-- Karpenter is the only node provisioner; default NodePool is amd64
-  Bottlerocket Spot, instance category t/m/c (gen > 2), 2-4 vCPU per
-  node, capped at 4 vCPU total for the lab.
-- AWS Load Balancer Controller handles `Ingress` and
-  `Service type=LoadBalancer` translation; ACM cert ARNs come from
-  landing-zone outputs.
-- Kubernetes API version baseline: 1.32.
+## Known gap — image tag updates (C-1.5, deferred)
 
-For anything you need that isn't covered above, check the contract
-issue first (it gets edited as the contract evolves), then open a new
-`cross-repo` (or `cross-repo/blocking`) issue on the sibling repo.
+Today's manifests reference a **specific bootstrap image SHA**. A clean release update loop requires one of:
+
+- **Argo CD Image Updater** — auto-scans ECR, commits the new tag back to this repo on each push (pull-based)
+- **CI-commits-tag** — `release-staging-image.yml` extended with a final step that `git commit`s the new tag into the manifest after successful push (push-based GitOps)
+
+Decision between these is deferred to **C-1.5**. Until it lands, the image tag in the manifest is a static reference to the last known-good SHA; each release cycle currently requires one manual manifest edit.
+
+## Known gap — engine will crashloop on first sync
+
+Engine pod mounts a placeholder `emptyDir` at `/models`. The actual model files (`models/ggml-tiny.en.bin` etc.) aren't present in this volume, so the engine binary fails startup with `couldn't open file`. This is expected for C-1 — manifest-level structure is the deliverable; the model storage layer is **C-3** (ADR-0026 S3 populator) and requires ldz-side IAM extension (ldz #85).
+
+The gateway path remains independently runnable and `/healthz`-responsive even without a working engine, so C-4 E2E against the gateway API can proceed on its own clock.
+
+## Known gap — ingress needs ldz ACM cert + Route53
+
+Gateway `Ingress` annotates a placeholder ACM certificate ARN and references hostname `aegis-api.staging.binhsu.org`. Both require ldz provisioning:
+
+- DNS-validated ACM certificate in `eu-central-1`
+- Route53 A/ALIAS record to the ALB hostname
+
+Tracked via a cross-repo issue on the ldz side. On first ArgoCD sync, the Ingress will reconcile to a healthy ALB **only** after ldz closes those two tickets; until then, ArgoCD will show the Ingress as pending, which is expected on bring-up and not a manifest failure.
+
+## Cross-repo operations model
+
+Per ARCH §7 and ldz #54 stability clause:
+
+- Contract changes are announced on ldz #54 (edit, never close)
+- Discrete asks open fresh `cross-repo` issues on the ldz side
+- Label `cross-repo/blocking` when the ask gates our progress; `cross-repo/fyi` for informational
+- Reciprocal issue on this repo: [`aegis-core#11`](https://github.com/BinHsu/aegis-core/issues/11) carries our requirements list
