@@ -1401,6 +1401,72 @@ INFO: Build completed successfully, 1 total action
 
 ---
 
+## Incident 14 — LAN transcript pipeline silently lost at the last hop (Phase-1 WS decoder stub)
+
+**Date**: 2026-04-20  **Severity**: S3  **Duration**: ~3 hours (plus ≈ 2 hours burned on the wrong layers first — see §Detection)
+**Related commit**: *this commit*
+
+### Symptom
+
+End-to-end LAN smoke (`bazel run //:app_local --with-frontend`) produced no transcript text on the Host page, despite:
+
+- Whisper model loading cleanly (engine log showed `compute buffer (decode) = 95.91 MB`).
+- WebRTC peer reaching `connected` in `chrome://webrtc-internals` (confirmed ICE candidate pair, `active=true` outbound-rtp, bytes flowing).
+- Gateway receiving audio, forwarding to engine's `StreamTranscribe` stream.
+
+Host UI permanently read `Waiting for the first segment…`. Speaking for a minute changed nothing.
+
+### Root cause
+
+Three stacked bugs, each hiding the next:
+
+1. **Engine gRPC server had no keepalive policy**, and the gateway's client keepalive sends pings every 30 s (ADR-0006). gRPC C++ default rejects pings more frequent than 5 minutes → `ENHANCE_YOUR_CALM` / `too_many_pings` → GOAWAY → reconnect → engine reloads the whisper model from scratch → repeat every ≈ 4 minutes. Fixed by `GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS=20000` + `GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS=1` on the C++ `ServerBuilder`.
+2. **Engine's `Session::Run` was batch-transcribe-only**, not streaming. It accumulated PCM into a `std::vector<float>` for the entire session and called `engine->Transcribe(samples)` **once** after the stream closed (Stage 5 in `session.cc`). So live listeners never saw anything until EndMeeting, and even then the single segment was emitted on a stream that the gateway had already torn down → client missed it. Fixed by adding a live-window flush helper (`kLiveWindowSamples = 3 s × 16 kHz`) that calls `Transcribe` + `EmitTranscriptSegments` mid-loop, non-overlapping, with monotonic `segment_id` + derived `start_ms/end_ms`.
+3. **`WebSocketTranscriptStreamProvider` was a Phase-1 stub that only handled string frames.** The gateway sends binary protobuf frames (`websocket.MessageBinary`, `proto.Marshal(ViewerEvent)`); the browser received the `ArrayBuffer`, checked `typeof ev.data === "string"`, saw `false`, and **silently discarded every frame**. The in-file comment literally said "Phase 2 decodes real protobuf" — never happened. Fixed by importing `@bufbuild/protobuf` + the generated `ViewerEvent` class, calling `ViewerEvent.fromBinary(new Uint8Array(ev.data))`, mapping proto enums / bigint fields back to the UI's light-weight `ViewerEvent` shape in `types.ts`, and calling `callbacks.onEvent`.
+
+Bug 1 masked bug 2: with the stream dying every 4 minutes, nobody noticed `Session::Run`'s batch shape because the session never *ran* long enough to reach Stage 5. Bug 2 masked bug 3: with no segments emitted in the first place, nobody noticed the WS frames were being dropped by the browser. Observability gaps (the pipeline + webrtc Go packages had **zero** `slog` calls, and `runEgress` swallowed non-EOF errors with a bare `return`) made all three bugs equally invisible — the surface symptom was always the same: empty UI.
+
+### Detection
+
+Four wrong-layer probes before the real diagnosis:
+
+1. **Chrome `webrtc-internals`** confirmed PC reached `connected`, bytes flowing — ruled out media layer.
+2. **`chrome://webrtc-internals` stats graph** showed non-zero `bytesSent_in_bits/s` on speech — ruled out mic / codec negotiation.
+3. **`nc -l 8888` + phone GET** showed LAN firewall was not blocking 8080 — ruled out macOS Application Firewall.
+4. **Host UI UX audit** surfaced two unrelated UX gaps (React state not subscribing to PC `connectionState`, RAG dropdown showing 4 fake corpora) that delayed the real diagnosis because they looked plausible as primary bugs.
+
+The first real signal came from `curl :8081/metrics | grep aegis_gateway`: `aegis_gateway_active_sessions=1` and `CreateMeeting ok=1`, but no counter for `StreamTranscribe` ingest beyond that — triggering the `grep -rn 'slog\.' gateway_go/internal/{pipeline,webrtc,grpc}/` that turned up **zero log statements** across the audio path. Adding `pipeline.engine.stream_opened`, `pipeline.engine.first_egress_message`, `pipeline.engine.stream_closed_{eof,err}`, and `pipeline.broadcast.transcript{,_no_subscribers}` (all Info, all carry `session_id`) made every layer of the bug sequentially visible in the next run:
+
+- `ENHANCE_YOUR_CALM` GOAWAY appeared in `[gateway]` log → caught bug 1.
+- After bug 1's fix, `first_egress_message` did not fire despite session running for 60 s → caught bug 2 (batch shape — `Session::Run` never reached Stage 5 while the client was subscribed).
+- After bug 2's fix, `broadcast.transcript delivered=1 dropped=0` fired every 3 s but UI still empty → final layer, bug 3 (WS stub).
+
+### Resolution
+
+One commit, three logically-separable fixes:
+
+- `engine_cpp/cmd/engine/main.cc` — two `AddChannelArgument` lines to permit the gateway's 30 s keepalive ping cadence.
+- `engine_cpp/src/session/session.cc` — `flush_window()` helper called on every OPUS / PCM append; non-overlapping 3 s window emits mid-stream; Stage 5 becomes a force-flush of the trailing sub-window.
+- `frontend_web/src/providers/TranscriptStreamProvider/WebSocketTranscriptStreamProvider.ts` — full binary-frame decoder via `@bufbuild/protobuf` `ViewerEvent.fromBinary`, mapped to UI types with `exactOptionalPropertyTypes`-safe conditional spread.
+
+Plus the load-bearing observability layer that made the whole sequence diagnosable in one more run: `pipeline.go` / `negotiator.go` `slog` calls keyed on `session_id`, `runEgress` error path no longer silent, `Broadcast` return values used (`delivered, dropped`).
+
+### Prevention
+
+- **Every cross-process boundary carries `session_id` in its log context.** Future customer-support debugging on EKS will be `kubectl logs | grep session_id=...` across gateway + engine pods; this incident fixed the gateway side, engine-side C++ logger session-id tagging is a follow-up in ROADMAP Phase 4d.
+- **`runEgress` error path now logs with the error text and the accumulated counters.** Any future engine-side failure — OOM, whisper crash, context cancel — surfaces as a `pipeline.engine.stream_closed_err` at Warn level with full context. No more bare `return`.
+- **"TODO: Phase 2 decode real protobuf" is a lethal marker.** The file's TODO dated back to Phase 1 and was skipped over in subsequent reviews because nobody was exercising LAN-mode with real audio. Lesson in §Lessons below.
+
+### Lessons
+
+1. **Three misattributions cost ~2 h.** WebRTC-internals, firewall probe, React-state UI audit were each plausible *given the symptom* but each explored a layer that wasn't broken. The lesson from Incident 13 (reach for `--explain` earlier) applies here in a different form: when a pipeline stalls silently, **go add observability to every hop before debugging any one hop**. The `pipeline.engine.first_egress_message` log took 10 lines to add and resolved the first real ambiguity in one run.
+2. **Silent `return` on error is worse than a panic.** `runEgress`'s pre-fix behavior (`if err == io.EOF { return }; return`) swallowed EVERY engine-side failure including context cancellation due to keepalive timeout. Had this emitted a Warn from day one, bug 1 would have been named in the first session. Enforce: **every error branch logs at Warn or higher with enough context to identify the session**.
+3. **"Phase-N stub" markers accumulate risk.** `WebSocketTranscriptStreamProvider` carried its "decodes real protobuf in Phase 2" comment across 3 releases because the ws/viewer path wasn't exercised end-to-end until today. Two process implications: (a) PR reviews should flag any *stub* with no tracking issue, not just any *TODO*; (b) a first-user-exercise of a code path should be treated as a test, not a demo. A 10-line `ws-decode-smoke.test.ts` that sent a known ViewerEvent through the provider and asserted on the parsed shape would have caught this in Phase 1.
+4. **Observability debt compounds non-linearly.** Pipeline + webrtc + grpc packages had 0 log statements each. Debugging the three-layer bug required *all three* packages to report what they saw; adding logs to one while leaving the others silent would just move the mystery. Paying the observability tax on a Go package is cheap and should not be deferred past "code is functional" — it should be a gate at "code is reviewable".
+5. **End-to-end demo is the first real test of a LAN-mode stack.** Before today, `bazel run //:app_local` had never been driven with a human talking into a mic into the host UI until the transcript appeared. Every lower-level test (unit, integration) was stubbing out the layer above. The demo itself became the detector — acceptable for a solo project, **unacceptable at team scale**. ROADMAP Phase 4d's "Post-deploy E2E suite against staging" (Playwright happy-path) is the structural fix; that slice just gained a clear use-case from this incident.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a

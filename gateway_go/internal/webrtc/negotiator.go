@@ -22,6 +22,7 @@ package webrtc
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -137,12 +138,29 @@ func (n *Negotiator) Negotiate(ctx context.Context, sessionID, offerSDP string) 
 	// Register OnTrack before SetRemoteDescription so we never miss a
 	// track that the remote side starts immediately on signaling.
 	pc.OnTrack(func(track *pwebrtc.TrackRemote, _ *pwebrtc.RTPReceiver) {
+		slog.Debug("webrtc.OnTrack fired",
+			"session_id", sessionID,
+			"codec", track.Codec().MimeType,
+			"ssrc", uint32(track.SSRC()),
+			"payload_type", uint8(track.PayloadType()),
+		)
 		for {
 			pkt, _, readErr := track.ReadRTP()
 			if readErr != nil {
+				slog.Debug("webrtc.OnTrack loop ended",
+					"session_id", sessionID,
+					"total_packets", cs.packets.Load(),
+					"err", readErr.Error(),
+				)
 				return // PeerConnection closed or track ended.
 			}
-			cs.packets.Add(1)
+			prev := cs.packets.Add(1)
+			if prev == 1 {
+				slog.Debug("webrtc.first RTP packet",
+					"session_id", sessionID,
+					"payload_bytes", len(pkt.Payload),
+				)
+			}
 			if len(pkt.Payload) == 0 {
 				continue
 			}

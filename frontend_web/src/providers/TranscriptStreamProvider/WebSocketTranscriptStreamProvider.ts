@@ -8,17 +8,30 @@
 // allowed from insecure contexts on all major browsers, so Local
 // mode uses WebSocket + Protobuf binary framing.
 //
-// Phase 1 C3 ships the transport wrapper; Phase 2 adds real
-// protobuf-ts decoding of ViewerEvent frames once the Gateway
-// side exists.
+// Wire format: each ws.send is a single binary frame carrying one
+// `aegis.v1.ViewerEvent` marshalled via proto3. The Go Gateway
+// side (`gateway_go/internal/ws/ws.go` `sendEvent`) does the mirror
+// encode. Earlier this file was a Phase-1 stub that only handled
+// string frames and dropped binary — the bug surfaced as "transcript
+// segments emit on engine, broadcast delivers to WS subscriber, but
+// host UI shows nothing". See docs/incidents.md for context.
+
+import {
+  HintUrgency as ProtoHintUrgency,
+  MeetingState as ProtoMeetingState,
+  ViewerEvent as ProtoViewerEvent,
+} from "@/gen/proto/aegis/v1/aegis_pb";
 
 import type {
+  HintUrgency,
   JoinRequest,
+  MeetingState,
   OnClose,
   OnError,
   OnEvent,
   Subscription,
   TranscriptStreamProvider,
+  ViewerEvent,
 } from "./types";
 
 export interface WebSocketConfig {
@@ -36,6 +49,105 @@ function buildWebSocketUrl(cfg: WebSocketConfig, req: JoinRequest): string {
   const sid = encodeURIComponent(req.sessionId);
   const token = encodeURIComponent(req.viewerToken);
   return `${base}/ws/viewer?session_id=${sid}&token=${token}`;
+}
+
+// bigintToNumberSafely — protoInt64 fields (sequence, segment_id, etc.)
+// arrive as bigint. The UI never reasons about values above 2^53, so the
+// narrow cast is safe for expected cardinality; if a value somehow
+// overflows we clamp to Number.MAX_SAFE_INTEGER rather than returning NaN
+// or throwing — a degraded but still-rendered segment is the correct
+// outcome for a local-mode viewer.
+function bigintToNumber(v: bigint): number {
+  if (v > BigInt(Number.MAX_SAFE_INTEGER)) return Number.MAX_SAFE_INTEGER;
+  return Number(v);
+}
+
+function timestampToMs(
+  ts: { seconds: bigint; nanos: number } | undefined,
+): number {
+  if (!ts) return Date.now();
+  return bigintToNumber(ts.seconds) * 1000 + Math.floor(ts.nanos / 1e6);
+}
+
+function mapMeetingState(s: ProtoMeetingState): MeetingState {
+  switch (s) {
+    case ProtoMeetingState.ACTIVE:
+      return "active";
+    case ProtoMeetingState.HOST_RECONNECTING:
+      return "host-reconnecting";
+    case ProtoMeetingState.ENDED:
+      return "ended";
+    case ProtoMeetingState.ENGINE_BUSY:
+      return "engine-busy";
+    default:
+      return "active";
+  }
+}
+
+function mapHintUrgency(u: ProtoHintUrgency): HintUrgency {
+  switch (u) {
+    case ProtoHintUrgency.LOW:
+      return "low";
+    case ProtoHintUrgency.HIGH:
+      return "high";
+    case ProtoHintUrgency.URGENT:
+      return "urgent";
+    default:
+      return "normal";
+  }
+}
+
+// decodeBinaryFrame — parse a single gateway-emitted binary WebSocket
+// frame into the local ViewerEvent shape the UI consumes. Returns null
+// if the proto payload oneof is unset (indicates a malformed frame
+// or a future variant we don't know how to render yet).
+function decodeBinaryFrame(buf: ArrayBuffer): ViewerEvent | null {
+  const proto = ProtoViewerEvent.fromBinary(new Uint8Array(buf));
+  const emittedAtMs = timestampToMs(proto.emittedAt);
+  const sequence = bigintToNumber(proto.sequence);
+
+  switch (proto.payload.case) {
+    case "transcript": {
+      const t = proto.payload.value;
+      return {
+        kind: "transcript",
+        sequence,
+        emittedAtMs,
+        segmentId: bigintToNumber(t.segmentId),
+        speakerLabel: t.speakerLabel,
+        text: t.text,
+        isFinal: t.isFinal,
+        isQuestion: t.isQuestion,
+      };
+    }
+    case "hint": {
+      const h = proto.payload.value;
+      // Conditional spread for optional fields — types.ts declares
+      // `rationale?: string` with `exactOptionalPropertyTypes: true`,
+      // which forbids assigning `undefined` explicitly.
+      return {
+        kind: "hint",
+        sequence,
+        emittedAtMs,
+        hintId: bigintToNumber(h.hintId),
+        suggestion: h.suggestion,
+        urgency: mapHintUrgency(h.urgency),
+        ...(h.rationale ? { rationale: h.rationale } : {}),
+      };
+    }
+    case "stateChange": {
+      const s = proto.payload.value;
+      return {
+        kind: "state",
+        sequence,
+        emittedAtMs,
+        state: mapMeetingState(s.state),
+        ...(s.reason ? { reason: s.reason } : {}),
+      };
+    }
+    default:
+      return null;
+  }
 }
 
 export class WebSocketTranscriptStreamProvider
@@ -62,18 +174,38 @@ export class WebSocketTranscriptStreamProvider
     ws.binaryType = "arraybuffer";
 
     ws.onmessage = (ev: MessageEvent): void => {
-      // Phase 2: decode ev.data as a binary-wire aegis.v1.ViewerEvent
-      // via protobuf-ts and forward to onEvent. For now, emit a
-      // synthetic event proving the WS connected.
+      if (ev.data instanceof ArrayBuffer) {
+        let event: ViewerEvent | null = null;
+        try {
+          event = decodeBinaryFrame(ev.data);
+        } catch (err) {
+          callbacks.onError?.(
+            new Error(
+              `failed to decode ViewerEvent binary frame: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+          return;
+        }
+        if (event !== null) {
+          callbacks.onEvent(event);
+        }
+        return;
+      }
       if (typeof ev.data === "string") {
-        // Some test servers echo plain text; accept + log.
-        callbacks.onEvent({
-          kind: "state",
-          sequence: 0,
-          emittedAtMs: Date.now(),
-          state: "active",
-          reason: `received text frame (${ev.data.length} chars); Phase 2 decodes real protobuf`,
-        });
+        // Gateway never emits text frames; if one arrives it is either
+        // a test double or a protocol bug. Treat as non-fatal — log via
+        // onError so the caller (HostPage / ViewerPage) can surface it
+        // in the console without tearing the subscription down.
+        callbacks.onError?.(
+          new Error(
+            `unexpected text frame on Local-mode WS (expected binary ViewerEvent): ${ev.data.slice(
+              0,
+              80,
+            )}`,
+          ),
+        );
       }
     };
 

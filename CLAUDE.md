@@ -12,6 +12,9 @@
 
 2. **Testing Integrity**
    * Code must have legitimate tests. Do NOT write stub tests that just `return true` or `assert(1 == 1)` to get a green light. Real inputs must produce verifiable real outputs.
+   * **Test-first commit discipline.** For any bug that a unit or integration test *could have caught*, write the regression test **in the same commit / PR as the fix**, and verify the test is actually load-bearing (it fails on the pre-fix code, passes on the post-fix code). Do NOT commit the fix alone on the promise of a follow-up test — follow-ups decay, and the next regression of the same shape lands unnoticed. Incident 14 (2026-04-20 LAN transcript three-layer bug) is the canonical case: the `WebSocketTranscriptStreamProvider` dropping binary frames was a 10-line Vitest away from being caught in Phase 1; not having it cost hours.
+   * **Testing escape hatches must be named explicitly.** Some bugs are genuinely beyond UT scope — cross-process protocol timing (gRPC keepalive policy, HTTP/2 GOAWAY cadence), OS-level behaviors, hardware-dependent code paths. When declining to write a UT for a specific bug, the PR body MUST say so AND explain what layer *could* catch it (e.g., "long-running staging canary"). Silent omission is how Rule 2 rots over time.
+   * **Local `bazel test` MUST be green before `git commit`.** Pre-commit hooks cover lint and format; they do NOT run full test suites. The author is responsible for `./tools/bazelisk/bazelisk test //...` (or the relevant scoped subset) passing locally before the commit, not merely before the PR merge. "CI will catch it" is a valid safety net, not a valid substitute for the discipline.
 
 3. **Mandatory Documentation Synchronization**
    * Before writing code, you MUST read `ARCHITECTURE.md` and `ROADMAP.md`.

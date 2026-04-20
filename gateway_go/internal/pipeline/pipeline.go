@@ -46,7 +46,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -93,6 +95,15 @@ type Pipeline struct {
 
 	// closed guards the idempotence of Close.
 	closeOnce sync.Once
+
+	// Observability counters — edge-to-edge tracing per session_id.
+	// audioFramesForwarded counts non-empty Opus payloads WriteRTPPayload
+	// has successfully sent to the engine. egressMessagesReceived counts
+	// messages runEgress has Recv'd from the engine. Both are used for
+	// "first ever" Info-level log lines (no per-frame spam) + readable
+	// counters for /metrics exposure.
+	audioFramesForwarded atomic.Uint64
+	egressMessages       atomic.Uint64
 }
 
 // New opens a StreamTranscribe bidi stream to the engine, sends the
@@ -123,8 +134,11 @@ func New(
 
 	stream, err := engine.StreamTranscribe(ctx)
 	if err != nil {
+		slog.Warn("pipeline.engine.stream_open_failed",
+			"session_id", sessionID, "err", err.Error())
 		return nil, fmt.Errorf("pipeline: StreamTranscribe open: %w", err)
 	}
+	slog.Info("pipeline.engine.stream_opened", "session_id", sessionID)
 
 	start := &aegisv1.IngestMessage{
 		Payload: &aegisv1.IngestMessage_SessionStart{
@@ -142,10 +156,17 @@ func New(
 		},
 	}
 	if err := stream.Send(start); err != nil {
+		slog.Warn("pipeline.session_start_send_failed",
+			"session_id", sessionID, "err", err.Error())
 		// Best-effort close; the caller will see the error from Send.
 		_ = stream.CloseSend()
 		return nil, fmt.Errorf("pipeline: SessionStart: %w", err)
 	}
+	slog.Info("pipeline.session_start_sent",
+		"session_id", sessionID,
+		"tenant_id", sess.TenantID,
+		"rag_id", sess.RAGID,
+		"sample_rate_hz", sampleRateHz)
 
 	p := &Pipeline{
 		sess:      sess,
@@ -192,9 +213,29 @@ func (p *Pipeline) WriteRTPPayload(payload []byte) error {
 	defer p.sendMu.Unlock()
 	p.chunkSeq++
 	if err := p.stream.Send(msg); err != nil {
+		slog.Warn("pipeline.audio.send_failed",
+			"session_id", p.sessionID,
+			"chunk_id", p.chunkSeq,
+			"err", err.Error())
 		return fmt.Errorf("pipeline: send Opus: %w", err)
 	}
+	if n := p.audioFramesForwarded.Add(1); n == 1 {
+		slog.Info("pipeline.audio.first_frame_forwarded",
+			"session_id", p.sessionID,
+			"payload_bytes", len(payload))
+	}
 	return nil
+}
+
+// previewText truncates transcript text for safe inclusion in a log line
+// (avoids dumping an entire paragraph). 80-char cap is enough to read-at-
+// a-glance "who emitted what" while keeping log lines scannable.
+func previewText(s string) string {
+	const cap = 80
+	if len(s) <= cap {
+		return s
+	}
+	return s[:cap] + "…"
 }
 
 // WritePCM sends a PCM chunk (already 16 kHz mono 16-bit little-endian,
@@ -284,23 +325,42 @@ func (p *Pipeline) Close() {
 // Closing p.done on exit is the synchronization point Close waits on.
 func (p *Pipeline) runEgress() {
 	defer close(p.done)
+	defer slog.Info("pipeline.engine.egress_loop_exited",
+		"session_id", p.sessionID,
+		"messages_received", p.egressMessages.Load(),
+		"audio_frames_forwarded", p.audioFramesForwarded.Load())
 	for {
 		msg, err := p.stream.Recv()
 		if err != nil {
 			// io.EOF is the normal END_STREAM path; other errors
 			// (context cancellation, stream reset) are also terminal
 			// — in either case, no more broadcasts are possible.
+			// Historically this branch `return`ed silently on every
+			// non-EOF error, which swallowed transcribe-side failures
+			// whole. Now every stream close is logged with reason +
+			// session_id so ops can grep the full lifecycle.
 			if err == io.EOF {
+				slog.Info("pipeline.engine.stream_closed_eof",
+					"session_id", p.sessionID)
 				return
 			}
+			slog.Warn("pipeline.engine.stream_closed_err",
+				"session_id", p.sessionID,
+				"err", err.Error(),
+				"messages_received_before_err", p.egressMessages.Load())
 			return
+		}
+		if n := p.egressMessages.Add(1); n == 1 {
+			slog.Info("pipeline.engine.first_egress_message",
+				"session_id", p.sessionID,
+				"payload_type", fmt.Sprintf("%T", msg.GetPayload()))
 		}
 		switch payload := msg.GetPayload().(type) {
 		case *aegisv1.EgressMessage_Transcript:
 			if payload.Transcript == nil {
 				continue
 			}
-			p.sess.Broadcast(&aegisv1.ViewerEvent{
+			delivered, dropped := p.sess.Broadcast(&aegisv1.ViewerEvent{
 				// Sequence is set per-subscription by the viewer
 				// handler (JoinAsViewer / ws.Handler) — leaving it
 				// zero here avoids ambiguity.
@@ -309,16 +369,35 @@ func (p *Pipeline) runEgress() {
 					Transcript: payload.Transcript,
 				},
 			})
+			if delivered == 0 {
+				slog.Warn("pipeline.broadcast.transcript_no_subscribers",
+					"session_id", p.sessionID,
+					"segment_id", payload.Transcript.GetSegmentId(),
+					"text_preview", previewText(payload.Transcript.GetText()),
+					"dropped", dropped,
+					"note", "engine produced a transcript segment but no viewer / host subscription is connected; segment is lost (ADR-0004 stateless relay)")
+			} else {
+				slog.Debug("pipeline.broadcast.transcript",
+					"session_id", p.sessionID,
+					"segment_id", payload.Transcript.GetSegmentId(),
+					"delivered", delivered,
+					"dropped", dropped)
+			}
 		case *aegisv1.EgressMessage_Hint:
 			if payload.Hint == nil {
 				continue
 			}
-			p.sess.Broadcast(&aegisv1.ViewerEvent{
+			delivered, dropped := p.sess.Broadcast(&aegisv1.ViewerEvent{
 				EmittedAt: timestamppb.New(time.Now()),
 				Payload: &aegisv1.ViewerEvent_Hint{
 					Hint: payload.Hint,
 				},
 			})
+			if delivered == 0 {
+				slog.Warn("pipeline.broadcast.hint_no_subscribers",
+					"session_id", p.sessionID,
+					"dropped", dropped)
+			}
 		default:
 			// EgressMessage_Status and EgressMessage_Error are not yet
 			// fanned out to viewers; later phases may emit state
