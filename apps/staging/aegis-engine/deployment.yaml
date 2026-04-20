@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aegis-engine
+  namespace: aegis
+  labels:
+    app.kubernetes.io/name: aegis-engine
+    app.kubernetes.io/part-of: aegis-core
+    app.kubernetes.io/component: inference-engine
+spec:
+  # N replicas per ADR-0017 N:N-ready topology. Starting at 2 in
+  # staging to exercise the round-robin path end-to-end.
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aegis-engine
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aegis-engine
+        app.kubernetes.io/part-of: aegis-core
+        app.kubernetes.io/component: inference-engine
+    spec:
+      serviceAccountName: aegis-engine
+      # ADR-0006 Graceful Shutdown — 60s for engine because inference
+      # workloads may be mid-flight (whisper chunks processing when
+      # SIGTERM arrives). Longer than gateway's 30s because server-
+      # side drain semantics differ.
+      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: engine
+          # Bootstrap tag — see deploy/README.md §"Known gap" for
+          # the pending C-1.5 tag-update automation choice.
+          image: 251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core:engine-staging-db14d67559d079d48633dc3a536666eba080ac05
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+          env:
+            - name: AEGIS_MODEL_PATH
+              # Matches `models/ggml-tiny.en.bin` relative to CWD
+              # which is /usr/local/bin in the image; engine resolves
+              # from /models by this env override.
+              value: "/models/ggml-tiny.en.bin"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            # Engine memory envelope follows ARCH §6 "Engine & Model
+            # Quantization": whisper large-v3-turbo Q4 (~1.5GB) +
+            # diarization (~1.0GB) + per-session working set. 2Gi
+            # request / 4Gi limit covers the basic model set without
+            # LLM (ADR-0020 §Memory budget). When LLM toggles on,
+            # these bump to request 6Gi / limit 8Gi.
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          # === PROBES DEFERRED ===
+          # Engine today (C-1) does NOT register grpc.health.v1.Health.
+          # Adding a K8s native grpc probe against a non-existent
+          # health service would cause immediate failure-cascade on
+          # kubelet probe. Probe wiring lands alongside the ADR-0026
+          # engine pre-flight slice (C-2), which introduces the
+          # startup manifest validator — that validator is the
+          # natural place to also register the gRPC health service
+          # once the model load succeeds.
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # === MODEL STORAGE — BOOTSTRAP PLACEHOLDER ===
+        # An emptyDir mount does NOT contain any actual model files;
+        # the engine binary will fail startup with "couldn't open
+        # file /models/ggml-tiny.en.bin" and crashloop. This is
+        # expected for C-1 — the intent is to prove the manifest
+        # applies cleanly and ArgoCD syncs; the "make engine
+        # actually run" work belongs to:
+        #   - ADR-0026 engine pre-flight slice (registers loud,
+        #     operator-readable failure before startup)
+        #   - C-3 CI-populate-model-storage slice (cross-repo with
+        #     ldz #85 for the S3+CSI driver or EFS backing)
+        # Until those land, this volume mount is a skeleton for
+        # the correct mount-path contract.
+        - name: models
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: aegis-engine
