@@ -1,7 +1,7 @@
 # 🗺️ Aegis Core (V2) — Roadmap
 
 **Current Status**: Architecture design complete; implementation bootstrapping pending.
-**Last Updated**: 2026-04-19 (Phase 4a EXITED — all 5 slices landed: rules_oci wiring + Go GW image + CI smoke + CycloneDX SBOM + ECR push + C++ engine image + S3+CloudFront frontend; Phase 4b mini-slice 1 also landed: Cosign keyless image signing + signed SBOM attestation. ADRs 0025 / 0026 v2 + Revision / 0027 / 0028 capture the design pivots driven by this session's reviews.)
+**Last Updated**: 2026-04-20 (Phase 4b residual tick — `AEGIS_DEV_AUDIO_DUMP` CI gate landed as Bazel `sh_test` under `//engine_cpp/tests/unit/`, grep-based binary check per ADR-0005 R7. Prior 2026-04-19 snapshot: Phase 4a EXITED — all 5 slices landed; Phase 4b mini-slices 1–3 landed: Cosign keyless signing + Trivy CRITICAL-CVE block + SLSA L3 provenance. ADRs 0025 / 0026 v2 + Revision / 0027 / 0028 / 0029 capture the design pivots.)
 
 This roadmap reflects the architectural decisions captured in
 `ARCHITECTURE.md` and the ADRs in `docs/adr/`. Before working on any
@@ -317,12 +317,10 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 - [x] Cosign / Sigstore signing in GitHub Actions using OIDC (ARCH §10.1) — keyless via `sigstore/cosign-installer` SHA-pinned in `release-staging-image.yml`. Both gateway + engine images signed by manifest digest after push; gateway SBOM (Slice 4a-2's CycloneDX) attached as signed CycloneDX attestation; Rekor public transparency log records every signing event. ADR-0028 documents the Sigstore + keyless choice. Engine SBOM attestation deferred (engine SBOM gen still pending — separate mini-slice). Verification side handed to ldz via cross-repo issue for Kyverno verify-image admission in EKS.
 - [x] SLSA Level 3 provenance emission (ADR-0029) — `actions/attest-build-provenance` SHA-pinned generates in-toto v1 statements per image (gateway + engine), referencing exact Git commit + GitHub-hosted runner + workflow path. Pushed to ECR alongside the image as an OCI attestation artifact + stored in the GitHub attestation store. Same OIDC trust scope as Cosign; Kyverno admission (ldz #96) can validate both signed AND SLSA-attested.
 - [x] Trivy container scan; block push on critical CVEs (ADR-0029) — `aquasecurity/trivy-action` SHA-pinned scans gateway + engine images by `@sha256:` digest after push (no tag-race), `severity: CRITICAL` + `ignore-unfixed: true` initial threshold; `exit-code: 1` blocks workflow on CRITICAL findings. Tighten to `HIGH,CRITICAL` is a one-line change when ops bandwidth supports the triage.
-- [ ] SLSA Level 3 provenance emission
-- [ ] Trivy container scan; block push on critical CVEs
+- [x] Verify no binary contains `AEGIS_DEV_AUDIO_DUMP` symbol (ADR-0005 R7) — Bazel `sh_test` `//engine_cpp/tests/unit:no_dev_audio_dump_symbol_test` greps the linked engine binary for the string; passes in default fastbuild, fails under `--config=debug`. Included in PR CI via `ci-baseline.yml` → `bazel test`; `--strip=always` on release strips symbols but not `.rodata`, so the string survives stripping and the gate still detects leaked copts.
 - [ ] kube-score + kube-bench manifest scan
 - [ ] Checkov IaC scanner for K8s manifests + Dockerfile + Helm charts (complements kube-score/kube-bench from the misconfiguration / policy-as-code angle; see debrief discussion 2026-04-12)
 - [ ] CodeQL, Semgrep, gosec, govulncheck, clang-tidy in CI (ARCH §10.2)
-- [ ] Verify no binary contains `AEGIS_DEV_AUDIO_DUMP` symbol (ADR-0005 R7)
 - [ ] ECR push pipeline; ArgoCD in `aegis-aws-landing-zone` repository polls the manifests in this repository
 
 ### Phase 4c: Progressive Delivery
