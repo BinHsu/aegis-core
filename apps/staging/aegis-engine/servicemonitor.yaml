@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: aegis-engine
+  namespace: aegis
+  labels:
+    app.kubernetes.io/name: aegis-engine
+    app.kubernetes.io/part-of: aegis-core
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aegis-engine
+  namespaceSelector:
+    matchNames: [aegis]
+  endpoints:
+    # Same named-port + interval convention as the gateway —
+    # single-pattern ServiceMonitor template per ldz #46 §"Q3"
+    # recommendation for cross-service symmetry.
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      honorLabels: false

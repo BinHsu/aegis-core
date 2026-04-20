@@ -51,6 +51,13 @@ spec:
             - name: grpc
               containerPort: 50051
               protocol: TCP
+            # Prometheus pull endpoint — C-Obs-1. Separate port from
+            # gRPC keeps mTLS (ADR-0031, C-2) policy evaluation
+            # scoped to :50051 only; metrics scrape stays plaintext
+            # intra-cluster (monitoring ns is trusted per ldz #54).
+            - name: metrics
+              containerPort: 8081
+              protocol: TCP
           env:
             - name: AEGIS_MODEL_PATH
               # Matches `models/ggml-tiny.en.bin` relative to CWD

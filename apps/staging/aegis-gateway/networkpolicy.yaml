@@ -31,6 +31,16 @@ spec:
     - ports:
         - port: 8080
           protocol: TCP
+    # Prometheus pull on :8081 — C-Obs-1, ldz #46 contract.
+    # Scrape originates from `monitoring` namespace where
+    # kube-prometheus-stack runs (ldz #54 §Observability).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8081
+          protocol: TCP
   egress:
     # Egress to the engine (headless Service → pod IPs on port 50051).
     - to:

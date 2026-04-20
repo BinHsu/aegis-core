@@ -28,8 +28,14 @@ cc_binary(
         ":seed_lib",
         "//engine_cpp/src/grpc:aegis_engine_service",
         "//engine_cpp/src/inference:whisper_engine",
+        "//engine_cpp/src/metrics:metrics",
         "//engine_cpp/src/session:model_budget",
         "//engine_cpp/src/session:session_budget",
         "@com_github_grpc_grpc//:grpc++",
+        # Pull exposer — brings in civetweb via transitive deps of
+        # prometheus-cpp's pull library. Only needed at the binary
+        # scope, not in src/metrics which is the metric-writer API
+        # shared across the engine's compilation units.
+        "@prometheus-cpp//pull:pull",
     ],
 )

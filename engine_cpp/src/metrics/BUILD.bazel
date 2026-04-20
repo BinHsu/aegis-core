@@ -1,0 +1,16 @@
+package(default_visibility = ["//visibility:public"])
+
+# C-Obs-1: Prometheus metrics registry for the engine.
+# Pulled in by both cmd/engine (to start the pull exposer) and
+# src/grpc (to instrument handlers). Keep the dep list minimal —
+# only @prometheus-cpp//core:core is needed here; the //pull:pull
+# library lives only in cmd/engine's main.cc where the exposer
+# is actually constructed.
+cc_library(
+    name = "metrics",
+    srcs = ["metrics.cc"],
+    hdrs = ["metrics.h"],
+    deps = [
+        "@prometheus-cpp//core:core",
+    ],
+)
