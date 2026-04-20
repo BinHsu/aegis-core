@@ -64,14 +64,13 @@ mode — plaintext gRPC over localhost, by design.
 - **Karpenter vCPU cap: 4 total** — our requests sum to 1.2 vCPU; fits comfortably
 - **IRSA role pre-provisioned**: `aegis-staging-aegis-engine` with trust scope `system:serviceaccount:aegis:aegis-engine`. Engine SA carries the `eks.amazonaws.com/role-arn` annotation; permission policy on the role is currently empty (skeleton — attaches when engine gains AWS API surface).
 
-## Known gap — image tag updates (C-1.5, deferred)
+## Image tag updates — manual, by design (ADR-0032)
 
-Today's manifests reference a **specific bootstrap image SHA**. A clean release update loop requires one of:
+Manifests reference a **specific image SHA** as a literal. Each release cycle, the SHA is updated either inside whatever Phase 4c / 4d slice PR is already touching `apps/staging/` (the common case during active development) or via a small dedicated bump commit when no slice PR is pending.
 
-- **Argo CD Image Updater** — auto-scans ECR, commits the new tag back to this repo on each push (pull-based)
-- **CI-commits-tag** — `release-staging-image.yml` extended with a final step that `git commit`s the new tag into the manifest after successful push (push-based GitOps)
+Automation for this (Argo CD Image Updater or CI-commits-tag) was deliberately rejected in [ADR-0032](../../docs/adr/0032-image-tag-update-automation-deferred.md): at current release cadence (~3/week) and branch-protection shape (signed + reviewed commits), automation pays back in over a decade. Triggers to revisit are documented in the ADR.
 
-Decision between these is deferred to **C-1.5**. Until it lands, the image tag in the manifest is a static reference to the last known-good SHA; each release cycle currently requires one manual manifest edit.
+**Until a trigger fires, this is not a gap — it is the chosen release workflow.**
 
 ## Known gap — engine will crashloop on first sync
 
