@@ -1316,6 +1316,91 @@ Two-step fix across two commits:
 
 ---
 
+## Incident 13 — Bazel cache thrashes every invocation from a different shell (PATH hash instability)
+
+**Date**: 2026-04-20  **Severity**: S3  **Duration**: ~2 hours end-to-end (symptom recognition → misattribution → `--explain` diagnosis → one-line fix → verification)
+
+**Related commit**: *this commit*
+
+### Symptom
+
+Every invocation of `./tools/bazelisk/bazelisk run //:app_local` from the developer's interactive terminal took ~10 minutes, even when the previous invocation had finished seconds earlier and **no source file had changed**. The bottleneck consistently surfaced as:
+
+```
+[8,666 / 8,673] Foreign Cc - CMake: Building llama_cpp_cmake; 368s darwin-sandbox
+```
+
+i.e. the `rules_foreign_cc` CMake wrapper was rebuilding `llama.cpp` (and by symmetry `whisper.cpp`) from scratch on every invocation. The engine binary was re-compiling `engine_cpp/cmd/engine/main.cc` and `engine_cpp/src/inference/ggml_embedder.cc` even when the only edit touched **Go** files in the gateway.
+
+Knock-on effect: every end-to-end LAN debug iteration cost 10 minutes before the binary was even runnable, making WebRTC / transcript debugging intractable.
+
+### Root cause
+
+Bazel's action-cache key includes the client environment exposed to actions. By default, the `PATH` environment variable is forwarded as-is from the calling shell. Our two invocation paths have **different PATHs**:
+
+- The developer's interactive `zsh` has `/opt/homebrew/bin`, `/Users/bin.hsu/.pyenv/shims`, the default system path.
+- Tooling subprocesses (editor helpers, Claude Code, CI runners locally) have an **additional** entry like `/Users/bin.hsu/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin` that the interactive shell does not carry.
+
+Every time one shell's invocation followed the other, Bazel saw a different `PATH` in the action environment, computed a different action key for every single C++ compile, and **invalidated the cache for the entire `rules_foreign_cc` CMake subtree**. That subtree is the expensive part — whisper.cpp + llama.cpp together account for ≈ 90 % of cold-build time.
+
+Local disk cache was healthy (`/tmp/aegis-bazel-c48cf803db9a/action_cache/` persisted across invocations, `java.log` history spanned days), so BuildBuddy remote cache would NOT have helped — it mirrors the same action keys, and PATH differences would miss there too.
+
+### Detection
+
+Three misattributions before the real diagnosis:
+
+1. **"USB drive mtime instability"** — plausible (repo lives on `/Volumes/Samsung PSSD T7 Media/aegis-core`), but `ls -la` on cache files showed timestamps consistent with last write, no mount/remount during the test window. Discarded.
+2. **"rules_foreign_cc is non-hermetic, CMake sandbox paths bleed in"** — plausible, and genuinely true of rules_foreign_cc in general, but would not explain the magnitude observed (a fully-cold rebuild, not just re-link).
+3. **"BuildBuddy remote cache will save us"** — assumed by reflex; ruled out once it was clear the local cache DID have the entries but the HASH lookups missed.
+
+The actual diagnosis path:
+
+1. `./tools/bazelisk/bazelisk build --nobuild //:app_local` (analyze-only) showed `0 total actions, Critical Path: 0.00s` — so the cache IS functioning when nothing invalidates.
+2. `ps aux | grep clang` during a slow `bazel run` showed clang compiling `llama_cpp/common/arg.cpp` — confirmed rebuild, not re-link.
+3. `./tools/bazelisk/bazelisk build //engine_cpp/cmd/engine:engine --explain=/tmp/aegis-build-explain.log --verbose_explanations` emitted, for every rebuilt action:
+   ```
+   'Compiling engine_cpp/src/inference/embedder.cc': 
+     Effective client environment has changed. Now using
+     PATH=/Users/bin.hsu/Library/Caches/bazelisk/...:/Users/bin.hsu/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin:...
+   ```
+   The `.claude/plugins/...` path entry was the smoking gun — it only exists in one of the two shells, and its presence/absence flips the PATH hash.
+
+### Resolution
+
+One-line addition to `.bazelrc`:
+
+```
+build --incompatible_strict_action_env
+```
+
+This flag normalizes the action environment to a static PATH that does not inherit from the caller's shell. Individual env vars we actually need (`DEVELOPER_DIR=/Library/Developer/CommandLineTools` for the macOS SDK lookup) are still explicitly propagated via `--action_env` elsewhere in the file, so the fix is strictly additive and does not break any existing hermetic-inputs assumption.
+
+Verification: after one "last" full rebuild to seed the cache under the new stable PATH (4503 actions, ≈ 10 min), an immediate re-run produced:
+
+```
+INFO: Elapsed time: 0.969s, Critical Path: 0.02s
+INFO: 1 process: 1 internal.
+INFO: Build completed successfully, 1 total action
+```
+
+**600× speedup** on the no-op case, restoring Bazel's promised "fast incremental builds" to the LAN iteration cycle.
+
+### Prevention
+
+- The flag is now in `.bazelrc` as a `build`-scoped option; it applies to `bazel build`, `bazel run`, and `bazel test` uniformly and cannot be overridden accidentally by an interactive invocation.
+- CI already inherited this behavior trivially (CI runners always start with a deterministic PATH), so no workflow change is needed.
+- `--incompatible_strict_action_env` is the Bazel team's recommended posture for cross-environment caching and has been stable for multiple years; leaving it on is the canonical posture.
+
+### Lessons
+
+1. **"Cache miss" is not synonymous with "cache is broken."** Always ask whether the cache is being *asked* the right question. `--explain` is the tool that surfaces what Bazel thinks changed — it named the real culprit in its first line of output.
+2. **A cross-environment build is implicitly a distributed build.** Even with one developer and one machine, *two shells that expose different PATHs* are two environments. Any tool that hashes the environment will treat them as distinct — tunnel-visioning on hermeticity inside the build graph misses the PATH leak between the graph and the caller.
+3. **BuildBuddy / remote cache is not a fix for action-key instability.** It layers on top of the existing hash scheme. If local hashes are unstable, remote hashes are too. The right intervention is stabilizing the inputs, not adding another storage tier.
+4. **Interactive-shell tooling (LSP helpers, plugin caches, etc.) legitimately mutate PATH and legitimately should not invalidate a build cache.** This is the mirror image of the rule: the tool's PATH edits are not semantically meaningful to the build; `--incompatible_strict_action_env` tells Bazel that correctly, once and for all.
+5. **Three misattributions (§Detection) cost ~40 min before the diagnostic tool got used.** The reflex to fit a new symptom into a known failure mode (rules_foreign_cc is fragile, USB drives have mtime quirks, BuildBuddy fixes caching) delays the simpler step of asking Bazel directly. **Reach for `--explain` earlier.**
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a
