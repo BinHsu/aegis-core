@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aegis-gateway
+  namespace: aegis
+  labels:
+    app.kubernetes.io/name: aegis-gateway
+    app.kubernetes.io/part-of: aegis-core
+  annotations:
+    # ldz installs `aws-load-balancer-controller` in the staging
+    # EKS cluster; this Ingress creates an external-facing ALB
+    # in the public subnets tagged `kubernetes.io/role/elb`.
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    # Cross-repo dependency — ACM certificate for the hostname
+    # below is provisioned by ldz (Route53 hosted zone +
+    # DNS-validated ACM cert). If absent, ALB creation stalls.
+    # Track via cross-repo/fyi issue on ldz side.
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-central-1:251774439261:certificate/PLACEHOLDER-REPLACE-WITH-LDZ-ACM
+    # Healthcheck path for ALB target group probing.
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/success-codes: "200"
+    # Weighted target groups API — needed later for Argo Rollouts
+    # ALB traffic-router plugin (C-5a). Enabling the feature now
+    # costs nothing; the plugin will populate weights when active.
+    alb.ingress.kubernetes.io/actions.weighted-routing: ""
+spec:
+  rules:
+    # DNS — `aegis-api.staging.binhsu.org` is the intended hostname.
+    # Route53 record creation is ldz-side; C-1 assumes it will be
+    # provisioned alongside the ACM cert above. ArgoCD will surface
+    # the Ingress resource as pending-validation until DNS + cert
+    # are in place; this is expected behaviour on first bring-up,
+    # not a failure of this manifest.
+    - host: aegis-api.staging.binhsu.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aegis-gateway
+                port:
+                  name: http

@@ -25,6 +25,12 @@ on:
       - "docs/**"
       - ".gitignore"
       - ".github/PULL_REQUEST_TEMPLATE.md"
+      # Phase 4c: manifest-only changes don't alter image bits,
+      # so skip the expensive rebuild+push+sign+attest loop.
+      # C-1.5's tag-update automation will, when it lands,
+      # produce commits that touch `deploy/**/*.yaml` only —
+      # those must remain no-op for this workflow.
+      - "deploy/**"
 
 # Least privilege: only this workflow gets id-token write. ci-baseline.yml
 # stays tokenless (`permissions: read-all` defaults).
