@@ -34,3 +34,12 @@ spec:
       port: 50051
       targetPort: grpc
       protocol: TCP
+    # Prometheus pull endpoint — C-Obs-1, ldz #46 §"Q3". Even though
+    # the Service is headless (spec.clusterIP: None) for gRPC round-
+    # robin DNS, Prometheus Operator's ServiceMonitor still works
+    # against headless Services — it scrapes the pod IPs directly,
+    # which is exactly what we want for per-replica metric visibility.
+    - name: metrics
+      port: 8081
+      targetPort: metrics
+      protocol: TCP

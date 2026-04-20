@@ -24,10 +24,12 @@
 #include <string_view>
 
 #include "grpcpp/grpcpp.h"
+#include "prometheus/exposer.h"
 
 #include "engine_cpp/cmd/engine/seed.h"
 #include "engine_cpp/src/grpc/aegis_engine_service.h"
 #include "engine_cpp/src/inference/whisper_engine.h"
+#include "engine_cpp/src/metrics/metrics.h"
 #include "engine_cpp/src/session/model_budget.h"
 #include "engine_cpp/src/session/session_budget.h"
 
@@ -108,9 +110,12 @@ int main(int argc, char **argv) {
                                                       model_path);
 
   ::grpc::ServerBuilder builder;
-  // Session 3: insecure for local dev. Production uses mTLS via Istio
-  // service mesh (ARCH §8 Zero Trust Networking) — that is an Istio /
-  // aegis-aws-landing-zone concern, not a server-side cert config.
+  // Insecure for dev + staging. CLOUD mode mTLS is NOT mesh-provided
+  // per ADR-0031 — it arrives via cert-manager Certificate CRs +
+  // `grpc::experimental::TlsServerCredentials` with
+  // `FileWatcherCertificateProvider` in C-2. LOCAL mode keeps
+  // plaintext by design (ADR-0031 §"LOCAL mode posture"): parent/
+  // child processes share the host trust domain.
   builder.AddListeningPort(address, ::grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
 
@@ -121,7 +126,37 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  // C-Obs-1 — Prometheus pull exposer on :8081 by default.
+  // Port per ldz #46 §"Q3" K8s controller-runtime convention
+  // (`:8080` main + `:8081` mgmt/metrics companion). The engine
+  // itself has no `:8080`; port chosen for cross-service symmetry
+  // with the gateway.
+  //
+  // AEGIS_ENGINE_METRICS_ADDR overrides the default:
+  //   unset       → `0.0.0.0:8081` (default, enabled)
+  //   non-empty   → use the provided addr (e.g., `127.0.0.1:9999`)
+  //   explicitly "" → skip Exposer construction entirely
+  // LOCAL-mode `app_local` sets this to "" for the engine child so
+  // it doesn't collide with gateway's own :8081 on the same host.
+  std::string metrics_address = "0.0.0.0:8081";
+  if (const char *env = std::getenv("AEGIS_ENGINE_METRICS_ADDR");
+      env != nullptr) {
+    metrics_address = env;
+  }
+
+  std::unique_ptr<prometheus::Exposer> exposer;
+  if (!metrics_address.empty()) {
+    exposer = std::make_unique<prometheus::Exposer>(metrics_address);
+    exposer->RegisterCollectable(aegis::metrics::GlobalRegistry());
+  }
+
   std::cout << "aegis-engine: listening on " << address << std::endl;
+  if (exposer) {
+    std::cout << "  metrics on " << metrics_address << "/metrics" << std::endl;
+  } else {
+    std::cout << "  metrics disabled (AEGIS_ENGINE_METRICS_ADDR set to empty)"
+              << std::endl;
+  }
   std::cout << "  pod_memory_limit=" << pod_limit << std::endl;
   std::cout << "  model_budget=" << model_total << std::endl;
   std::cout << "  session_pool=" << session_pool << std::endl;
@@ -130,10 +165,17 @@ int main(int argc, char **argv) {
   std::cout << "  whisper: " << aegis::inference::WhisperSystemInfo()
             << std::endl;
 
-  // Log model breakdown for observability.
+  // Log model breakdown + publish per-model `aegis_engine_model_loaded`
+  // gauges for Prometheus scrape.
   for (const auto &[name, bytes] : aegis::session::ModelBudget::Breakdown()) {
     std::cout << "  model: " << name << " = " << bytes << " bytes" << std::endl;
+    aegis::metrics::ModelLoaded().Add({{"model", name}}).Set(1.0);
   }
+
+  // Signal to scrapers that startup completed and the gRPC server is
+  // past BuildAndStart(). Set exactly once here; clearing on shutdown
+  // isn't load-bearing because pod termination stops the exposer too.
+  aegis::metrics::Up().Add({}).Set(1.0);
 
 #ifdef AEGIS_DEV_AUDIO_DUMP
   // ADR-0005 R7: this banner is intentional — it is the audit signal

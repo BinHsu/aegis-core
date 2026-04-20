@@ -5,6 +5,7 @@ cc_library(
     srcs = ["aegis_engine_service.cc"],
     hdrs = ["aegis_engine_service.h"],
     deps = [
+        "//engine_cpp/src/metrics:metrics",
         "//engine_cpp/src/session:session_budget",
         "//engine_cpp/src/session:session",
         "//proto/aegis/v1:aegis_cc_grpc",

@@ -53,6 +53,10 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            # Prometheus pull endpoint — C-Obs-1.
+            - name: metrics
+              containerPort: 8081
+              protocol: TCP
           env:
             - name: AEGIS_DEPLOY_MODE
               value: CLOUD

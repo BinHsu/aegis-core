@@ -50,6 +50,7 @@ import (
 	corspolicy "github.com/BinHsu/aegis-core/gateway_go/internal/cors"
 	gatewaygrpc "github.com/BinHsu/aegis-core/gateway_go/internal/grpc"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/logging"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/metrics"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
@@ -68,7 +69,12 @@ const (
 	// the narrowing at the network layer (ADR-0006 / ARCH §5).
 	defaultListenAddr = ":8080"
 	defaultGRPCAddr   = ":9090"
-	defaultEngineAddr = "localhost:50051"
+	// defaultMetricsAddr is the Prometheus pull endpoint per ldz #46
+	// §"Q3" (K8s controller-runtime convention: :8080 main + :8081
+	// mgmt/metrics companion). Bound via a dedicated http.Server so
+	// scrape traffic is isolated from the application HTTP surface.
+	defaultMetricsAddr = ":8081"
+	defaultEngineAddr  = "localhost:50051"
 	version           = "0.1.0-phase2-a4"
 	engineRPCTimeout  = 2 * time.Second
 
@@ -112,6 +118,16 @@ func main() {
 	grpcAddr := defaultGRPCAddr
 	if env := os.Getenv("AEGIS_GATEWAY_GRPC_ADDR"); env != "" {
 		grpcAddr = env
+	}
+	// AEGIS_GATEWAY_METRICS_ADDR overrides the default:
+	//   unset        → `:8081` (default, enabled)
+	//   non-empty    → use the provided addr (e.g., `127.0.0.1:9999`)
+	//   explicitly "" → disable the third server entirely; `/metrics`
+	//                   is simply unreachable. app_local uses this to
+	//                   keep dev-mode bind surface minimal.
+	metricsAddr := defaultMetricsAddr
+	if env, ok := os.LookupEnv("AEGIS_GATEWAY_METRICS_ADDR"); ok {
+		metricsAddr = env
 	}
 	engineAddr := defaultEngineAddr
 	if env := os.Getenv("AEGIS_ENGINE_ADDR"); env != "" {
@@ -269,8 +285,20 @@ func main() {
 	// may send their own pings — without it, a misbehaving client could
 	// trip gRPC's "too many pings" disconnect.
 	grpcSrv := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryInterceptor(authProvider)),
-		grpc.StreamInterceptor(auth.StreamInterceptor(authProvider)),
+		// Interceptor chain — order matters: auth first so Principal
+		// is in ctx before the handler runs; metrics second so it
+		// sees the final handler error + measures total handler time
+		// including any downstream auth-decision work. Chain* allows
+		// multiple interceptors; plain UnaryInterceptor/StreamInterceptor
+		// only accepts a single function.
+		grpc.ChainUnaryInterceptor(
+			auth.UnaryInterceptor(authProvider),
+			metrics.UnaryInterceptor(),
+		),
+		grpc.ChainStreamInterceptor(
+			auth.StreamInterceptor(authProvider),
+			metrics.StreamInterceptor(),
+		),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    keepaliveTime,
 			Timeout: keepaliveTimeout,
@@ -343,6 +371,26 @@ func main() {
 		die("gRPC listen", "addr", grpcAddr, "err", err)
 	}
 
+	// Third HTTP server — Prometheus pull endpoint. Serves exactly
+	// /metrics + nothing else; NotFound on any other path. Isolated
+	// from the application HTTP surface on :8080 so scrape traffic
+	// (which can be frequent under ServiceMonitor) cannot interfere
+	// with /healthz probes or /ws/viewer streams.
+	//
+	// When metricsAddr is empty (explicit "" via env), metricsSrv
+	// stays nil and the goroutine + shutdown paths below short-
+	// circuit. /metrics is simply unreachable in that mode.
+	var metricsSrv *http.Server
+	if metricsAddr != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", metrics.Handler())
+		metricsSrv = &http.Server{
+			Addr:              metricsAddr,
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+	}
+
 	// Signal handling is rooted at processCtx (declared above). Pipelines
 	// observe processCtx cancellation through their pipeCtx parent; this
 	// goroutine still waits on <-processCtx.Done() for the shutdown dance.
@@ -368,6 +416,42 @@ func main() {
 		}
 	}()
 
+	if metricsSrv != nil {
+		go func() {
+			logger.Info("metrics server listening", "addr", metricsAddr, "path", "/metrics")
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				die("metrics ListenAndServe", "err", err)
+			}
+		}()
+	} else {
+		logger.Info("metrics disabled (AEGIS_GATEWAY_METRICS_ADDR set to empty)")
+	}
+
+	// Signal readiness to scrapers once all three listeners are up.
+	// Set exactly once here; clearing on shutdown isn't load-bearing
+	// because the metrics server stops alongside everything else.
+	metrics.Up.Set(1.0)
+
+	// Publish registry.Len() into the active_sessions gauge on a
+	// short poll. The registry has no change-notification channel,
+	// so polling is the honest minimum wiring. Frequency is bounded
+	// at "often enough to be useful for dashboards, infrequent enough
+	// to be a rounding-error CPU cost" — 5 seconds satisfies both.
+	sessionPollCtx, stopSessionPoll := context.WithCancel(processCtx)
+	defer stopSessionPoll()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				metrics.ActiveSessions.Set(float64(registry.Len()))
+			case <-sessionPollCtx.Done():
+				return
+			}
+		}
+	}()
+
 	<-processCtx.Done()
 	logger.Info("shutdown signal received; draining")
 
@@ -388,6 +472,14 @@ func main() {
 	// is bounded by shutdownCtx.
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("HTTP shutdown error", "err", err)
+	}
+
+	// Metrics server is Prometheus-scrape-only; Shutdown is fast.
+	// Shares the same shutdownCtx deadline as the main HTTP server.
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("metrics shutdown error", "err", err)
+		}
 	}
 
 	// gRPC GracefulStop waits for in-flight streams to finish, which

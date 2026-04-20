@@ -187,7 +187,15 @@ func run() error {
 	// it during CreateMeeting, so it must be listening before we
 	// accept any viewer traffic.
 	engineCmd, engineDone, engineErr, err := startChild(ctx, "engine", enginePath,
-		nil, []string{"AEGIS_MODEL_PATH=" + modelPath},
+		nil, []string{
+			"AEGIS_MODEL_PATH=" + modelPath,
+			// Disable engine's Prometheus exposer in LOCAL mode —
+			// it defaults to :8081 which would collide with the
+			// gateway's own :8081 Prometheus exposer on the same
+			// host. C-Obs-1 / ADR-0033 document the default-on
+			// posture and this opt-out channel.
+			"AEGIS_ENGINE_METRICS_ADDR=",
+		},
 		false /* newProcessGroup */)
 	if err != nil {
 		return fmt.Errorf("start engine: %w", err)
