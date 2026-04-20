@@ -149,7 +149,7 @@ To satisfy both "beginner-friendly local execution" and "EKS Cloud Deployment", 
     - `DeployMode=LOCAL`: Uses SQLite (or In-Memory) and Local File Storage.
     - `DeployMode=CLOUD`: Injects DynamoDB and AWS S3 AWS SDK adapters.
 *   **Process Supervisor Pattern**: 
-    - In `CLOUD` mode, Go GW and C++ Engine run in separate K8s Pods communicating via Istio/Envoy.
+    - In `CLOUD` mode, Go GW and C++ Engine run in separate K8s Pods communicating via gRPC over mutually-authenticated TLS (no service mesh — see [ADR-0031](docs/adr/0031-mtls-without-service-mesh.md)).
     - In `LOCAL` mode, a user simply runs `bazel run //:app_local`. The Go GW acts as a local supervisor, programmatically spinning up the C++ binary as a child background process (`exec.Command`) to simulate the microservice network internally, without requiring the user to open multiple terminals.
 *   **Gateway ↔ Engine Topology (N:N-ready by design)**: The code is written to support 1:1, 1:N, and M:N deployments without change — deployment realizes the actual topology, not application code. See [ADR-0017](docs/adr/0017-gateway-engine-topology.md) for the invariants (round-robin gRPC LB, per-replica session state, stream-auto-pinning), the "never hardcode a single engine" review rule, and the cross-repo split between this repo (code N-ready) and `aegis-aws-landing-zone` (Headless Service + ALB session affinity).
 
@@ -177,7 +177,7 @@ This repository (`aegis-core`) is an Application Monorepo. However, it relies on
 
 ### 8. Enterprise Standards (Security & Observability)
 To pass strict compliance and enterprise security audits, this application enforces the following patterns. (The infrastructure for these is provisioned in the `aegis-aws-landing-zone` repository).
-*   **Zero Trust Networking (mTLS)**: Even within the EKS cluster, the communication between the Go Gateway and the C++ Engine is protected by a Service Mesh (e.g., Istio) enforcing Mutual TLS.
+*   **Zero Trust Networking (mTLS)**: Even within the EKS cluster, the communication between the Go Gateway and the C++ Engine is protected by Mutual TLS. Delivery mechanism is cert-manager + gRPC-native TLS with in-process rotation — **not** a service mesh. See [ADR-0031](docs/adr/0031-mtls-without-service-mesh.md) for the rejection-of-mesh rationale, cost comparison against Istio / Linkerd / SPIFFE SPIRE, and triggers to revisit. (ARCH originally named `e.g., Istio` as an example of the solution family; that hint is preserved under ADR-0031's Phase 5 placeholder.)
 *   **Identity First (EKS Pod Identity & Cognito)**: 
     - *Server-side*: No hardcoded AWS credentials or IAM static keys exist. The Go Gateway authenticates to DynamoDB/S3 using **EKS Pod Identity**, transparently assuming IAM roles. 
     - *Client-side*: End users log into the Tauri/React app via **AWS Cognito**, passing JWT tokens down to the Go Gateway for validation.
