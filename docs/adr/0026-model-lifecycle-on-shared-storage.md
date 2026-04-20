@@ -216,11 +216,11 @@ Only when one of the candidate mechanisms (or an equivalent) lands, and is **con
 
 ### Out of scope (this ADR)
 
-- Engine implementation details: HEAD-check vs F_OK / fstat, CLI vs config-file for AEGIS_MODEL_PATH, etc. — Phase 4c implementation discretion.
+- Engine implementation details: HEAD-check vs F_OK / fstat, CLI vs config-file for AEGIS_MODEL_PATH, etc. — implemented in `engine_cpp/src/models/manifest_loader` (`stat(2)` for Layer 1; size via `struct stat::st_size`; SHA-256 via BoringSSL streaming API). `AEGIS_MODEL_PATH` is the CAS root; `AEGIS_MANIFEST_PATH` points to the bundled manifest.
 - The CI populator's exact Bazel / shell / Python implementation — Phase 4a-4 follow-up commit will add the YAML step + supporting logic; same OIDC + IAM model already in use.
 - Lifecycle / Glacier policy — deferred per "Pruning deferred" section.
 - Multi-region storage replication — deferred until ldz multi-region deploy is real.
-- "Engine startup manifest validation" code change in `engine_cpp/cmd/engine/main.cc` — tracked in ROADMAP Phase 4c.
+- ~~"Engine startup manifest validation" code change in `engine_cpp/cmd/engine/main.cc` — tracked in ROADMAP Phase 4c.~~ **Landed 2026-04-20** via `engine_cpp/src/models/manifest_loader` + wiring into `engine_cpp/cmd/engine/main.cc` and `seed.cc`; ROADMAP line 335 ticked.
 
 ## Cross-repo trail
 

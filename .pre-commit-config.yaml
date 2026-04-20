@@ -104,6 +104,21 @@ repos:
         args: ["--against", ".git#branch=origin/main"]
 
   # ---------------------------------------------------------------------------
+  # Manifest drift check — enforces models/manifest.schema.json §required
+  # discipline: `required: true` iff engine startup actually loads it,
+  # and PLACEHOLDER entries cannot be required=true. See
+  # tools/scripts/check_manifest_drift.sh.
+  # ---------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: manifest-drift-check
+        name: manifest drift check (required ↔ engine code)
+        entry: tools/scripts/check_manifest_drift.sh
+        language: script
+        pass_filenames: false
+        files: ^(models/manifest\.json|engine_cpp/cmd/engine/main\.cc|engine_cpp/src/session/session\.cc)$
+
+  # ---------------------------------------------------------------------------
   # Conventional commit message lint (optional but encouraged)
   # ---------------------------------------------------------------------------
   - repo: https://github.com/compilerla/conventional-pre-commit

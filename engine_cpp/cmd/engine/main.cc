@@ -30,6 +30,7 @@
 #include "engine_cpp/src/grpc/aegis_engine_service.h"
 #include "engine_cpp/src/inference/whisper_engine.h"
 #include "engine_cpp/src/metrics/metrics.h"
+#include "engine_cpp/src/models/manifest_loader.h"
 #include "engine_cpp/src/session/model_budget.h"
 #include "engine_cpp/src/session/session_budget.h"
 
@@ -67,11 +68,21 @@ int main(int argc, char **argv) {
 
   const std::string address = "0.0.0.0:50051";
 
-  // Model path — AEGIS_MODEL_PATH env var, else a sane default relative
-  // to CWD. Phase 2+ will switch to absl::flags and/or a config file.
-  std::string model_path = "models/ggml-tiny.en.bin";
+  // Manifest + model-root — ADR-0026 CAS layout.
+  //   AEGIS_MANIFEST_PATH: path to models/manifest.json (bundled in OCI
+  //                        image in Cloud; under $REPO_ROOT/models/ for LAN)
+  //   AEGIS_MODEL_PATH:    root directory under which the CAS layout lives
+  //                        (<root>/<id>/<sha>.<ext>)
+  // LAN's app_local supervisor sets both to absolute paths derived from
+  // BUILD_WORKSPACE_DIRECTORY. Cloud's Deployment manifest sets them from
+  // the image contents (manifest) + S3 Files mount (model root).
+  std::string manifest_path = "models/manifest.json";
+  if (const char *env = std::getenv("AEGIS_MANIFEST_PATH"); env != nullptr) {
+    manifest_path = env;
+  }
+  std::string model_root = "models";
   if (const char *env = std::getenv("AEGIS_MODEL_PATH"); env != nullptr) {
-    model_path = env;
+    model_root = env;
   }
 
   // Pod memory limit — AEGIS_POD_MEMORY_LIMIT env var (bytes), else
@@ -81,18 +92,63 @@ int main(int argc, char **argv) {
     pod_limit = std::strtoull(env, nullptr, 10);
   }
 
-  // Step 1: Models register with ModelBudget as they load.
-  // (WhisperEngine is created per-session in Session::Run, but its
-  // model weight footprint is fixed and known at startup. Register
-  // the static model size here; the per-session working memory is
-  // what SessionBudget tracks.)
-  //
-  // Phase 3b will add: GGMLEmbedder::Create(bge_m3_path) which also
-  // calls ModelBudget::Register("bge-m3-Q4_K_M", ~400 MB).
-  //
-  // For now, whisper-tiny.en is ~75 MB. We register a conservative
-  // estimate; the precise value will come from manifest.json in Phase 2+.
-  aegis::session::ModelBudget::Register("whisper-tiny.en", 75ULL * 1024 * 1024);
+  // -------------------------------------------------------------------
+  // CAS preflight walker (ADR-0026 §Engine responsibilities).
+  // Walk every required=true manifest entry; stat + size + SHA-256 verify
+  // each against its CAS path under model_root. Fail-fast with operator-
+  // readable diagnostic on any miss / mismatch — this is the signal that
+  // operators should re-run the CI populator / download_models.sh, not an
+  // invitation for engine self-recovery (explicitly rejected per
+  // ADR-0026 §"Pruning — prohibited" revision 2026-04-20 reasoning).
+  // -------------------------------------------------------------------
+  auto manifest_or = aegis::models::LoadManifest(manifest_path);
+  if (!manifest_or.ok()) {
+    std::cerr << "aegis-engine: FATAL — cannot load manifest from `"
+              << manifest_path << "`: " << manifest_or.status() << std::endl;
+    return EXIT_FAILURE;
+  }
+  const aegis::models::Manifest &manifest = *manifest_or;
+
+  if (absl::Status s = aegis::models::VerifyAllRequired(model_root, manifest);
+      !s.ok()) {
+    std::cerr << "aegis-engine: FATAL — CAS preflight failed.\n"
+              << s.message() << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // Resolve the whisper transcription model: the single required=true
+  // entry whose type is "transcription". Walker already verified it,
+  // so existence + size + SHA are known good.
+  const aegis::models::ModelEntry *whisper_entry = nullptr;
+  for (const auto &e : manifest.models) {
+    if (e.required && e.type == "transcription") {
+      if (whisper_entry != nullptr) {
+        std::cerr << "aegis-engine: FATAL — multiple required=true "
+                     "transcription entries in manifest (`"
+                  << whisper_entry->id << "`, `" << e.id
+                  << "`); pick one per manifest honesty discipline."
+                  << std::endl;
+        return EXIT_FAILURE;
+      }
+      whisper_entry = &e;
+    }
+  }
+  if (whisper_entry == nullptr) {
+    std::cerr << "aegis-engine: FATAL — no required=true manifest entry of "
+                 "type=\"transcription\"; cannot pick a model for "
+                 "WhisperEngine."
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+  const std::string model_path =
+      aegis::models::ResolveCasPath(model_root, *whisper_entry);
+
+  // Step 1: Register the whisper model with ModelBudget using the
+  // manifest's size (in-memory footprint ≈ on-disk size for q4-quantized
+  // ggml files). Precise estimated_ram_bytes is in the manifest but not
+  // surfaced via ModelEntry today — size_bytes is a close-enough proxy.
+  aegis::session::ModelBudget::Register(
+      whisper_entry->id, static_cast<std::size_t>(whisper_entry->size_bytes));
 
   // Step 2: Verify models fit, then size the session pool.
   const std::size_t model_total = aegis::session::ModelBudget::TotalUsedBytes();

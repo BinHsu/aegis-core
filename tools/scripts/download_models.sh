@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
-# Aegis Core — model download + SHA-256 verification.
+# Aegis Core — model download + SHA-256 verification (CAS layout).
 #
 # Reads models/manifest.json, downloads each model's file from origin_url
-# into models/, and verifies the SHA-256 matches the manifest. Idempotent:
-# already-correct files are skipped. Per ARCH §10.1 Supply Chain Integrity.
+# and places it at the CAS path:
+#
+#     models/<id>/<sha256>.<ext>
+#
+# where <ext> is the filename extension. Idempotent: already-correct files
+# are skipped. Per ADR-0026 (content-addressable storage) + ARCH §10.1.
+#
+# Migration from the historical flat layout (`models/<filename>`) is
+# automatic: if the flat-path file already exists with the correct SHA,
+# it is moved (not re-downloaded) to its new CAS path.
 #
 # Usage:
 #   ./tools/scripts/download_models.sh                 # all required=true models
@@ -11,8 +19,9 @@
 #   ./tools/scripts/download_models.sh --verify-only   # no download, just check
 #   ./tools/scripts/download_models.sh --all           # include optional (required=false) models
 #
-# The engine model loader (Session 4c+) re-verifies SHA-256 at mmap time;
-# this script is the pre-flight that saves the user a failed engine boot.
+# The engine CAS preflight walker (engine_cpp/src/models/manifest_loader)
+# verifies SHA-256 at startup; this script is the pre-flight that saves
+# the user a failed engine boot.
 
 set -euo pipefail
 
@@ -31,7 +40,7 @@ while [[ $# -gt 0 ]]; do
     --all)          MODE="all"; shift ;;
     --verify-only)  VERIFY_ONLY=1; shift ;;
     --help|-h)
-      sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -54,6 +63,17 @@ case "$MODE" in
   one)      FILTER=".models[] | select(.id == \"$ONLY_ID\")" ;;
 esac
 
+# Extract filename extension (".bin" / ".gguf" / ...); empty if none.
+# Uses the portion after the LAST '.' to match manifest_loader's Extension().
+extension_of() {
+  local name="$1"
+  if [[ "$name" == *.* ]]; then
+    echo ".${name##*.}"
+  else
+    echo ""
+  fi
+}
+
 # Process each matching model entry.
 jq -c "$FILTER" "$MANIFEST" | while read -r entry; do
   id=$(jq -r '.id' <<<"$entry")
@@ -61,44 +81,63 @@ jq -c "$FILTER" "$MANIFEST" | while read -r entry; do
   sha256=$(jq -r '.sha256' <<<"$entry")
   size=$(jq -r '.size_bytes' <<<"$entry")
   url=$(jq -r '.origin_url' <<<"$entry")
-  dest="$MODELS_DIR/$filename"
 
-  # Skip entries with placeholder metadata (PHASE 1 partial population).
+  # Skip entries with placeholder metadata (aspirational manifest entries
+  # whose model has not been pinned yet).
   if [[ "$sha256" == PLACEHOLDER* || "$filename" == PLACEHOLDER* ]]; then
     echo "[skip] $id — manifest entry still has PLACEHOLDER fields"
     continue
   fi
 
-  # If file already present AND hash matches → skip.
-  if [[ -f "$dest" ]]; then
-    have=$(shasum -a 256 "$dest" | awk '{print $1}')
+  ext=$(extension_of "$filename")
+  cas_dir="$MODELS_DIR/$id"
+  cas_path="$cas_dir/${sha256}${ext}"
+  legacy_flat_path="$MODELS_DIR/$filename"
+
+  # Already at the CAS path AND hash matches → trust-but-verify.
+  if [[ -f "$cas_path" ]]; then
+    have=$(shasum -a 256 "$cas_path" | awk '{print $1}')
     if [[ "$have" == "$sha256" ]]; then
-      echo "[ok]   $id — already present and verified"
+      echo "[ok]   $id — already at CAS path + verified"
       continue
     fi
-    echo "[warn] $id — exists but SHA-256 mismatch; re-downloading"
-    rm -f "$dest"
+    echo "[warn] $id — CAS file exists but SHA mismatch; removing to re-populate"
+    rm -f "$cas_path"
+  fi
+
+  # Migration path: legacy flat file exists at models/<filename> with
+  # the correct SHA. Move it into the CAS layout instead of re-downloading.
+  if [[ -f "$legacy_flat_path" ]]; then
+    legacy_have=$(shasum -a 256 "$legacy_flat_path" | awk '{print $1}')
+    if [[ "$legacy_have" == "$sha256" ]]; then
+      mkdir -p "$cas_dir"
+      mv "$legacy_flat_path" "$cas_path"
+      echo "[migr] $id — moved legacy $filename → $id/${sha256}${ext}"
+      continue
+    fi
+    echo "[warn] $id — legacy $filename present but SHA mismatch; leaving it alone"
   fi
 
   if [[ "$VERIFY_ONLY" == "1" ]]; then
-    echo "[miss] $id — file absent or bad hash (verify-only mode, not downloading)"
+    echo "[miss] $id — file absent at CAS path (verify-only mode, not downloading)"
     continue
   fi
 
-  echo "[get]  $id — downloading $filename ($size bytes)"
-  curl -fsSL --progress-bar -o "$dest.tmp" "$url"
+  echo "[get]  $id — downloading $filename → $cas_path ($size bytes)"
+  mkdir -p "$cas_dir"
+  curl -fsSL --progress-bar -o "${cas_path}.tmp" "$url"
 
-  got=$(shasum -a 256 "$dest.tmp" | awk '{print $1}')
+  got=$(shasum -a 256 "${cas_path}.tmp" | awk '{print $1}')
   if [[ "$got" != "$sha256" ]]; then
     echo "ERROR: $id — SHA-256 mismatch after download." >&2
     echo "       expected: $sha256" >&2
     echo "       got:      $got" >&2
-    rm -f "$dest.tmp"
+    rm -f "${cas_path}.tmp"
     exit 1
   fi
 
-  mv "$dest.tmp" "$dest"
-  echo "[ok]   $id — downloaded and verified"
+  mv "${cas_path}.tmp" "$cas_path"
+  echo "[ok]   $id — downloaded and verified at $cas_path"
 done
 
 echo "Done."

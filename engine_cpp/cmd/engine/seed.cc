@@ -20,6 +20,7 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "engine_cpp/src/inference/ggml_embedder.h"
+#include "engine_cpp/src/models/manifest_loader.h"
 #include "engine_cpp/src/rag/chunker.h"
 #include "engine_cpp/src/vectordb/qdrant_client.h"
 #include "openssl/sha.h"
@@ -93,7 +94,7 @@ std::string DeriveCollectionName(std::string_view corpus_path) {
 namespace {
 
 constexpr int kBgeM3Dim = 1024;
-constexpr const char *kBgeM3Filename = "bge-m3-Q4_K_M.gguf";
+constexpr const char *kBgeM3ModelId = "bge-m3-q4km";
 
 // -----------------------------------------------------------------------------
 // File + env helpers (internal to the seed pipeline).
@@ -110,13 +111,33 @@ absl::StatusOr<std::string> ReadFile(const std::string &path) {
   return ss.str();
 }
 
-std::string ResolveEmbedderModelPath() {
-  // Mirrors the pattern used in
-  // engine_cpp/tests/integration/bge_m3_embed_test.cc ResolveModelPath().
-  if (const char *env = std::getenv("AEGIS_MODEL_DIR"); env != nullptr) {
-    return absl::StrCat(env, "/", kBgeM3Filename);
+// Resolve the bge-m3 embedder's on-disk path via the manifest + CAS layout
+// (ADR-0026). Prefers AEGIS_MANIFEST_PATH + AEGIS_MODEL_PATH (root) — the
+// same contract engine main uses. Falls back to repo-relative defaults
+// (`models/manifest.json` + `models/`) so `bazel run` and CI test fixtures
+// both work without extra env plumbing.
+absl::StatusOr<std::string> ResolveEmbedderModelPath() {
+  std::string manifest_path = "models/manifest.json";
+  if (const char *env = std::getenv("AEGIS_MANIFEST_PATH"); env != nullptr) {
+    manifest_path = env;
   }
-  return absl::StrCat("models/", kBgeM3Filename);
+  std::string model_root = "models";
+  if (const char *env = std::getenv("AEGIS_MODEL_PATH"); env != nullptr) {
+    model_root = env;
+  }
+
+  auto manifest_or = aegis::models::LoadManifest(manifest_path);
+  if (!manifest_or.ok()) {
+    return manifest_or.status();
+  }
+  for (const auto &e : manifest_or->models) {
+    if (e.id == kBgeM3ModelId) {
+      return aegis::models::ResolveCasPath(model_root, e);
+    }
+  }
+  return absl::NotFoundError(absl::StrCat("seed: manifest at `", manifest_path,
+                                          "` has no entry with id=`",
+                                          kBgeM3ModelId, "`"));
 }
 
 // -----------------------------------------------------------------------------
@@ -181,7 +202,12 @@ int RunSeed(int argc, char **argv) {
   }
 
   // Stage 3 — load the embedder (bge-m3 Q4_K_M via GGMLEmbedder).
-  const std::string model_path = ResolveEmbedderModelPath();
+  auto model_path_or = ResolveEmbedderModelPath();
+  if (!model_path_or.ok()) {
+    std::cerr << "seed: " << model_path_or.status() << "\n";
+    return EXIT_FAILURE;
+  }
+  const std::string model_path = *model_path_or;
   auto embedder = inference::GGMLEmbedder::Create(model_path);
   if (!embedder.ok()) {
     std::cerr << "seed: " << embedder.status() << "\n";

@@ -20,11 +20,14 @@
 //     graph (it doesn't). Subprocesses also give us honest isolation —
 //     a crash in one binary doesn't bring down the other.
 //
-//   - Model discovery is explicit: the launcher refuses to start if
-//     `models/ggml-tiny.en.bin` is missing and prints the exact
+//   - Model discovery is explicit: the launcher refuses to start if the
+//     required models aren't present under `models/` in the CAS layout
+//     (`models/<id>/<sha>.<ext>` per ADR-0026) and prints the exact
 //     `./tools/scripts/download_models.sh` invocation to fix it.
 //     Auto-downloading 75 MB on first run would violate the
-//     "predictable startup" principle operators expect.
+//     "predictable startup" principle operators expect. The engine
+//     itself re-verifies every required entry (stat + size + SHA-256);
+//     the launcher's job is just the fast-fail ergonomic check.
 //
 //   - Binary paths are resolved via Bazel runfiles so `bazel run`
 //     works regardless of CWD. `bazel run` also sets
@@ -174,7 +177,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	modelPath, err := locateModel()
+	modelRoot, manifestPath, err := locateModelRoot()
 	if err != nil {
 		return err
 	}
@@ -186,9 +189,15 @@ func run() error {
 	// Engine first — the gateway will immediately try to Health-probe
 	// it during CreateMeeting, so it must be listening before we
 	// accept any viewer traffic.
+	//
+	// AEGIS_MODEL_PATH is the CAS ROOT dir (ADR-0026 layout) —
+	// engine's manifest walker resolves <root>/<id>/<sha>.<ext> for
+	// each required=true entry. AEGIS_MANIFEST_PATH points to the
+	// bundled manifest.json which declares what `required=true` means.
 	engineCmd, engineDone, engineErr, err := startChild(ctx, "engine", enginePath,
 		nil, []string{
-			"AEGIS_MODEL_PATH=" + modelPath,
+			"AEGIS_MODEL_PATH=" + modelRoot,
+			"AEGIS_MANIFEST_PATH=" + manifestPath,
 			// Disable engine's Prometheus exposer in LOCAL mode —
 			// it defaults to :8081 which would collide with the
 			// gateway's own :8081 Prometheus exposer on the same
@@ -214,7 +223,7 @@ func run() error {
 		terminate(engine)
 		return err
 	}
-	logger.Info("engine ready", "addr", engineAddr, "model", filepath.Base(modelPath))
+	logger.Info("engine ready", "addr", engineAddr, "model_root", modelRoot)
 
 	// Gateway second — now that the engine is known-good, any /healthz
 	// hit on the gateway will report "engine.reachable=true".
@@ -302,24 +311,37 @@ func locateBinaries() (engine, gateway string, err error) {
 	return engine, gateway, nil
 }
 
-// locateModel resolves the ggml-tiny.en.bin path. Bazel's `run`
-// command sets BUILD_WORKSPACE_DIRECTORY to the repo root, where
-// models/ lives (see tools/scripts/download_models.sh).
-func locateModel() (string, error) {
+// locateModelRoot resolves (modelRoot, manifestPath) for the engine's
+// CAS preflight walker (ADR-0026). Bazel's `run` command sets
+// BUILD_WORKSPACE_DIRECTORY to the repo root, where models/ lives.
+//
+// The launcher does NOT re-verify SHA-256 — that is the engine's job
+// (engine_cpp/src/models/manifest_loader). All the launcher promises is
+// "the manifest + models directory are present so the engine can
+// actually boot"; any deeper corruption surfaces as a fast-fail when
+// the engine process starts.
+func locateModelRoot() (modelRoot, manifestPath string, err error) {
 	ws := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
 	if ws == "" {
-		return "", errors.New(
+		return "", "", errors.New(
 			"BUILD_WORKSPACE_DIRECTORY not set — app_local must be invoked " +
 				"via `bazel run //:app_local`, not executed directly")
 	}
-	model := filepath.Join(ws, "models", "ggml-tiny.en.bin")
-	if _, err := os.Stat(model); err != nil {
-		return "", fmt.Errorf(
-			"whisper model not found at %s\n"+
-				"  run `./tools/scripts/download_models.sh` from the repo root to fetch it",
-			model)
+	modelRoot = filepath.Join(ws, "models")
+	manifestPath = filepath.Join(modelRoot, "manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		return "", "", fmt.Errorf(
+			"model manifest not found at %s\n"+
+				"  the repo should ship this file — if missing, `git status` to investigate",
+			manifestPath)
 	}
-	return model, nil
+	if _, err := os.Stat(modelRoot); err != nil {
+		return "", "", fmt.Errorf(
+			"models directory not found at %s\n"+
+				"  run `./tools/scripts/download_models.sh` from the repo root to populate it",
+			modelRoot)
+	}
+	return modelRoot, manifestPath, nil
 }
 
 // startChild spawns a subprocess with its stdout/stderr line-buffered
