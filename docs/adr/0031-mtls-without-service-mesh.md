@@ -56,6 +56,38 @@ mTLS covers **in-cluster gateway↔engine** traffic confidentiality + workload a
 
 Calling this out explicitly prevents the "mTLS solves auth" conflation that mesh marketing sometimes invites.
 
+### LOCAL mode posture — plaintext on localhost, by design
+
+The CLOUD mode mechanism above is meaningless in LOCAL mode. Physical reality:
+
+- `bazel run //:app_local` starts the Go gateway as the parent process, which spawns the C++ engine as a child via `exec.Command` (ARCH §5 "Process Supervisor Pattern"). Both processes run on the same host, same user, same trust domain.
+- gRPC communication is over localhost (TCP loopback today; unix socket remains a future option per ADR-0017's topology table).
+- No Kubernetes, no cert-manager, no `ClusterIssuer`, no Secret volumes. The cert-manager mechanism literally cannot run.
+
+**Decision for LOCAL mode: gRPC plaintext on localhost; no TLS, no mTLS.** The trust boundary in LOCAL mode is the host itself — an attacker who compromises localhost has already bypassed anything TLS could have defended (they can `ptrace`, they can read process memory, they can modify the binary on disk). Adding a self-signed cert would be pure ceremony without a defended threat model.
+
+This matches the pattern ARCH §8 "The Local Mode Interface Fallback" line 186-189 establishes for the other enterprise components (Cognito → dummy token, External Secrets → `.env` file). mTLS joins that list:
+
+| Enterprise component | CLOUD mode     | LOCAL mode                                   |
+| -------------------- | -------------- | -------------------------------------------- |
+| User auth            | Cognito JWT    | dummy local token authenticator              |
+| AWS credentials      | EKS Pod Identity | implicit via local AWS CLI profile / none  |
+| External secrets     | AWS Secrets Manager + External Secrets Operator | `.env` file in bazel sandbox |
+| Workload mTLS        | cert-manager + gRPC TLS (this ADR) | **plaintext gRPC over localhost** |
+
+**Interface injection point** — the gRPC dial + listen plumbing is abstracted behind a credentials factory:
+- Gateway side: `func DialEngine(addr string) (*grpc.ClientConn, error)` — CLOUD mode factory returns `credentials.NewTLS(tlsConfig)` with file-watcher reload; LOCAL mode factory returns `insecure.NewCredentials()`. Wired at process start via `DeployMode` env var.
+- Engine side: `grpc::ServerCredentials*` — CLOUD returns `grpc::experimental::TlsServerCredentials(...)` with `FileWatcherCertificateProvider`; LOCAL returns `grpc::InsecureServerCredentials()`.
+
+Application RPC code is identical in both modes; the difference lives entirely in the credentials injection.
+
+**Trigger to reconsider LOCAL plaintext:**
+
+1. LOCAL mode's audience changes from "solo dev / offline demo" to "multi-tenant host" (e.g., shared dev VM where two users could see each other's localhost traffic). No such pivot is planned.
+2. A compliance regime (e.g., FIPS 140-2) demands TLS-in-transit regardless of trust boundary, with no "on-host" exemption. Currently out of scope.
+
+Until then, LOCAL's plaintext posture is a documented deliberate choice, not an oversight.
+
 ## Alternatives Considered
 
 ### A. Istio (classic sidecar mode)
