@@ -77,3 +77,15 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+# ADR-0005 R7 — release binaries MUST NOT ship the AEGIS_DEV_AUDIO_DUMP
+# debug banner. Default `bazel test` builds engine in fastbuild → no
+# define → string absent → pass. Fails if a -DAEGIS_DEV_AUDIO_DUMP
+# copt leaks outside the `build:debug` config in .bazelrc.
+sh_test(
+    name = "no_dev_audio_dump_symbol_test",
+    srcs = ["no_dev_audio_dump_test.sh"],
+    size = "small",
+    args = ["$(rootpath //engine_cpp/cmd/engine:engine)"],
+    data = ["//engine_cpp/cmd/engine:engine"],
+)

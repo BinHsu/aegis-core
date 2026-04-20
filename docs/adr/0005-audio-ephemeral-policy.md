@@ -261,9 +261,17 @@ by accident or malice.
 - Go debug audio dump code is gated by a build tag
   `//go:build aegis_dev_audio_dump`. Release builds do not include the
   tag.
-- Container images tagged `prod-*` are built with release flags and
-  verified via a CI check: `grep "AEGIS_DEV_AUDIO_DUMP" on the binary`
-  must return empty for prod images.
+- Enforcement target:
+  `//engine_cpp/tests/unit:no_dev_audio_dump_symbol_test` (sh_test).
+  Greps the linked engine binary for `AEGIS_DEV_AUDIO_DUMP`. Default
+  `bazel test` runs in fastbuild (no define set) so the string is
+  absent and the test passes. If a `-DAEGIS_DEV_AUDIO_DUMP` copt
+  leaks into any non-debug build path, the `#ifdef`-guarded banner
+  string at `engine_cpp/cmd/engine/main.cc:138-145` lands in
+  `.rodata` and the grep matches. `--strip=always` on release
+  (`.bazelrc:82`) removes symbol tables but NOT `.rodata`, so the
+  string survives stripping and the gate catches it. Included in
+  the PR CI matrix via `ci-baseline.yml` → `bazel test`.
 - CI gate: any PR that introduces a runtime toggle (environment
   variable, CLI flag, config file key) for audio dumping is flagged
   for human security review.
