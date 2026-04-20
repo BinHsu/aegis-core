@@ -1,7 +1,7 @@
 # 🗺️ Aegis Core (V2) — Roadmap
 
 **Current Status**: Architecture design complete; implementation bootstrapping pending.
-**Last Updated**: 2026-04-20 (Phase 4b residual tick — `AEGIS_DEV_AUDIO_DUMP` CI gate landed as Bazel `sh_test` under `//engine_cpp/tests/unit/`, grep-based binary check per ADR-0005 R7. Prior 2026-04-19 snapshot: Phase 4a EXITED — all 5 slices landed; Phase 4b mini-slices 1–3 landed: Cosign keyless signing + Trivy CRITICAL-CVE block + SLSA L3 provenance. ADRs 0025 / 0026 v2 + Revision / 0027 / 0028 / 0029 capture the design pivots.)
+**Last Updated**: 2026-04-20 (Phase 4c kickoff — ADR-0030 picks Argo Rollouts over Flagger for progressive delivery; ADR-0031 commits mTLS via cert-manager + gRPC-native TLS, explicitly rejecting service mesh for the current service count (n=2). ARCHITECTURE.md §8 Zero Trust + §5 Process Supervisor updated to point at ADR-0031. Phase 5 gains an "Advanced Operations" placeholder covering Istio ambient mesh exploration + SPIFFE migration + Flagger re-evaluation triggers. Earlier today: Phase 4b residual tick — `AEGIS_DEV_AUDIO_DUMP` CI gate landed as Bazel `sh_test` (ADR-0005 R7). Prior 2026-04-19: Phase 4a EXITED; Phase 4b mini-slices 1–3 landed. ADRs 0025 / 0026 v2 + Revision / 0027 / 0028 / 0029 / 0030 / 0031 capture the design pivots.)
 
 This roadmap reflects the architectural decisions captured in
 `ARCHITECTURE.md` and the ADRs in `docs/adr/`. Before working on any
@@ -378,6 +378,12 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 
 ### Compliance SKU (Conditional)
 - [ ] **IF** regulated-industry customers (FINRA, HIPAA) materialize **AND** audit / legal review approves, design the opt-in **Compliance Archival SKU** — a fourth data layer allowing opt-in audio persistence with S3 Object Lock, explicit consent from all participants, and legal-hold support. This is a discrete Phase 5+ decision with its own ADR, not a given.
+
+### Advanced Operations (exploration — not committed)
+- [ ] **Service mesh spike: Istio Ambient Mode** — sidecarless mesh (2024+ GA) for mesh-native observability + fleet-wide mTLS + multi-cluster federation. Re-evaluates ADR-0031's "no mesh" posture. Trigger: in-cluster service count > 5, OR mesh-native observability becomes a debugging necessity, OR multi-cluster deployment lands. Candidate spike ADR: `0032-mesh-adoption-evaluation.md`.
+- [ ] **eBPF-layer observability** — Cilium Hubble or similar for kernel-level gRPC traffic visibility below the application-layer OTLP traces. Pairs with mesh spike above; can also stand alone.
+- [ ] **SPIFFE SPIRE migration** — workload-attestation-based identity upgrade from cert-manager's CA-signed model. Trigger: compliance regime demanding attestation-grade identity (FedRAMP High, PCI DSS L1) OR cross-cluster identity federation. See ADR-0031 §Alternative D for full trigger list.
+- [ ] **Flagger re-evaluation** — contingent on mesh spike landing. Re-opens ADR-0030's Argo Rollouts choice if Istio/Linkerd ever installs for other reasons.
 
 ---
 
