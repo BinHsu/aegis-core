@@ -40,21 +40,26 @@ constexpr int kBgeM3Dims = 1024;
 
 bool FileExists(const std::string &path) { return std::ifstream(path).good(); }
 
-// Resolve the model path. Priority mirrors whisper_transcribe_test:
-//   1. AEGIS_MODEL_DIR env (explicit override — useful for CI caches).
-//   2. Bazel runfiles — if runfiles ever ships the model, pull it.
-//   3. <REPO_ROOT>/models/bge-m3-Q4_K_M.gguf (developer workflow).
+// Resolve the model path. Tries the ADR-0026 CAS layout first, then
+// falls back to legacy flat layout. The CAS path became the canonical
+// on-disk location 2026-04-20.
 std::string ResolveModelPath() {
+  constexpr const char *kCasRel =
+      "/bge-m3-q4km/"
+      "e251234fcb7d050991a6be491952f485bf5c641dd10c3272dc1301fd281ad50f.gguf";
+  constexpr const char *kLegacyRel = "/bge-m3-Q4_K_M.gguf";
+  std::string dir;
   if (const char *env = std::getenv("AEGIS_MODEL_DIR"); env != nullptr) {
-    return std::string(env) + "/bge-m3-Q4_K_M.gguf";
+    dir = env;
+  } else if (const char *env = std::getenv("TEST_SRCDIR"); env != nullptr) {
+    dir = std::string(env) + "/../../../../models";
+  } else {
+    dir = "models";
   }
-  if (const char *env = std::getenv("TEST_SRCDIR"); env != nullptr) {
-    const std::string candidate =
-        std::string(env) + "/../../../../models/bge-m3-Q4_K_M.gguf";
-    if (FileExists(candidate))
-      return candidate;
+  if (FileExists(dir + kCasRel)) {
+    return dir + kCasRel;
   }
-  return "models/bge-m3-Q4_K_M.gguf";
+  return dir + kLegacyRel;
 }
 
 float CosSim(const std::vector<float> &a, const std::vector<float> &b) {

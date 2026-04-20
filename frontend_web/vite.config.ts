@@ -5,7 +5,14 @@
 // in Local mode. No special proxying here — the client talks to the
 // gateway at a runtime-configured URL (env-var at build time for now;
 // ADR-0002 Constraint 2 provider abstractions handle transport swap).
+//
+// Vitest section below shares this config so unit tests resolve the
+// same `@/` path alias and plugin stack as `vite dev` / `vite build`.
+// Without the shared config, a `from "@/gen/…"` import in a test file
+// would fail with "cannot resolve" — typecheck would still pass (tsc
+// reads tsconfig paths) but the test runner wouldn't.
 
+/// <reference types="vitest" />
 import { fileURLToPath, URL } from "node:url";
 
 import { defineConfig } from "vite";
@@ -44,5 +51,15 @@ export default defineConfig({
     // boss-scans-QR-on-phone" flow per ADR-0007. Vite prints the
     // first non-loopback IPv4 under "Network:" when this is on.
     host: true,
+  },
+  test: {
+    // happy-dom is preferred over jsdom for Vitest: faster startup,
+    // smaller, and our unit tests don't need jsdom-only APIs (we touch
+    // `WebSocket`, `ArrayBuffer`, and plain DOM constants only).
+    environment: "happy-dom",
+    globals: false, // force explicit `import { test, expect } from "vitest"`
+    // Match Vitest defaults but scope to src/ so Playwright's e2e/
+    // folder (*.spec.ts) is not swept in here.
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });

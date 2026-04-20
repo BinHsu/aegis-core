@@ -34,21 +34,27 @@ bool FileExists(const std::string &path) { return std::ifstream(path).good(); }
 // Resolve the model path. Priority:
 //   1. AEGIS_MODEL_DIR env (explicit override — useful for CI caches)
 //   2. Bazel runfiles — if runfiles ever ships the model, pull it.
-//   3. <REPO_ROOT>/models/ggml-tiny.en.bin (developer workflow).
+//   3. <REPO_ROOT>/models — local developer workflow.
+// Tries the ADR-0026 CAS layout first (canonical since 2026-04-20),
+// then falls back to the legacy flat filename for stale local setups.
 std::string ResolveModelPath() {
+  constexpr const char *kCasRel =
+      "/whisper-tiny-en/"
+      "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f.bin";
+  constexpr const char *kLegacyRel = "/ggml-tiny.en.bin";
+  std::string dir;
   if (const char *env = std::getenv("AEGIS_MODEL_DIR"); env != nullptr) {
-    return std::string(env) + "/ggml-tiny.en.bin";
+    dir = env;
+  } else if (const char *env = std::getenv("TEST_SRCDIR"); env != nullptr) {
+    // Bazel runfiles root — walk up to the repo's models/ sibling.
+    dir = std::string(env) + "/../../../../models";
+  } else {
+    dir = "models";
   }
-  if (const char *env = std::getenv("TEST_SRCDIR"); env != nullptr) {
-    // Bazel runfiles root — tests execute here when invoked via `bazel test`.
-    // Walk up to find a models/ sibling.
-    const std::string candidate =
-        std::string(env) + "/../../../../models/ggml-tiny.en.bin";
-    if (FileExists(candidate))
-      return candidate;
+  if (FileExists(dir + kCasRel)) {
+    return dir + kCasRel;
   }
-  // Fallback for developers running the test binary directly.
-  return "models/ggml-tiny.en.bin";
+  return dir + kLegacyRel;
 }
 
 std::string ResolveWavPath() {

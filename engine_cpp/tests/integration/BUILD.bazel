@@ -25,7 +25,12 @@ cc_test(
 cc_test(
     name = "stream_transcribe_test",
     srcs = ["stream_transcribe_test.cc"],
-    size = "medium",
+    # `large` — `medium` caps at 60 s, but this target now runs three
+    # cases each doing a full whisper model load (~2 s) + JFK transcribe
+    # (~5 s). Two transcribing cases × ~8 s each + overhead easily
+    # exceeds 60 s. Bumped 2026-04-20 when the LiveWindowEmitsMidStream
+    # case was added for Incident 14 regression coverage.
+    size = "large",
     data = [
         "@whisper_cpp//:samples",
     ],

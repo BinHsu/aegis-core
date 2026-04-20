@@ -175,6 +175,18 @@ int main(int argc, char **argv) {
   builder.AddListeningPort(address, ::grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
 
+  // Keepalive policy — MUST accept the gateway client's 30s PING cadence
+  // (see `gateway_go/cmd/gateway/main.go` keepaliveTime per ADR-0006).
+  // gRPC C++ server defaults reject pings more frequent than 5 minutes
+  // and disallow pings without active calls; under default the gateway's
+  // 30s PINGs trigger ENHANCE_YOUR_CALM GoAway + reconnect every ~4 min,
+  // causing WhisperEngine::Create to reload the model from scratch every
+  // cycle and transcript segments never complete (observed 2026-04-20 in
+  // LAN smoke). Accept PING every 20s even without active calls.
+  builder.AddChannelArgument(
+      GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 20000);
+  builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS, 1);
+
   g_server = builder.BuildAndStart();
   if (!g_server) {
     std::cerr << "aegis-engine: failed to start gRPC server on " << address
