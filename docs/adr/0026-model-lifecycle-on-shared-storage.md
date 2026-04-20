@@ -147,15 +147,33 @@ Future option (NOT live, NOT in this ADR's responsibility split): pod could pull
 
 Trigger to revisit: if operator-recovery cycles become repetitive AND we have observability to detect recovery loops cleanly, the trade tilts toward self-recovery. Until then, fail-fast keeps root causes visible.
 
-### Pruning — deferred
+### Pruning — prohibited (amended 2026-04-20)
 
-The first version of this ADR specified a reference-counted prune Job. That has been **explicitly deferred** because:
+Pruning is **prohibited** until a **pre-deploy model-existence guarantee** is designed and operational. Concretely: any mechanism that can cause a pod to start referencing SHA X must first verify X is present in S3 (or populate it). Without such a mechanism, pruning is structurally unsafe — see §"Why cost is the wrong axis" below.
 
-- Storage cost math: ~1GB per retired model SHA × ~2 retired SHAs/year = ~2GB accumulated/year × $0.023/GB/month = **~$0.05/month** added per year of accumulation. Reaches $1/month after ~20 years.
-- Operational cost: a periodic Job that walks active pods, reads each manifest, computes union, deletes unreferenced — non-trivial K8s logic with real failure modes (race conditions during deploy, pod-list staleness, accidental over-prune).
-- Risk: accidentally deleting a SHA still referenced by a slow-rolling-back deployment causes pod startup failure — operational incident.
+**Candidate mechanisms for future design work** (not a commitment to build any):
 
-Trade ratio is overwhelmingly against pruning at this scale. Revisit when accumulated retired-model storage exceeds $10/month (~50GB; years away). Before then, the bucket grows monotonically; that is a feature, not a bug — old SHAs remain instantly available for rollback / forensics.
+- **ArgoCD PreSync hook** — a Job that runs before Rollout/Deployment sync, walks the incoming manifest, HEAD-checks each `required: true` SHA against S3, populates any missing (via the existing CI populator script), blocks Sync on failure.
+- **K8s validating admission webhook** — rejects Deployment / Rollout objects at apply time if their bundled manifest references SHAs absent from S3. Shifts enforcement earlier (admission) at the cost of introducing a cluster-level webhook.
+- **ECR image-level "models-populated" attestation** — CI signs an attestation on the OCI image stating "all SHAs this image's manifest depends on are in S3 at SHA_X..." Kyverno verifies the attestation on admission (same pipeline as Cosign verify-image per ADR-0028). Ties pruning safety to the existing signed-image trust chain.
+
+Each is a distinct ADR-scale design. The shape of the problem shared across all three: **pruning and deployment must share a coordination point** so that "this SHA is referenced" is a question answered at *deploy time*, not at *prune time*.
+
+### Why cost is the wrong axis (supersedes v2 revisit trigger)
+
+v2 (2026-04-19) proposed revisiting pruning when accumulated retired-model storage exceeded $10/month (~50GB). That trigger is **superseded**. Reasoning:
+
+1. **Rollback safety is the real constraint, not cost**. A naïve prune that reclaims a "retired" SHA will break the first rollback that references it — regardless of whether the bucket costs $1/month or $100/month. The failure mode is binary (pod CrashLoopBackOff), and money saved doesn't offset it.
+2. **Ad-hoc `kubectl apply` of old manifests** — any operator rolling back via direct manifest apply (not through CI) bypasses the CI populator. Pruned SHA → pod fails. No cost trigger predicts this.
+3. **Scale-up of surviving old ReplicaSets** — HPA or node-recycle events can cold-start new pods from an old ReplicaSet whose manifest references a "retired" SHA. Same failure mode.
+
+Cost-based trigger implicitly assumes "we will eventually want to reclaim space." Under the rollback-safety lens, we never want to reclaim space from a SHA that any plausible future pod might reference — which, absent the pre-deploy guarantee above, is **every SHA ever populated**. The monotonically-growing bucket is a feature, not a bug.
+
+### When the prohibition may be lifted
+
+Only when one of the candidate mechanisms (or an equivalent) lands, and is **confirmed to intercept every pod-start path** (Rollout controller, Deployment controller, manual `kubectl apply`, manual `kubectl rollout restart`, HPA scale-out, node-recycle cold-start, etc.). Partial coverage is worse than none — false confidence in a pruning safety net is a worse failure mode than a monotonic bucket.
+
+**This prohibition may be permanent.** If every candidate mechanism turns out expensive relative to the value of reclaimed storage (at current growth: ~$0.05/month per year of accumulation), the prohibition simply stays in force and the bucket grows forever. That is an acceptable outcome.
 
 ## Why CAS over previous "filename-as-version" proposal
 
