@@ -78,6 +78,17 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "manifest_loader_test",
+    srcs = ["manifest_loader_test.cc"],
+    size = "small",
+    deps = [
+        "//engine_cpp/src/models:manifest_loader",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 # ADR-0005 R7 — release binaries MUST NOT ship the AEGIS_DEV_AUDIO_DUMP
 # debug banner. Default `bazel test` builds engine in fastbuild → no
 # define → string absent → pass. Fails if a -DAEGIS_DEV_AUDIO_DUMP

@@ -18,15 +18,15 @@
       "license_url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
       "upstream_model_license": "MIT",
       "upstream_model_license_url": "https://github.com/openai/whisper/blob/main/LICENSE",
-      "required": false,
+      "required": true,
       "phase": 1,
-      "notes": "~120 MB RAM when loaded. Test-only model; production uses whisper-large-v3-turbo-q4 below."
+      "notes": "~120 MB RAM when loaded. Loaded unconditionally at engine startup (`engine_cpp/cmd/engine/main.cc`) — without this file engine cannot start its gRPC server. Originally labelled 'test-only' pending whisper-large-v3-turbo-q4 promotion; until that model is pinned + wired in, tiny.en IS the production transcription model for every deployment mode and is correctly required=true."
     },
     {
       "id": "whisper-large-v3-turbo-q4",
       "filename": "ggml-large-v3-turbo-q4_0.bin",
       "type": "transcription",
-      "description": "OpenAI Whisper large-v3-turbo, 4-bit Q4_0 quantization via whisper.cpp. Primary transcription model for all deployment modes.",
+      "description": "OpenAI Whisper large-v3-turbo, 4-bit Q4_0 quantization via whisper.cpp. Intended as the primary transcription model for production deployment.",
       "sha256": "PLACEHOLDER — compute after downloading the actual model file",
       "size_bytes": 0,
       "estimated_ram_bytes": 1610612736,
@@ -37,9 +37,9 @@
       "license_url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
       "upstream_model_license": "MIT",
       "upstream_model_license_url": "https://github.com/openai/whisper/blob/main/LICENSE",
-      "required": true,
+      "required": false,
       "phase": 1,
-      "notes": "~1.5 GB RAM when loaded. Version bump procedure: see ADR-0009 §Upstream whisper.cpp version bump procedure."
+      "notes": "~1.5 GB RAM when loaded. Currently required=false: SHA-256 + origin_version are PLACEHOLDER (model has not been pinned to a specific whisper.cpp release yet), and engine code still uses whisper-tiny-en for all modes — no code path loads this model today. Promote back to required=true when: (1) upstream version pinned, (2) SHA-256 computed from actual download, (3) engine wires this model as the default. Version bump procedure: see ADR-0009 §Upstream whisper.cpp version bump procedure."
     },
     {
       "id": "speaker-diarization-embedder",
@@ -56,9 +56,9 @@
       "license_url": "PLACEHOLDER",
       "upstream_model_license": "PLACEHOLDER",
       "upstream_model_license_url": "PLACEHOLDER",
-      "required": true,
+      "required": false,
       "phase": 1,
-      "notes": "~1.0 GB RAM when loaded. Model selection is a Phase 1 decision. Candidates: pyannote/wespeaker-voxceleb-resnet34 (MIT), speechbrain/spkrec-ecapa-voxceleb (Apache-2.0)."
+      "notes": "~1.0 GB RAM when loaded. Currently required=false: no model has been selected yet (filename + all metadata are PLACEHOLDER), and no diarization code exists in engine_cpp/ today. Promote back to required=true when: (1) a specific model is selected (candidates: pyannote/wespeaker-voxceleb-resnet34 MIT, speechbrain/spkrec-ecapa-voxceleb Apache-2.0), (2) SHA-256 + filename filled in, (3) engine_cpp gains a diarization implementation that loads this model."
     },
     {
       "id": "bge-m3-q4km",
@@ -75,9 +75,9 @@
       "license_url": "https://huggingface.co/lm-kit/bge-m3-gguf",
       "upstream_model_license": "MIT",
       "upstream_model_license_url": "https://huggingface.co/BAAI/bge-m3",
-      "required": true,
+      "required": false,
       "phase": 3,
-      "notes": "~700 MB RAM estimate (conservative; file is 438 MB, runtime adds tokenizer + activations). Feeds ModelBudget per ADR-0010 revision (Phase 3b Slice 1). Embedding dimension: 1024 (bge-m3 dense). Max sequence length: 8192 tokens."
+      "notes": "~700 MB RAM estimate (conservative; file is 438 MB, runtime adds tokenizer + activations). Currently required=false: only loaded by the opt-in `engine seed` subcommand (`engine_cpp/cmd/engine/seed.cc` via GGMLEmbedder::Create) — not loaded at engine startup. Promote back to required=true when engine main wires GGMLEmbedder eagerly (comment at main.cc:90 reserves this for 'Phase 3b'; not yet implemented). Embedding dimension: 1024 (bge-m3 dense). Max sequence length: 8192 tokens. Feeds ModelBudget per ADR-0010 revision (Phase 3b Slice 1)."
     },
     {
       "id": "llama-3-8b-instruct-q4km",

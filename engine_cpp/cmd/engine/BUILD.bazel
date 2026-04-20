@@ -9,6 +9,7 @@ cc_library(
     hdrs = ["seed.h"],
     deps = [
         "//engine_cpp/src/inference:ggml_embedder",
+        "//engine_cpp/src/models:manifest_loader",
         "//engine_cpp/src/rag:chunker",
         "//engine_cpp/src/vectordb:qdrant_client",
         "@boringssl//:crypto",
@@ -29,9 +30,11 @@ cc_binary(
         "//engine_cpp/src/grpc:aegis_engine_service",
         "//engine_cpp/src/inference:whisper_engine",
         "//engine_cpp/src/metrics:metrics",
+        "//engine_cpp/src/models:manifest_loader",
         "//engine_cpp/src/session:model_budget",
         "//engine_cpp/src/session:session_budget",
         "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/status",
         # Pull exposer — brings in civetweb via transitive deps of
         # prometheus-cpp's pull library. Only needed at the binary
         # scope, not in src/metrics which is the metric-writer API

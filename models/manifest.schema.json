@@ -47,7 +47,7 @@
         },
         "filename": {
           "type": "string",
-          "description": "Filename relative to /models/. The C++ engine model loader resolves this path at startup."
+          "description": "Upstream filename — preserves the original name from `origin_url` and provides the file extension (e.g., `.bin`, `.gguf`) used to construct the CAS path. The engine CAS preflight walker resolves the on-disk path as `$AEGIS_MODEL_PATH/<id>/<sha256>.<ext>` (ADR-0026 CAS layout), NOT `$AEGIS_MODEL_PATH/<filename>` — `filename` is for extension + provenance only, not path resolution."
         },
         "type": {
           "type": "string",
@@ -103,7 +103,7 @@
         },
         "required": {
           "type": "boolean",
-          "description": "true if the model is required for MVP / Phase 1-4 operation. false for optional / Phase 5+ models."
+          "description": "true iff this model MUST be present at engine startup for the gRPC server to come up — i.e., some engine startup code path unconditionally loads it. false for models that are (a) loaded lazily by opt-in subcommands, (b) not yet wired into any code path, or (c) aspirational/placeholder. The engine CAS preflight walker (ADR-0026 §Engine responsibilities) iterates `required=true` entries only; any drift between this flag and actual engine load paths turns into a false positive (walker fails on a model nobody uses) or false negative (engine crashes mid-run on a model the walker didn't verify). CI drift check (tools/scripts/check_manifest_drift.sh) enforces correspondence between `required=true` entries and engine main startup code."
         },
         "phase": {
           "type": "integer",
