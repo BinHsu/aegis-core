@@ -72,10 +72,10 @@ jobs:
           # Reuse bazel-unit's cache from the just-merged PR if available,
           # otherwise fall back to push-specific cache. Same MODULE.bazel
           # hash key keeps the buckets compatible.
-          key: bazel-push-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc') }}
+          key: bazel-push-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
           restore-keys: |
             bazel-push-${{ runner.os }}-
-            bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc') }}
+            bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
             bazel-unit-${{ runner.os }}-
 
       # Same BuildBuddy wiring as ci-baseline.yml's bazel-unit-tests job.
