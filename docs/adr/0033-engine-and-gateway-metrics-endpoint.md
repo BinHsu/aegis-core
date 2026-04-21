@@ -6,7 +6,24 @@
 | Date     | 2026-04-20                                                                  |
 | Deciders | Project author                                                              |
 | Context  | Phase 4c / Phase 4d boundary slice C-Obs-1. Both aegis-core services (Go gateway, C++ engine) lacked Prometheus instrumentation. Landing-zone [#46](https://github.com/BinHsu/aegis-core/issues/46) established the observability contract (wide-open Prometheus Operator selectors, Grafana sidecar discovery, `app.kubernetes.io/part-of: aegis` label, ServiceMonitor CRD available). This ADR documents the aegis-core-side implementation. |
-| Related  | ADR-0030 (Argo Rollouts — C-5b `AnalysisTemplate` will consume these metrics for SLO canary gates), ADR-0031 (mTLS — metrics scrape stays plaintext intra-cluster, separate port from the mTLS'd gRPC on :50051), `aegis-core#46` observability contract thread, ldz #54 platform surface contract |
+| Related  | ADR-0030 (Argo Rollouts — C-5b `AnalysisTemplate` will consume these metrics for SLO canary gates), ADR-0031 (mTLS — metrics scrape stays plaintext intra-cluster, separate port from the mTLS'd gRPC on :50051), `aegis-core#46` observability contract thread, ldz #54 platform surface contract, ldz ADR-022 + ADR-023 (observability backend reversal, see Revision below) |
+
+## Revision 2026-04-21 — observability backend reversal (decisions intact)
+
+Landing-zone reversed the observability backend from self-hosted kube-prometheus-stack to Grafana Cloud free tier via [ldz ADR-022](https://github.com/BinHsu/aegis-aws-landing-zone/blob/main/docs/decisions/022-observability-backend-grafana-cloud.md) + [ldz ADR-023](https://github.com/BinHsu/aegis-aws-landing-zone/blob/main/docs/decisions/023-observability-responsibility-model.md) (ldz PR #123 merged 2026-04-21 06:59 UTC). ACK'd by aegis-core on [#46](https://github.com/BinHsu/aegis-core/issues/46).
+
+**Every decision in this ADR remains intact** — the backend change swaps *who does the scraping*, not *what aegis-core exposes*:
+
+- `:8081/metrics` pull endpoint shape — unchanged. **Grafana Alloy** discovers and scrapes via the same `ServiceMonitor` CRD that kube-prometheus-stack's Prometheus Operator would have used.
+- `ServiceMonitor` CRD label convention (`app.kubernetes.io/part-of: aegis`) — unchanged.
+- Plaintext intra-cluster scrape posture — unchanged (Alloy runs in-cluster; the Grafana Cloud trust boundary is on the platform side, past Alloy's `remote_write`).
+- NetworkPolicy ingress allow-rule target — shifts from "`monitoring` namespace running kube-prometheus-stack" to "whichever namespace ldz installs Alloy in" (likely `monitoring` or `observability`; confirm during ldz ADR-022 implementation PR).
+
+**What's new downstream of this ADR**: aegis-core also ships four additional CRDs per the widened ldz #46 contract — `PrometheusRule`, `GrafanaDashboard`, `GrafanaContactPoint`, `GrafanaNotificationPolicyRoute`. These are tracked as Phase 4d **C-Obs-2** in ROADMAP.md, not folded into this ADR (C-Obs-1 is scoped to the pull endpoint; C-Obs-2 is the 5-CRD ship).
+
+**Alt-B re-open trigger update**: "Deferred to Phase 4d consideration... Re-open when ldz ships an OpenTelemetry Collector" — Alloy supports OTLP receive natively, so the trigger is arguably already active. Decision to stay pull-scoped for C-Obs-1 still holds (it's the path of least resistance + matches the ServiceMonitor contract), but a future ADR-003X may evaluate OTLP-push from aegis-core → Alloy when there's a concrete benefit (multi-backend fan-out, or push-only environments).
+
+Narrative passages below that reference "kube-prometheus-stack" are left as-written for git-blame archaeology; read them as "the scrape-first posture that Alloy now implements," not as current infra.
 
 ## Context
 
