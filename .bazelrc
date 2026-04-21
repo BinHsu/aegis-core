@@ -97,6 +97,17 @@ build:release --strip=always
 test --test_output=errors
 test --test_verbose_timeout_warnings
 
+# --- Lock file policy (Bazel 7+ reproducibility) ---
+# MODULE.bazel.lock is committed (not gitignored) per Incident 15.
+# Dev default is --lockfile_mode=update — local bazelisk silently
+# regenerates the lock if MODULE.bazel changes; developers then commit
+# the lock diff alongside the MODULE.bazel edit in the same PR. CI
+# could flip this to --lockfile_mode=error as a strict reproducibility
+# gate when we want drift to fail the build instead of auto-healing;
+# kept at update today because the committed-lock PR is young and
+# false positives are more costly than silent auto-update.
+common --lockfile_mode=update
+
 # --- Per-developer overrides ---
 # Keep at the end so .bazelrc.user wins when both specify the same flag.
 try-import %workspace%/.bazelrc.user

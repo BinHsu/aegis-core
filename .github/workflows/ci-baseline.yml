@@ -149,7 +149,7 @@ jobs:
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
             /tmp/aegis-bazel-*
-          key: bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc') }}
+          key: bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
           restore-keys: |
             bazel-unit-${{ runner.os }}-
 
@@ -351,7 +351,7 @@ jobs:
           path: |
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
-          key: bazel-e2e-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion') }}
+          key: bazel-e2e-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion') }}
           restore-keys: |
             bazel-e2e-${{ runner.os }}-
 

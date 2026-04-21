@@ -55,7 +55,12 @@ tags
 .bazelisk/
 .bufsk/
 bazel-*
-MODULE.bazel.lock
+# MODULE.bazel.lock is committed (see Incident 15). It is Bazel 7+'s
+# reproducibility source — same stature as Go `go.sum` or pnpm's
+# `pnpm-lock.yaml`. Historical `.gitignore` excluded it; re-resolving
+# from BCR on a fresh output_user_root produced transitive-dep version
+# drift (protobuf, rules_cc, rules_go, boringssl) that broke `bazel
+# build` on path-with-spaces dev clones. Do not re-ignore this file.
 !MODULE.bazel
 .bazelrc.user
 

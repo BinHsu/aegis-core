@@ -1467,6 +1467,79 @@ Plus the load-bearing observability layer that made the whole sequence diagnosab
 
 ---
 
+## Incident 15 — `MODULE.bazel.lock` gitignored → cold /tmp cache cold-resolved new boringssl; empty BUILD
+
+**Date**: 2026-04-21  **Severity**: S3  **Duration**: ~30 min (bounded — caught early while driving `lan-smoke.sh`)
+**Related commit**: *this commit*
+
+### Symptom
+
+`./tools/scripts/lan-smoke.sh` step 3 (`bazel run //engine_cpp/cmd/engine -- seed ...`) aborted during Bazel analysis:
+
+```
+[bazelisk] repo path contains spaces; using cache at /tmp/aegis-bazel-c48cf803db9a
+WARNING: For repository 'com_google_protobuf', the root module requires module
+         version protobuf@28.2, but got protobuf@29.0 in the resolved dependency
+         graph.
+WARNING: For repository 'rules_cc',  requires rules_cc@0.0.17, but got rules_cc@0.1.5
+WARNING: For repository 'rules_go',  requires rules_go@0.52.0, but got rules_go@0.59.0
+ERROR: no such package '@@boringssl~//': BUILD file not found in directory ''
+       of external repository @@boringssl~.
+ERROR: Analysis of target '//engine_cpp/cmd/engine:engine' failed; build aborted
+```
+
+CI (`ci-baseline.yml` `bazel-unit-tests`) was green on the same `MODULE.bazel`, the same HEAD, within the preceding hour — so the failure was specific to the dev machine's local Bazel state, not any code under review.
+
+### Root cause
+
+Three conditions stacking:
+
+1. **Path with spaces → `/tmp/` fallback cache**. `tools/bazelisk/bazelisk:42-48` routes `--output_user_root` to `/tmp/aegis-bazel-<hash>` when the repo path contains a space (the Rule-6-exception logic introduced for Incident 01's DottedVersion crash). Today was the first `bazel` invocation under this hash → fresh cold cache, nothing to restore.
+2. **`MODULE.bazel.lock` was gitignored** (`.gitignore:58` from the Phase 0 governance-scaffolding commit `7ce3d1c`). The lock pins every transitive Bazel module version — without it in the repo, a fresh `output_user_root` must re-resolve from Bazel Central Registry from scratch.
+3. **BCR tip pulls newer transitives than `MODULE.bazel` declares**. Our root module says `protobuf@28.2`, `rules_cc@0.0.17`, `rules_go@0.52.0`; BCR's newer transitive graph promoted them to 29.0 / 0.1.5 / 0.59.0. The downstream effect was boringssl's BCR module-shape change between those versions, producing an `@@boringssl~//` repo with an empty directory and no BUILD file.
+
+**Why CI stayed green**: `ci-baseline.yml:137-154` uses `actions/cache` to persist `.bazel_cache/` across runs, keyed on `hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc')`. Once any single CI run had resolved modules successfully (before today's BCR drift), every subsequent run restored the same resolved state and skipped the re-resolve. The dev box hitting a fresh `/tmp/` cache had no such safety net, and the cache key did not hash a lock (because one wasn't committed), so there was no signal to distinguish "old cache, still-valid" from "stale cache, should rebuild".
+
+### Detection
+
+Triggered by running `lan-smoke.sh` step 3 during the first LAN smoke drive of the feat/lan-smoke-ergonomics branch (PR #63). Signal chain:
+
+1. The three `WARNING: ... requires X@vA, but got X@vB` lines in the log — these indicate version-override during resolution, which shouldn't happen on untouched `MODULE.bazel` unless the lock is absent or stale.
+2. `ls .gitignore | grep MODULE.bazel.lock` — confirmed lock was gitignored.
+3. `ls MODULE.bazel.lock` — confirmed a 131 KB lock existed on disk, dated Apr 20, from the previous in-repo `.bazel_cache/` resolution. It was the correct state; just not checked in.
+
+### Resolution
+
+One commit, four logically-grouped changes:
+
+- `.gitignore` — removed the `MODULE.bazel.lock` entry, replacing it with a block comment explaining why the lock is now committed.
+- `MODULE.bazel.lock` — committed the existing on-disk file (131 KB). Contents reflect the last successful BCR resolution from 2026-04-20.
+- `.bazelrc` — explicit `common --lockfile_mode=update` (already the Bazel default, made visible in the config for discoverability).
+- `.github/workflows/ci-baseline.yml` + `.github/workflows/release-staging-image.yml` — added `MODULE.bazel.lock` to the `hashFiles` list for each `actions/cache` key so the first post-merge CI run forces a fresh `.bazel_cache/` rebuild from the committed lock.
+
+Contributors with a broken local cache (this dev machine) resolve by:
+
+```bash
+./tools/bazelisk/bazelisk clean --expunge
+./tools/bazelisk/bazelisk build //...
+```
+
+### Prevention
+
+- `MODULE.bazel.lock` is now the reproducibility source, matching Go `go.sum` and pnpm `pnpm-lock.yaml` stature. Bazel 7.x has significantly improved cross-platform lock portability (linux/darwin/windows share a canonical lock shape), eliminating the historical concern that motivated Phase 0's gitignore.
+- Any future `MODULE.bazel` edit should land in the same commit as the resulting `MODULE.bazel.lock` diff. PR review should reject a `MODULE.bazel` change not accompanied by a lock change.
+- CLAUDE.md Rule 9 pre-flight does not grow a check for this — lock is in the repo, fresh-clone flow just works.
+- `--lockfile_mode=update` is retained for the next few weeks (tolerant of drift during the committed-lock transition); flipping CI to `--lockfile_mode=error` for strict reproducibility is a follow-up once we're confident no false positives remain.
+
+### Lessons
+
+1. **Gitignoring reproducibility files is the same class of mistake in any ecosystem.** Bazel's lock plays the same role as `go.sum` / `Cargo.lock` / `pnpm-lock.yaml`. When `.gitignore`'s Bazel section was authored in Phase 0, bzlmod was still maturing and the common wisdom had not caught up with Bazel 7.x's improved lock stability. Asymmetric cost: merge conflicts on a lock are 1-minute irritations to regenerate; version drift is hours of debugging once it happens, because the surface error (`empty BUILD`) lives four layers below the root cause.
+2. **Cache-layer parity matters for reproducibility.** CI and local differed in exactly one variable — `output_user_root` location (persisted on CI, ephemeral on macOS-with-spaces dev boxes) — that nobody thought was semantically significant. Any reproducibility foundation that relies on "CI happens to persist cache across runs" is fragile: the moment a dev machine has a cold cache, the asymmetry surfaces as a "works on CI" bug.
+3. **BCR drift is silent without a lock.** No error, no warning on a fresh clone — just a wall of `requested X, got Y` warnings that tired eyes tune out as "normal Bazel noise". A committed lock removes this class of drift entirely because every transitive version is pinned and diffed in code review.
+4. **The `--test_output=short` preflight trap has a sibling here.** CLAUDE.md Rule 6's reminder that `--test_output=short` is invalid is a guard against silent flag ignore; the same category of preflight-gap applies to `--lockfile_mode`. The project would benefit from a "flags we commit to honoring" inventory that pre-commit could grep. Deferred — out of scope for this incident, but the lesson is logged.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a
