@@ -576,3 +576,260 @@ func TestJoinAsViewerDeliversKickoffThenEnd(t *testing.T) {
 		}
 	}
 }
+
+// -----------------------------------------------------------------------------
+// SendOfficerHint — staff-authored hint broadcast (Phase 3c hint fan-out slice)
+// -----------------------------------------------------------------------------
+
+// officerHintClient bundles a fresh service + session + valid token so
+// each test doesn't re-implement the three-step setup.
+func officerHintClient(t *testing.T) (
+	svc *GatewayService,
+	client aegisv1.GatewayClient,
+	sessionID, token string,
+	cleanup func(),
+) {
+	t.Helper()
+	svc = newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	client, cleanup = setupServer(t, svc)
+	created, err := client.CreateMeeting(context.Background(), &aegisv1.CreateMeetingRequest{
+		RagId: "corpus-officer",
+	})
+	if err != nil {
+		cleanup()
+		t.Fatalf("CreateMeeting: %v", err)
+	}
+	return svc, client, created.GetSessionId(), created.GetViewerJoinToken(), cleanup
+}
+
+func TestSendOfficerHintRejectsMissingSessionID(t *testing.T) {
+	_, client, _, token, cleanup := officerHintClient(t)
+	defer cleanup()
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		ViewerToken: token,
+		Suggestion:  "override",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_NORMAL,
+	})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("missing session_id: got code %v, want InvalidArgument", got)
+	}
+}
+
+func TestSendOfficerHintRejectsMissingToken(t *testing.T) {
+	_, client, sessionID, _, cleanup := officerHintClient(t)
+	defer cleanup()
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		SessionId:  sessionID,
+		Suggestion: "override",
+		Urgency:    aegisv1.HintUrgency_HINT_URGENCY_NORMAL,
+	})
+	if got := status.Code(err); got != codes.Unauthenticated {
+		t.Fatalf("missing token: got code %v, want Unauthenticated", got)
+	}
+}
+
+func TestSendOfficerHintRejectsBadToken(t *testing.T) {
+	_, client, sessionID, _, cleanup := officerHintClient(t)
+	defer cleanup()
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		SessionId:   sessionID,
+		ViewerToken: "not-a-real-jwt",
+		Suggestion:  "override",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_NORMAL,
+	})
+	if got := status.Code(err); got != codes.PermissionDenied {
+		t.Fatalf("bad token: got code %v, want PermissionDenied", got)
+	}
+}
+
+func TestSendOfficerHintRejectsEmptySuggestion(t *testing.T) {
+	_, client, sessionID, token, cleanup := officerHintClient(t)
+	defer cleanup()
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		SessionId:   sessionID,
+		ViewerToken: token,
+		Suggestion:  "",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_NORMAL,
+	})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("empty suggestion: got code %v, want InvalidArgument", got)
+	}
+}
+
+func TestSendOfficerHintRejectsOversizedSuggestion(t *testing.T) {
+	_, client, sessionID, token, cleanup := officerHintClient(t)
+	defer cleanup()
+	big := make([]byte, maxOfficerHintSuggestionBytes+1)
+	for i := range big {
+		big[i] = 'x'
+	}
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		SessionId:   sessionID,
+		ViewerToken: token,
+		Suggestion:  string(big),
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_NORMAL,
+	})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("oversized suggestion: got code %v, want InvalidArgument", got)
+	}
+}
+
+func TestSendOfficerHintRejectsUnspecifiedUrgency(t *testing.T) {
+	_, client, sessionID, token, cleanup := officerHintClient(t)
+	defer cleanup()
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		SessionId:   sessionID,
+		ViewerToken: token,
+		Suggestion:  "urgent note",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_UNSPECIFIED,
+	})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("unspecified urgency: got code %v, want InvalidArgument", got)
+	}
+}
+
+func TestSendOfficerHintRejectsUnknownSession(t *testing.T) {
+	_, client, _, token, cleanup := officerHintClient(t)
+	defer cleanup()
+	// Token was issued for a real session, but we ask about a different
+	// (unknown) session. Token.Verify checks the session binding, so
+	// the expected error is PermissionDenied — NOT NotFound. That is
+	// the intended posture: we never leak "session with id X exists
+	// but you lack access" vs "session X does not exist."
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		SessionId:   "nonexistent-session",
+		ViewerToken: token,
+		Suggestion:  "override",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_NORMAL,
+	})
+	if got := status.Code(err); got != codes.PermissionDenied {
+		t.Fatalf("unknown session (token mismatch): got code %v, want PermissionDenied",
+			got)
+	}
+}
+
+func TestSendOfficerHintRejectsEndedSession(t *testing.T) {
+	_, client, sessionID, token, cleanup := officerHintClient(t)
+	defer cleanup()
+	// End the meeting first.
+	if _, err := client.EndMeeting(context.Background(),
+		&aegisv1.EndMeetingRequest{SessionId: sessionID}); err != nil {
+		t.Fatalf("EndMeeting: %v", err)
+	}
+	// Now the session is gone from the registry → NotFound (Registry.Delete
+	// calls MarkEnded + removes). This is the current CreateMeeting /
+	// EndMeeting contract; if EndMeeting moves to "mark ended but keep
+	// in registry", this assertion flips to FailedPrecondition — both
+	// are defensible, but the code path below the switch is identical,
+	// so pin to whichever the current implementation chooses.
+	_, err := client.SendOfficerHint(context.Background(), &aegisv1.SendOfficerHintRequest{
+		SessionId:   sessionID,
+		ViewerToken: token,
+		Suggestion:  "too late",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_HIGH,
+	})
+	if got := status.Code(err); got != codes.NotFound {
+		t.Fatalf("ended session: got code %v, want NotFound (EndMeeting removes from registry)",
+			got)
+	}
+}
+
+func TestSendOfficerHintHappyPathBroadcastsToSubscriber(t *testing.T) {
+	svc, client, sessionID, token, cleanup := officerHintClient(t)
+	defer cleanup()
+
+	// Subscribe a viewer stream FIRST so we catch the broadcast from
+	// the very next moment on.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := client.JoinAsViewer(ctx, &aegisv1.JoinAsViewerRequest{
+		SessionId:   sessionID,
+		ViewerToken: token,
+	})
+	if err != nil {
+		t.Fatalf("JoinAsViewer dial: %v", err)
+	}
+	// Drain kickoff (seq=1, ACTIVE state_change).
+	if _, err := stream.Recv(); err != nil {
+		t.Fatalf("Recv kickoff: %v", err)
+	}
+
+	// Wait for the server-side Subscribe to register so SendOfficerHint
+	// doesn't race past a not-yet-installed subscriber.
+	sess, err := svc.registry.Get(sessionID)
+	if err != nil {
+		t.Fatalf("registry.Get: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for sess.SubscriberCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := sess.SubscriberCount(); got != 1 {
+		t.Fatalf("SubscriberCount after Subscribe: got %d, want 1", got)
+	}
+
+	// First officer hint — urgency HIGH, with rationale.
+	resp1, err := client.SendOfficerHint(ctx, &aegisv1.SendOfficerHintRequest{
+		SessionId:   sessionID,
+		ViewerToken: token,
+		Suggestion:  "Skip the Q4 number — it's stale.",
+		Rationale:   "Retriever cited a pre-forecast deck.",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_HIGH,
+	})
+	if err != nil {
+		t.Fatalf("SendOfficerHint #1: %v", err)
+	}
+	if resp1.GetHintId() != 1 {
+		t.Fatalf("hint_id #1: got %d, want 1 (monotonic start)", resp1.GetHintId())
+	}
+
+	ev, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv broadcast #1: %v", err)
+	}
+	if got := ev.GetSequence(); got != 2 {
+		t.Fatalf("broadcast #1 sequence: got %d, want 2 (per-subscription renumbering)", got)
+	}
+	h := ev.GetHint()
+	if h == nil {
+		t.Fatalf("expected hint payload, got %+v", ev)
+	}
+	if h.GetHintId() != 1 {
+		t.Fatalf("broadcast hint_id: got %d, want 1", h.GetHintId())
+	}
+	if h.GetSuggestion() != "Skip the Q4 number — it's stale." {
+		t.Fatalf("suggestion: got %q", h.GetSuggestion())
+	}
+	if h.GetRationale() != "Retriever cited a pre-forecast deck." {
+		t.Fatalf("rationale: got %q", h.GetRationale())
+	}
+	if h.GetUrgency() != aegisv1.HintUrgency_HINT_URGENCY_HIGH {
+		t.Fatalf("urgency: got %v, want HIGH", h.GetUrgency())
+	}
+	if len(h.GetCitations()) != 0 {
+		t.Fatalf("citations: got %d, want 0 (staff-authored has no RAG source)",
+			len(h.GetCitations()))
+	}
+
+	// Second officer hint — monotonic id must increment.
+	resp2, err := client.SendOfficerHint(ctx, &aegisv1.SendOfficerHintRequest{
+		SessionId:   sessionID,
+		ViewerToken: token,
+		Suggestion:  "Don't commit to Q3 targets publicly.",
+		Urgency:     aegisv1.HintUrgency_HINT_URGENCY_URGENT,
+	})
+	if err != nil {
+		t.Fatalf("SendOfficerHint #2: %v", err)
+	}
+	if resp2.GetHintId() != 2 {
+		t.Fatalf("hint_id #2: got %d, want 2", resp2.GetHintId())
+	}
+
+	ev, err = stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv broadcast #2: %v", err)
+	}
+	if got := ev.GetHint().GetHintId(); got != 2 {
+		t.Fatalf("broadcast #2 hint_id: got %d, want 2", got)
+	}
+}

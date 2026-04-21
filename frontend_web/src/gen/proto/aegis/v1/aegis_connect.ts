@@ -54,6 +54,8 @@ import {
   JoinAsViewerRequest,
   NegotiateWebRTCRequest,
   NegotiateWebRTCResponse,
+  SendOfficerHintRequest,
+  SendOfficerHintResponse,
   ViewerEvent,
 } from "./aegis_pb.js";
 import { MethodKind } from "@bufbuild/protobuf";
@@ -162,6 +164,37 @@ export const Gateway = {
       name: "EndMeeting",
       I: EndMeetingRequest,
       O: EndMeetingResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * Staff-authored hint broadcast. The chief-of-staff types a short
+     * suggestion (override a wrong RAG hit, inject an urgent fact the
+     * retriever can't know) and the gateway fans it out via
+     * `Session.Broadcast` as a `ViewerEvent.hint` with the chosen
+     * urgency — same on-wire shape as an engine-origin retriever hint,
+     * which means the viewer / host render paths don't need a second
+     * code path. Differentiation at the UI is urgency-driven (LOW/NORMAL
+     * render inline; HIGH/URGENT pin as a banner).
+     *
+     * MVP auth posture: any caller holding a valid session token may
+     * send (same check as `JoinAsViewer`). Host-only enforcement
+     * requires Cognito JWT role claims and lands with the Phase 5
+     * enterprise auth sprint — tracked as a Known Gap in ROADMAP.
+     *
+     * Errors:
+     *   UNAUTHENTICATED       — missing viewer_token
+     *   INVALID_ARGUMENT      — missing session_id, empty suggestion,
+     *                           or UNSPECIFIED urgency
+     *   PERMISSION_DENIED     — invalid / expired token for this session
+     *   NOT_FOUND             — unknown session_id
+     *   FAILED_PRECONDITION   — session already ended
+     *
+     * @generated from rpc aegis.v1.Gateway.SendOfficerHint
+     */
+    sendOfficerHint: {
+      name: "SendOfficerHint",
+      I: SendOfficerHintRequest,
+      O: SendOfficerHintResponse,
       kind: MethodKind.Unary,
     },
   },

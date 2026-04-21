@@ -12,10 +12,12 @@ import { useEffect, useMemo, useState, type JSX } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import {
+  type HintUrgency,
   type MeetingState,
   pickTranscriptStreamProvider,
   type ViewerEvent,
 } from "@/providers/TranscriptStreamProvider";
+import { hintStyleForUrgency } from "@/lib/hintStyling";
 
 const PROMPTER_WINDOW = 5;
 
@@ -48,7 +50,10 @@ export function ViewerPage(): JSX.Element {
       readonly isQuestion: boolean;
     }[]
   >([]);
-  const [hint, setHint] = useState<string | null>(null);
+  const [hint, setHint] = useState<{
+    readonly suggestion: string;
+    readonly urgency: HintUrgency;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const provider = useMemo(
@@ -79,7 +84,11 @@ export function ViewerPage(): JSX.Element {
           });
           break;
         case "hint":
-          setHint(event.suggestion);
+          // Rationale is intentionally NOT surfaced on the viewer side —
+          // it's a staff-internal field (why the hint was generated /
+          // which corpus chunk cited) and has no value to the room.
+          // See proto/aegis/v1/aegis.proto `SendOfficerHintRequest.rationale`.
+          setHint({ suggestion: event.suggestion, urgency: event.urgency });
           break;
         case "state":
           setState(event.state);
@@ -188,20 +197,7 @@ export function ViewerPage(): JSX.Element {
         )}
       </section>
 
-      {hint && (
-        <aside
-          style={{
-            padding: "0.75rem 1rem",
-            background: "#e8f4fd",
-            border: "1px solid #bce0f5",
-            borderRadius: "4px",
-            marginBottom: "1rem",
-          }}
-        >
-          <strong>Suggestion: </strong>
-          {hint}
-        </aside>
-      )}
+      {hint && <HintDisplay hint={hint} onDismiss={() => setHint(null)} />}
 
       {error && (
         <p style={{ color: "#c0392b" }}>
@@ -214,5 +210,69 @@ export function ViewerPage(): JSX.Element {
         you joined. This is a privacy feature, not a bug (ARCH §11 L4).
       </p>
     </main>
+  );
+}
+
+/**
+ * Renders a single hint with urgency-differentiated styling. LOW/NORMAL
+ * render inline (below the transcript, no dismiss). HIGH/URGENT render
+ * as a pinned banner above the transcript with an urgency label and a
+ * dismiss button so the viewer can clear a stale alert manually.
+ *
+ * Visual logic lives in `@/lib/hintStyling` as a pure function so the
+ * mapping can be unit-tested without a DOM harness — the frontend
+ * test stack is vitest + happy-dom only (no @testing-library/react).
+ */
+function HintDisplay({
+  hint,
+  onDismiss,
+}: {
+  readonly hint: {
+    readonly suggestion: string;
+    readonly urgency: HintUrgency;
+  };
+  readonly onDismiss: () => void;
+}): JSX.Element {
+  const spec = hintStyleForUrgency(hint.urgency);
+  const isBanner = spec.prominence === "banner";
+  return (
+    <aside
+      style={{ ...spec.style, marginBottom: "1rem" }}
+      aria-live={isBanner ? "assertive" : "polite"}
+      role={isBanner ? "alert" : "status"}
+    >
+      {spec.label !== null && (
+        <div
+          style={{
+            fontSize: "0.75rem",
+            letterSpacing: "0.08em",
+            marginBottom: "0.25rem",
+          }}
+        >
+          {spec.label}
+        </div>
+      )}
+      <strong>Suggestion: </strong>
+      {hint.suggestion}
+      {isBanner && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          style={{
+            marginLeft: "1rem",
+            background: "none",
+            border: "1px solid currentColor",
+            borderRadius: "3px",
+            padding: "0.1rem 0.5rem",
+            color: "inherit",
+            cursor: "pointer",
+            fontSize: "0.75rem",
+          }}
+          aria-label="Dismiss hint"
+        >
+          Dismiss
+        </button>
+      )}
+    </aside>
   );
 }

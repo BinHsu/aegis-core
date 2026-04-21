@@ -302,6 +302,68 @@ func TestEgressTranscriptIsBroadcast(t *testing.T) {
 	}
 }
 
+func TestEgressHintIsBroadcast(t *testing.T) {
+	// Regression coverage for the engine-origin PrompterHint fan-out
+	// path (runEgress EgressMessage_Hint branch). Wire was already in
+	// place when the retriever landed in Phase 3b Slice 8 but had no
+	// dedicated test — this is the first failing-on-break gate so a
+	// future refactor that drops the branch (e.g. in a switch
+	// rewrite) can't ship silently.
+	engine, stub, cleanup := setupStubEngine(t)
+	defer cleanup()
+
+	sess := newTestSession(t)
+
+	events, unsubscribe := sess.Subscribe(8)
+	defer unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	p, err := New(ctx, engine, sess, sess.ID)
+	if err != nil {
+		t.Fatalf("pipeline.New: %v", err)
+	}
+	defer p.Close()
+
+	<-stub.startedCh
+
+	hint := &aegisv1.PrompterHint{
+		HintId:     7,
+		Suggestion: "Taiwan is an island in East Asia.",
+		Rationale:  "Related context from 'aegis_taiwan' (score=0.921)",
+		Urgency:    aegisv1.HintUrgency_HINT_URGENCY_NORMAL,
+		Citations: []*aegisv1.RagCitation{
+			{DocId: "docs/rag/taiwan.md", Quote: "Taiwan is an island in East Asia.", Location: "0"},
+		},
+	}
+	stub.sendBuf <- &aegisv1.EgressMessage{
+		Payload: &aegisv1.EgressMessage_Hint{Hint: hint},
+	}
+
+	select {
+	case ev := <-events:
+		h := ev.GetHint()
+		if h == nil {
+			t.Fatalf("ViewerEvent is not a hint: %+v", ev)
+		}
+		if h.GetHintId() != 7 {
+			t.Errorf("hint_id = %d, want 7", h.GetHintId())
+		}
+		if h.GetSuggestion() != "Taiwan is an island in East Asia." {
+			t.Errorf("suggestion = %q, want Taiwan string", h.GetSuggestion())
+		}
+		if h.GetUrgency() != aegisv1.HintUrgency_HINT_URGENCY_NORMAL {
+			t.Errorf("urgency = %v, want NORMAL", h.GetUrgency())
+		}
+		if got := h.GetCitations(); len(got) != 1 || got[0].GetDocId() != "docs/rag/taiwan.md" {
+			t.Errorf("citations = %+v, want one citation with taiwan.md doc_id", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for broadcast ViewerEvent hint")
+	}
+}
+
 func TestCloseIsIdempotentAndSendsEndStream(t *testing.T) {
 	engine, stub, cleanup := setupStubEngine(t)
 	defer cleanup()

@@ -81,3 +81,18 @@
      - `./tools/bazelisk/bazelisk --version` — bazelisk wrapper must be on PATH from the repo root. If the first invocation has to download Bazel, that is expected.
    * The handbook (`CONTRIBUTING.md`, `docs/github-setup.md`) is the source of truth for these steps. The risk pattern to avoid: **"the docs said X, I skipped it, then I asked the user why my commits keep getting rewritten by clang-format in CI."** That is drift by omission, not drift by documentation error.
    * If you discover the pre-flight is missing a check that would have caught a real mistake in the current task, **add the check here** as part of closing that task.
+
+10. **Main Agent vs Subagent: A Decision, Not a Default**
+    * **Rule:** The main conversation thread is the human's point of contact — it drives dialog, decisions, and edits. Delegate to subagents only when delegation is **net-cheaper** than inline execution.
+    * **Delegate when:**
+      - Output is a summary / answer (human won't read the raw tool output).
+      - Scope is wide: > 5 files, cross-directory scans, multi-round grep.
+      - Work is independent of the next conversational turn (use `run_in_background: true`).
+      - Investigation is pure recon with no downstream edit dependency.
+    * **Stay inline when:**
+      - Fewer than ~5 tool calls total.
+      - Raw content will be quoted, edited, or referenced verbatim.
+      - Result feeds directly into the next edit (no parallelism gain).
+      - Human is watching and wants to see each step.
+    * **Signal you mis-delegated:** subagent returns a summary but you have to re-read the files anyway to make the edit. Next time: inline.
+    * **Signal you mis-inlined:** main thread hit ~30% context on tool output before you even started the real work. Next time: delegate.

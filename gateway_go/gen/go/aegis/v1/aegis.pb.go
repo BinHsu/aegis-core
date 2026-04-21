@@ -1200,6 +1200,146 @@ func (x *EndMeetingResponse) GetHintCount() uint64 {
 	return 0
 }
 
+type SendOfficerHintRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Session the hint is bound to. The gateway looks up the Session in
+	// its local Registry (ADR-0004 per-replica state); mismatched
+	// routing surfaces as NOT_FOUND.
+	SessionId string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Same JWT the host and viewers use to subscribe via `JoinAsViewer`.
+	// Validated by the gateway's `token.Issuer` — any valid token for
+	// `session_id` is currently accepted (see Known Gap in ROADMAP).
+	ViewerToken string `protobuf:"bytes,2,opt,name=viewer_token,json=viewerToken,proto3" json:"viewer_token,omitempty"`
+	// Staff-authored suggestion text. Short (≤ 500 chars enforced by
+	// the gateway); longer inputs are rejected with INVALID_ARGUMENT
+	// so the viewer UI doesn't have to truncate.
+	Suggestion string `protobuf:"bytes,3,opt,name=suggestion,proto3" json:"suggestion,omitempty"`
+	// Optional reasoning. Surfaced in the host-side hint panel for
+	// the staff's own reference; suppressed on the viewer side
+	// (rationale is staff-internal, not meant for the room).
+	Rationale string `protobuf:"bytes,4,opt,name=rationale,proto3" json:"rationale,omitempty"`
+	// UI rendering tier. UNSPECIFIED is rejected — staff must pick a
+	// tier explicitly because the render path (inline annotation vs
+	// pinned banner) is tier-driven.
+	Urgency       HintUrgency `protobuf:"varint,5,opt,name=urgency,proto3,enum=aegis.v1.HintUrgency" json:"urgency,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendOfficerHintRequest) Reset() {
+	*x = SendOfficerHintRequest{}
+	mi := &file_aegis_v1_aegis_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendOfficerHintRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendOfficerHintRequest) ProtoMessage() {}
+
+func (x *SendOfficerHintRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_aegis_v1_aegis_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendOfficerHintRequest.ProtoReflect.Descriptor instead.
+func (*SendOfficerHintRequest) Descriptor() ([]byte, []int) {
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SendOfficerHintRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SendOfficerHintRequest) GetViewerToken() string {
+	if x != nil {
+		return x.ViewerToken
+	}
+	return ""
+}
+
+func (x *SendOfficerHintRequest) GetSuggestion() string {
+	if x != nil {
+		return x.Suggestion
+	}
+	return ""
+}
+
+func (x *SendOfficerHintRequest) GetRationale() string {
+	if x != nil {
+		return x.Rationale
+	}
+	return ""
+}
+
+func (x *SendOfficerHintRequest) GetUrgency() HintUrgency {
+	if x != nil {
+		return x.Urgency
+	}
+	return HintUrgency_HINT_URGENCY_UNSPECIFIED
+}
+
+type SendOfficerHintResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Monotonic hint id assigned by the gateway within this session.
+	// Returned so the sender can correlate its own broadcast-echo when
+	// the fan-out lands back on its own subscription (the host is a
+	// regular viewer of its own session, so every officer hint it
+	// sends is also received).
+	HintId        uint64 `protobuf:"varint,1,opt,name=hint_id,json=hintId,proto3" json:"hint_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendOfficerHintResponse) Reset() {
+	*x = SendOfficerHintResponse{}
+	mi := &file_aegis_v1_aegis_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendOfficerHintResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendOfficerHintResponse) ProtoMessage() {}
+
+func (x *SendOfficerHintResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_aegis_v1_aegis_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendOfficerHintResponse.ProtoReflect.Descriptor instead.
+func (*SendOfficerHintResponse) Descriptor() ([]byte, []int) {
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SendOfficerHintResponse) GetHintId() uint64 {
+	if x != nil {
+		return x.HintId
+	}
+	return 0
+}
+
 type IngestMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -1215,7 +1355,7 @@ type IngestMessage struct {
 
 func (x *IngestMessage) Reset() {
 	*x = IngestMessage{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[13]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1227,7 +1367,7 @@ func (x *IngestMessage) String() string {
 func (*IngestMessage) ProtoMessage() {}
 
 func (x *IngestMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[13]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1240,7 +1380,7 @@ func (x *IngestMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestMessage.ProtoReflect.Descriptor instead.
 func (*IngestMessage) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{13}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *IngestMessage) GetPayload() isIngestMessage_Payload {
@@ -1352,7 +1492,7 @@ type SessionStart struct {
 
 func (x *SessionStart) Reset() {
 	*x = SessionStart{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[14]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1364,7 +1504,7 @@ func (x *SessionStart) String() string {
 func (*SessionStart) ProtoMessage() {}
 
 func (x *SessionStart) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[14]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1377,7 +1517,7 @@ func (x *SessionStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionStart.ProtoReflect.Descriptor instead.
 func (*SessionStart) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{14}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SessionStart) GetSessionId() string {
@@ -1435,7 +1575,7 @@ type AudioFormat struct {
 
 func (x *AudioFormat) Reset() {
 	*x = AudioFormat{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[15]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1447,7 +1587,7 @@ func (x *AudioFormat) String() string {
 func (*AudioFormat) ProtoMessage() {}
 
 func (x *AudioFormat) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[15]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1460,7 +1600,7 @@ func (x *AudioFormat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AudioFormat.ProtoReflect.Descriptor instead.
 func (*AudioFormat) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{15}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AudioFormat) GetSampleRateHz() uint32 {
@@ -1507,7 +1647,7 @@ type PcmChunk struct {
 
 func (x *PcmChunk) Reset() {
 	*x = PcmChunk{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[16]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1519,7 +1659,7 @@ func (x *PcmChunk) String() string {
 func (*PcmChunk) ProtoMessage() {}
 
 func (x *PcmChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[16]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1532,7 +1672,7 @@ func (x *PcmChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PcmChunk.ProtoReflect.Descriptor instead.
 func (*PcmChunk) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{16}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PcmChunk) GetPcm() []byte {
@@ -1589,7 +1729,7 @@ type OpusChunk struct {
 
 func (x *OpusChunk) Reset() {
 	*x = OpusChunk{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[17]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1601,7 +1741,7 @@ func (x *OpusChunk) String() string {
 func (*OpusChunk) ProtoMessage() {}
 
 func (x *OpusChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[17]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1614,7 +1754,7 @@ func (x *OpusChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpusChunk.ProtoReflect.Descriptor instead.
 func (*OpusChunk) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{17}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *OpusChunk) GetOpus() []byte {
@@ -1647,7 +1787,7 @@ type ControlEvent struct {
 
 func (x *ControlEvent) Reset() {
 	*x = ControlEvent{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[18]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1659,7 +1799,7 @@ func (x *ControlEvent) String() string {
 func (*ControlEvent) ProtoMessage() {}
 
 func (x *ControlEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[18]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1672,7 +1812,7 @@ func (x *ControlEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlEvent.ProtoReflect.Descriptor instead.
 func (*ControlEvent) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{18}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ControlEvent) GetKind() ControlKind {
@@ -1697,7 +1837,7 @@ type EgressMessage struct {
 
 func (x *EgressMessage) Reset() {
 	*x = EgressMessage{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[19]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1709,7 +1849,7 @@ func (x *EgressMessage) String() string {
 func (*EgressMessage) ProtoMessage() {}
 
 func (x *EgressMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[19]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1722,7 +1862,7 @@ func (x *EgressMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressMessage.ProtoReflect.Descriptor instead.
 func (*EgressMessage) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{19}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *EgressMessage) GetPayload() isEgressMessage_Payload {
@@ -1816,7 +1956,7 @@ type EngineStatus struct {
 
 func (x *EngineStatus) Reset() {
 	*x = EngineStatus{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[20]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1828,7 +1968,7 @@ func (x *EngineStatus) String() string {
 func (*EngineStatus) ProtoMessage() {}
 
 func (x *EngineStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[20]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1841,7 +1981,7 @@ func (x *EngineStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EngineStatus.ProtoReflect.Descriptor instead.
 func (*EngineStatus) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{20}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *EngineStatus) GetBudgetBytesUsed() uint64 {
@@ -1879,7 +2019,7 @@ type EngineError struct {
 
 func (x *EngineError) Reset() {
 	*x = EngineError{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[21]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1891,7 +2031,7 @@ func (x *EngineError) String() string {
 func (*EngineError) ProtoMessage() {}
 
 func (x *EngineError) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[21]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1904,7 +2044,7 @@ func (x *EngineError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EngineError.ProtoReflect.Descriptor instead.
 func (*EngineError) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{21}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *EngineError) GetCode() int32 {
@@ -1929,7 +2069,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[22]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1941,7 +2081,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[22]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1954,7 +2094,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{22}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{24}
 }
 
 type HealthResponse struct {
@@ -1973,7 +2113,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_aegis_v1_aegis_proto_msgTypes[23]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1985,7 +2125,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aegis_v1_aegis_proto_msgTypes[23]
+	mi := &file_aegis_v1_aegis_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1998,7 +2138,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{23}
+	return file_aegis_v1_aegis_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *HealthResponse) GetReady() bool {
@@ -2152,7 +2292,23 @@ var file_aegis_v1_aegis_proto_rawDesc = string([]byte{
 	0x6f, 0x75, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x66, 0x69, 0x6e, 0x61,
 	0x6c, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x1d, 0x0a,
 	0x0a, 0x68, 0x69, 0x6e, 0x74, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x09, 0x68, 0x69, 0x6e, 0x74, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x22, 0xe0, 0x01, 0x0a,
+	0x04, 0x52, 0x09, 0x68, 0x69, 0x6e, 0x74, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x22, 0xc9, 0x01, 0x0a,
+	0x16, 0x53, 0x65, 0x6e, 0x64, 0x4f, 0x66, 0x66, 0x69, 0x63, 0x65, 0x72, 0x48, 0x69, 0x6e, 0x74,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x73, 0x65, 0x73, 0x73, 0x69,
+	0x6f, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x65, 0x73,
+	0x73, 0x69, 0x6f, 0x6e, 0x49, 0x64, 0x12, 0x21, 0x0a, 0x0c, 0x76, 0x69, 0x65, 0x77, 0x65, 0x72,
+	0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x76, 0x69,
+	0x65, 0x77, 0x65, 0x72, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x12, 0x1e, 0x0a, 0x0a, 0x73, 0x75, 0x67,
+	0x67, 0x65, 0x73, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x73,
+	0x75, 0x67, 0x67, 0x65, 0x73, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x1c, 0x0a, 0x09, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x61, 0x6c, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x72, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x61, 0x6c, 0x65, 0x12, 0x2f, 0x0a, 0x07, 0x75, 0x72, 0x67, 0x65, 0x6e,
+	0x63, 0x79, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x15, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73,
+	0x2e, 0x76, 0x31, 0x2e, 0x48, 0x69, 0x6e, 0x74, 0x55, 0x72, 0x67, 0x65, 0x6e, 0x63, 0x79, 0x52,
+	0x07, 0x75, 0x72, 0x67, 0x65, 0x6e, 0x63, 0x79, 0x22, 0x32, 0x0a, 0x17, 0x53, 0x65, 0x6e, 0x64,
+	0x4f, 0x66, 0x66, 0x69, 0x63, 0x65, 0x72, 0x48, 0x69, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x12, 0x17, 0x0a, 0x07, 0x68, 0x69, 0x6e, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x06, 0x68, 0x69, 0x6e, 0x74, 0x49, 0x64, 0x22, 0xe0, 0x01, 0x0a,
 	0x0d, 0x49, 0x6e, 0x67, 0x65, 0x73, 0x74, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x12, 0x3d,
 	0x0a, 0x0d, 0x73, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x16, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31,
@@ -2268,7 +2424,7 @@ var file_aegis_v1_aegis_proto_rawDesc = string([]byte{
 	0x54, 0x52, 0x4f, 0x4c, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x52, 0x45, 0x53, 0x55, 0x4d, 0x45,
 	0x10, 0x02, 0x12, 0x1b, 0x0a, 0x17, 0x43, 0x4f, 0x4e, 0x54, 0x52, 0x4f, 0x4c, 0x5f, 0x4b, 0x49,
 	0x4e, 0x44, 0x5f, 0x45, 0x4e, 0x44, 0x5f, 0x53, 0x54, 0x52, 0x45, 0x41, 0x4d, 0x10, 0x03, 0x32,
-	0xc4, 0x02, 0x0a, 0x07, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x12, 0x50, 0x0a, 0x0d, 0x43,
+	0x9c, 0x03, 0x0a, 0x07, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x12, 0x50, 0x0a, 0x0d, 0x43,
 	0x72, 0x65, 0x61, 0x74, 0x65, 0x4d, 0x65, 0x65, 0x74, 0x69, 0x6e, 0x67, 0x12, 0x1e, 0x2e, 0x61,
 	0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x4d, 0x65,
 	0x65, 0x74, 0x69, 0x6e, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x61,
@@ -2288,22 +2444,27 @@ var file_aegis_v1_aegis_proto_rawDesc = string([]byte{
 	0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6e, 0x64, 0x4d, 0x65, 0x65, 0x74, 0x69, 0x6e,
 	0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1c, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73,
 	0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6e, 0x64, 0x4d, 0x65, 0x65, 0x74, 0x69, 0x6e, 0x67, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x32, 0x8f, 0x01, 0x0a, 0x06, 0x45, 0x6e, 0x67, 0x69, 0x6e,
-	0x65, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x54, 0x72, 0x61, 0x6e, 0x73,
-	0x63, 0x72, 0x69, 0x62, 0x65, 0x12, 0x17, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31,
-	0x2e, 0x49, 0x6e, 0x67, 0x65, 0x73, 0x74, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x1a, 0x17,
-	0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x67, 0x72, 0x65, 0x73, 0x73,
-	0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x28, 0x01, 0x30, 0x01, 0x12, 0x3b, 0x0a, 0x06, 0x48,
-	0x65, 0x61, 0x6c, 0x74, 0x68, 0x12, 0x17, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31,
-	0x2e, 0x48, 0x65, 0x61, 0x6c, 0x74, 0x68, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x18,
-	0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x2e, 0x48, 0x65, 0x61, 0x6c, 0x74, 0x68,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x42, 0x50, 0x0a, 0x0b, 0x69, 0x6f, 0x2e, 0x61,
-	0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x50, 0x01, 0x5a, 0x3f, 0x67, 0x69, 0x74, 0x68, 0x75,
-	0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x42, 0x69, 0x6e, 0x48, 0x73, 0x75, 0x2f, 0x61, 0x65, 0x67,
-	0x69, 0x73, 0x2d, 0x63, 0x6f, 0x72, 0x65, 0x2f, 0x67, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x5f,
-	0x67, 0x6f, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x67, 0x6f, 0x2f, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2f,
-	0x76, 0x31, 0x3b, 0x61, 0x65, 0x67, 0x69, 0x73, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x33,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x56, 0x0a, 0x0f, 0x53, 0x65, 0x6e, 0x64, 0x4f, 0x66,
+	0x66, 0x69, 0x63, 0x65, 0x72, 0x48, 0x69, 0x6e, 0x74, 0x12, 0x20, 0x2e, 0x61, 0x65, 0x67, 0x69,
+	0x73, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x6e, 0x64, 0x4f, 0x66, 0x66, 0x69, 0x63, 0x65, 0x72,
+	0x48, 0x69, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x21, 0x2e, 0x61, 0x65,
+	0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x6e, 0x64, 0x4f, 0x66, 0x66, 0x69, 0x63,
+	0x65, 0x72, 0x48, 0x69, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x32, 0x8f,
+	0x01, 0x0a, 0x06, 0x45, 0x6e, 0x67, 0x69, 0x6e, 0x65, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x74, 0x72,
+	0x65, 0x61, 0x6d, 0x54, 0x72, 0x61, 0x6e, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x12, 0x17, 0x2e,
+	0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x2e, 0x49, 0x6e, 0x67, 0x65, 0x73, 0x74, 0x4d,
+	0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x1a, 0x17, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76,
+	0x31, 0x2e, 0x45, 0x67, 0x72, 0x65, 0x73, 0x73, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x28,
+	0x01, 0x30, 0x01, 0x12, 0x3b, 0x0a, 0x06, 0x48, 0x65, 0x61, 0x6c, 0x74, 0x68, 0x12, 0x17, 0x2e,
+	0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x2e, 0x48, 0x65, 0x61, 0x6c, 0x74, 0x68, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x18, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76,
+	0x31, 0x2e, 0x48, 0x65, 0x61, 0x6c, 0x74, 0x68, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x42, 0x50, 0x0a, 0x0b, 0x69, 0x6f, 0x2e, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2e, 0x76, 0x31, 0x50,
+	0x01, 0x5a, 0x3f, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x42, 0x69,
+	0x6e, 0x48, 0x73, 0x75, 0x2f, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2d, 0x63, 0x6f, 0x72, 0x65, 0x2f,
+	0x67, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x5f, 0x67, 0x6f, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x67,
+	0x6f, 0x2f, 0x61, 0x65, 0x67, 0x69, 0x73, 0x2f, 0x76, 0x31, 0x3b, 0x61, 0x65, 0x67, 0x69, 0x73,
+	0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 })
 
 var (
@@ -2319,7 +2480,7 @@ func file_aegis_v1_aegis_proto_rawDescGZIP() []byte {
 }
 
 var file_aegis_v1_aegis_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_aegis_v1_aegis_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_aegis_v1_aegis_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_aegis_v1_aegis_proto_goTypes = []any{
 	(HintUrgency)(0),                // 0: aegis.v1.HintUrgency
 	(MeetingState)(0),               // 1: aegis.v1.MeetingState
@@ -2337,61 +2498,66 @@ var file_aegis_v1_aegis_proto_goTypes = []any{
 	(*MeetingStateChange)(nil),      // 13: aegis.v1.MeetingStateChange
 	(*EndMeetingRequest)(nil),       // 14: aegis.v1.EndMeetingRequest
 	(*EndMeetingResponse)(nil),      // 15: aegis.v1.EndMeetingResponse
-	(*IngestMessage)(nil),           // 16: aegis.v1.IngestMessage
-	(*SessionStart)(nil),            // 17: aegis.v1.SessionStart
-	(*AudioFormat)(nil),             // 18: aegis.v1.AudioFormat
-	(*PcmChunk)(nil),                // 19: aegis.v1.PcmChunk
-	(*OpusChunk)(nil),               // 20: aegis.v1.OpusChunk
-	(*ControlEvent)(nil),            // 21: aegis.v1.ControlEvent
-	(*EgressMessage)(nil),           // 22: aegis.v1.EgressMessage
-	(*EngineStatus)(nil),            // 23: aegis.v1.EngineStatus
-	(*EngineError)(nil),             // 24: aegis.v1.EngineError
-	(*HealthRequest)(nil),           // 25: aegis.v1.HealthRequest
-	(*HealthResponse)(nil),          // 26: aegis.v1.HealthResponse
-	(*timestamppb.Timestamp)(nil),   // 27: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),     // 28: google.protobuf.Duration
+	(*SendOfficerHintRequest)(nil),  // 16: aegis.v1.SendOfficerHintRequest
+	(*SendOfficerHintResponse)(nil), // 17: aegis.v1.SendOfficerHintResponse
+	(*IngestMessage)(nil),           // 18: aegis.v1.IngestMessage
+	(*SessionStart)(nil),            // 19: aegis.v1.SessionStart
+	(*AudioFormat)(nil),             // 20: aegis.v1.AudioFormat
+	(*PcmChunk)(nil),                // 21: aegis.v1.PcmChunk
+	(*OpusChunk)(nil),               // 22: aegis.v1.OpusChunk
+	(*ControlEvent)(nil),            // 23: aegis.v1.ControlEvent
+	(*EgressMessage)(nil),           // 24: aegis.v1.EgressMessage
+	(*EngineStatus)(nil),            // 25: aegis.v1.EngineStatus
+	(*EngineError)(nil),             // 26: aegis.v1.EngineError
+	(*HealthRequest)(nil),           // 27: aegis.v1.HealthRequest
+	(*HealthResponse)(nil),          // 28: aegis.v1.HealthResponse
+	(*timestamppb.Timestamp)(nil),   // 29: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),     // 30: google.protobuf.Duration
 }
 var file_aegis_v1_aegis_proto_depIdxs = []int32{
-	27, // 0: aegis.v1.CreateMeetingResponse.token_expires_at:type_name -> google.protobuf.Timestamp
-	27, // 1: aegis.v1.CreateMeetingResponse.session_expires_at:type_name -> google.protobuf.Timestamp
+	29, // 0: aegis.v1.CreateMeetingResponse.token_expires_at:type_name -> google.protobuf.Timestamp
+	29, // 1: aegis.v1.CreateMeetingResponse.session_expires_at:type_name -> google.protobuf.Timestamp
 	5,  // 2: aegis.v1.CreateMeetingResponse.engine:type_name -> aegis.v1.EngineInfo
-	27, // 3: aegis.v1.ViewerEvent.emitted_at:type_name -> google.protobuf.Timestamp
+	29, // 3: aegis.v1.ViewerEvent.emitted_at:type_name -> google.protobuf.Timestamp
 	10, // 4: aegis.v1.ViewerEvent.transcript:type_name -> aegis.v1.TranscriptSegment
 	11, // 5: aegis.v1.ViewerEvent.hint:type_name -> aegis.v1.PrompterHint
 	13, // 6: aegis.v1.ViewerEvent.state_change:type_name -> aegis.v1.MeetingStateChange
 	12, // 7: aegis.v1.PrompterHint.citations:type_name -> aegis.v1.RagCitation
 	0,  // 8: aegis.v1.PrompterHint.urgency:type_name -> aegis.v1.HintUrgency
 	1,  // 9: aegis.v1.MeetingStateChange.state:type_name -> aegis.v1.MeetingState
-	28, // 10: aegis.v1.EndMeetingResponse.duration:type_name -> google.protobuf.Duration
-	17, // 11: aegis.v1.IngestMessage.session_start:type_name -> aegis.v1.SessionStart
-	19, // 12: aegis.v1.IngestMessage.pcm:type_name -> aegis.v1.PcmChunk
-	21, // 13: aegis.v1.IngestMessage.control:type_name -> aegis.v1.ControlEvent
-	20, // 14: aegis.v1.IngestMessage.opus:type_name -> aegis.v1.OpusChunk
-	18, // 15: aegis.v1.SessionStart.audio_format:type_name -> aegis.v1.AudioFormat
-	2,  // 16: aegis.v1.ControlEvent.kind:type_name -> aegis.v1.ControlKind
-	10, // 17: aegis.v1.EgressMessage.transcript:type_name -> aegis.v1.TranscriptSegment
-	11, // 18: aegis.v1.EgressMessage.hint:type_name -> aegis.v1.PrompterHint
-	23, // 19: aegis.v1.EgressMessage.status:type_name -> aegis.v1.EngineStatus
-	24, // 20: aegis.v1.EgressMessage.error:type_name -> aegis.v1.EngineError
-	5,  // 21: aegis.v1.HealthResponse.info:type_name -> aegis.v1.EngineInfo
-	23, // 22: aegis.v1.HealthResponse.status:type_name -> aegis.v1.EngineStatus
-	3,  // 23: aegis.v1.Gateway.CreateMeeting:input_type -> aegis.v1.CreateMeetingRequest
-	6,  // 24: aegis.v1.Gateway.NegotiateWebRTC:input_type -> aegis.v1.NegotiateWebRTCRequest
-	8,  // 25: aegis.v1.Gateway.JoinAsViewer:input_type -> aegis.v1.JoinAsViewerRequest
-	14, // 26: aegis.v1.Gateway.EndMeeting:input_type -> aegis.v1.EndMeetingRequest
-	16, // 27: aegis.v1.Engine.StreamTranscribe:input_type -> aegis.v1.IngestMessage
-	25, // 28: aegis.v1.Engine.Health:input_type -> aegis.v1.HealthRequest
-	4,  // 29: aegis.v1.Gateway.CreateMeeting:output_type -> aegis.v1.CreateMeetingResponse
-	7,  // 30: aegis.v1.Gateway.NegotiateWebRTC:output_type -> aegis.v1.NegotiateWebRTCResponse
-	9,  // 31: aegis.v1.Gateway.JoinAsViewer:output_type -> aegis.v1.ViewerEvent
-	15, // 32: aegis.v1.Gateway.EndMeeting:output_type -> aegis.v1.EndMeetingResponse
-	22, // 33: aegis.v1.Engine.StreamTranscribe:output_type -> aegis.v1.EgressMessage
-	26, // 34: aegis.v1.Engine.Health:output_type -> aegis.v1.HealthResponse
-	29, // [29:35] is the sub-list for method output_type
-	23, // [23:29] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	30, // 10: aegis.v1.EndMeetingResponse.duration:type_name -> google.protobuf.Duration
+	0,  // 11: aegis.v1.SendOfficerHintRequest.urgency:type_name -> aegis.v1.HintUrgency
+	19, // 12: aegis.v1.IngestMessage.session_start:type_name -> aegis.v1.SessionStart
+	21, // 13: aegis.v1.IngestMessage.pcm:type_name -> aegis.v1.PcmChunk
+	23, // 14: aegis.v1.IngestMessage.control:type_name -> aegis.v1.ControlEvent
+	22, // 15: aegis.v1.IngestMessage.opus:type_name -> aegis.v1.OpusChunk
+	20, // 16: aegis.v1.SessionStart.audio_format:type_name -> aegis.v1.AudioFormat
+	2,  // 17: aegis.v1.ControlEvent.kind:type_name -> aegis.v1.ControlKind
+	10, // 18: aegis.v1.EgressMessage.transcript:type_name -> aegis.v1.TranscriptSegment
+	11, // 19: aegis.v1.EgressMessage.hint:type_name -> aegis.v1.PrompterHint
+	25, // 20: aegis.v1.EgressMessage.status:type_name -> aegis.v1.EngineStatus
+	26, // 21: aegis.v1.EgressMessage.error:type_name -> aegis.v1.EngineError
+	5,  // 22: aegis.v1.HealthResponse.info:type_name -> aegis.v1.EngineInfo
+	25, // 23: aegis.v1.HealthResponse.status:type_name -> aegis.v1.EngineStatus
+	3,  // 24: aegis.v1.Gateway.CreateMeeting:input_type -> aegis.v1.CreateMeetingRequest
+	6,  // 25: aegis.v1.Gateway.NegotiateWebRTC:input_type -> aegis.v1.NegotiateWebRTCRequest
+	8,  // 26: aegis.v1.Gateway.JoinAsViewer:input_type -> aegis.v1.JoinAsViewerRequest
+	14, // 27: aegis.v1.Gateway.EndMeeting:input_type -> aegis.v1.EndMeetingRequest
+	16, // 28: aegis.v1.Gateway.SendOfficerHint:input_type -> aegis.v1.SendOfficerHintRequest
+	18, // 29: aegis.v1.Engine.StreamTranscribe:input_type -> aegis.v1.IngestMessage
+	27, // 30: aegis.v1.Engine.Health:input_type -> aegis.v1.HealthRequest
+	4,  // 31: aegis.v1.Gateway.CreateMeeting:output_type -> aegis.v1.CreateMeetingResponse
+	7,  // 32: aegis.v1.Gateway.NegotiateWebRTC:output_type -> aegis.v1.NegotiateWebRTCResponse
+	9,  // 33: aegis.v1.Gateway.JoinAsViewer:output_type -> aegis.v1.ViewerEvent
+	15, // 34: aegis.v1.Gateway.EndMeeting:output_type -> aegis.v1.EndMeetingResponse
+	17, // 35: aegis.v1.Gateway.SendOfficerHint:output_type -> aegis.v1.SendOfficerHintResponse
+	24, // 36: aegis.v1.Engine.StreamTranscribe:output_type -> aegis.v1.EgressMessage
+	28, // 37: aegis.v1.Engine.Health:output_type -> aegis.v1.HealthResponse
+	31, // [31:38] is the sub-list for method output_type
+	24, // [24:31] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_aegis_v1_aegis_proto_init() }
@@ -2404,13 +2570,13 @@ func file_aegis_v1_aegis_proto_init() {
 		(*ViewerEvent_Hint)(nil),
 		(*ViewerEvent_StateChange)(nil),
 	}
-	file_aegis_v1_aegis_proto_msgTypes[13].OneofWrappers = []any{
+	file_aegis_v1_aegis_proto_msgTypes[15].OneofWrappers = []any{
 		(*IngestMessage_SessionStart)(nil),
 		(*IngestMessage_Pcm)(nil),
 		(*IngestMessage_Control)(nil),
 		(*IngestMessage_Opus)(nil),
 	}
-	file_aegis_v1_aegis_proto_msgTypes[19].OneofWrappers = []any{
+	file_aegis_v1_aegis_proto_msgTypes[21].OneofWrappers = []any{
 		(*EgressMessage_Transcript)(nil),
 		(*EgressMessage_Hint)(nil),
 		(*EgressMessage_Status)(nil),
@@ -2422,7 +2588,7 @@ func file_aegis_v1_aegis_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_aegis_v1_aegis_proto_rawDesc), len(file_aegis_v1_aegis_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
