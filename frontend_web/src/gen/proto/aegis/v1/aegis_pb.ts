@@ -1229,6 +1229,176 @@ export class EndMeetingResponse extends Message<EndMeetingResponse> {
 }
 
 /**
+ * @generated from message aegis.v1.SendOfficerHintRequest
+ */
+export class SendOfficerHintRequest extends Message<SendOfficerHintRequest> {
+  /**
+   * Session the hint is bound to. The gateway looks up the Session in
+   * its local Registry (ADR-0004 per-replica state); mismatched
+   * routing surfaces as NOT_FOUND.
+   *
+   * @generated from field: string session_id = 1;
+   */
+  sessionId = "";
+
+  /**
+   * Same JWT the host and viewers use to subscribe via `JoinAsViewer`.
+   * Validated by the gateway's `token.Issuer` — any valid token for
+   * `session_id` is currently accepted (see Known Gap in ROADMAP).
+   *
+   * @generated from field: string viewer_token = 2;
+   */
+  viewerToken = "";
+
+  /**
+   * Staff-authored suggestion text. Short (≤ 500 chars enforced by
+   * the gateway); longer inputs are rejected with INVALID_ARGUMENT
+   * so the viewer UI doesn't have to truncate.
+   *
+   * @generated from field: string suggestion = 3;
+   */
+  suggestion = "";
+
+  /**
+   * Optional reasoning. Surfaced in the host-side hint panel for
+   * the staff's own reference; suppressed on the viewer side
+   * (rationale is staff-internal, not meant for the room).
+   *
+   * @generated from field: string rationale = 4;
+   */
+  rationale = "";
+
+  /**
+   * UI rendering tier. UNSPECIFIED is rejected — staff must pick a
+   * tier explicitly because the render path (inline annotation vs
+   * pinned banner) is tier-driven.
+   *
+   * @generated from field: aegis.v1.HintUrgency urgency = 5;
+   */
+  urgency = HintUrgency.UNSPECIFIED;
+
+  constructor(data?: PartialMessage<SendOfficerHintRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.SendOfficerHintRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "session_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    {
+      no: 2,
+      name: "viewer_token",
+      kind: "scalar",
+      T: 9 /* ScalarType.STRING */,
+    },
+    { no: 3, name: "suggestion", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "rationale", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    {
+      no: 5,
+      name: "urgency",
+      kind: "enum",
+      T: proto3.getEnumType(HintUrgency),
+    },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): SendOfficerHintRequest {
+    return new SendOfficerHintRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): SendOfficerHintRequest {
+    return new SendOfficerHintRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): SendOfficerHintRequest {
+    return new SendOfficerHintRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a:
+      | SendOfficerHintRequest
+      | PlainMessage<SendOfficerHintRequest>
+      | undefined,
+    b:
+      | SendOfficerHintRequest
+      | PlainMessage<SendOfficerHintRequest>
+      | undefined,
+  ): boolean {
+    return proto3.util.equals(SendOfficerHintRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message aegis.v1.SendOfficerHintResponse
+ */
+export class SendOfficerHintResponse extends Message<SendOfficerHintResponse> {
+  /**
+   * Monotonic hint id assigned by the gateway within this session.
+   * Returned so the sender can correlate its own broadcast-echo when
+   * the fan-out lands back on its own subscription (the host is a
+   * regular viewer of its own session, so every officer hint it
+   * sends is also received).
+   *
+   * @generated from field: uint64 hint_id = 1;
+   */
+  hintId = protoInt64.zero;
+
+  constructor(data?: PartialMessage<SendOfficerHintResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.SendOfficerHintResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "hint_id", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): SendOfficerHintResponse {
+    return new SendOfficerHintResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): SendOfficerHintResponse {
+    return new SendOfficerHintResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): SendOfficerHintResponse {
+    return new SendOfficerHintResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a:
+      | SendOfficerHintResponse
+      | PlainMessage<SendOfficerHintResponse>
+      | undefined,
+    b:
+      | SendOfficerHintResponse
+      | PlainMessage<SendOfficerHintResponse>
+      | undefined,
+  ): boolean {
+    return proto3.util.equals(SendOfficerHintResponse, a, b);
+  }
+}
+
+/**
  * @generated from message aegis.v1.IngestMessage
  */
 export class IngestMessage extends Message<IngestMessage> {

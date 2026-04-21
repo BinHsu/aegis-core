@@ -72,10 +72,12 @@ import {
   type FileSystemProvider,
 } from "@/providers/FileSystemProvider";
 import {
+  type HintUrgency,
   pickTranscriptStreamProvider,
   type Subscription,
   type ViewerEvent,
 } from "@/providers/TranscriptStreamProvider";
+import { hintStyleForUrgency, toProtoUrgency } from "@/lib/hintStyling";
 
 const ALL_MODES: { readonly value: CaptureMode; readonly label: string }[] = [
   { value: "microphone", label: "Physical room (microphone)" },
@@ -114,6 +116,13 @@ const DEFAULT_RAG_ID = RAG_CORPORA[0]!.value; // "" — opt-in RAG
 // line count; diverging would confuse the host about what the room
 // is actually reading.
 const TRANSCRIPT_TAIL = 5;
+
+// Number of most-recent hints kept on the host panel. Hints
+// accumulate (unlike the viewer's single-hint-at-a-time render) so
+// the staff can scan a short scrollback without losing the current
+// RAG hit. 10 is a shelf size, not a retention policy — older hints
+// just fall off the bottom; nothing is persisted.
+const HINT_PANEL_SIZE = 10;
 
 // ARCH §9.2 Speaker Labels — Privacy by Design. The UI MUST NOT
 // accept free-text speaker names, because a real name converts a
@@ -158,6 +167,11 @@ interface ActiveMeeting {
   /** Full accumulated transcript (not trimmed). Display uses the
    *  tail slice. Export uses the full array per ARCH §9.1. */
   readonly transcript: readonly TranscriptLine[];
+  /** Rolling window of the last HINT_PANEL_SIZE hints. Not exported
+   *  (hints are a live cognitive aid, not a meeting artifact —
+   *  putting them in exports would surface staff-internal RAG
+   *  provenance in the transcript file, conflating two concerns). */
+  readonly hints: readonly HintEntry[];
   /**
    * Client-side render gate per ADR-0024 Decision B — true if the
    * host explicitly opted into seeing the live transcript on this
@@ -181,6 +195,24 @@ interface TranscriptLine {
   readonly text: string;
   readonly isFinal: boolean;
   readonly speaker: string;
+}
+
+/**
+ * Renderable view of a PrompterHint on the host side — both engine-
+ * origin RAG hits (retriever output) and staff-origin manual hints
+ * (own SendOfficerHint calls echo back via the fan-out) land here.
+ * The host panel does not distinguish the two sources: they arrive on
+ * the same ViewerEvent stream with the same proto shape, and the
+ * visual treatment is urgency-driven. Staff-authored hints are
+ * typically HIGH/URGENT, retriever hits are typically NORMAL — that
+ * implicit tiering is what the urgency field is for.
+ */
+interface HintEntry {
+  readonly hintId: number;
+  readonly suggestion: string;
+  readonly rationale?: string;
+  readonly urgency: HintUrgency;
+  readonly receivedAt: number;
 }
 
 type HostState =
@@ -213,13 +245,19 @@ type Action =
       type: "MEETING_STARTED";
       // `showTranscriptPanel` comes from `state.showTranscriptPanel`
       // (carried through `creating`), not from the action payload —
-      // the reducer wires it in on transition.
+      // the reducer wires it in on transition. Same for `hints`
+      // (always initialized to [] at transition time).
       meeting: Omit<
         ActiveMeeting,
-        "transcript" | "showTranscriptPanel" | "speakerOverrides" | "title"
+        | "transcript"
+        | "hints"
+        | "showTranscriptPanel"
+        | "speakerOverrides"
+        | "title"
       >;
     }
   | { type: "TRANSCRIPT_LINE"; line: TranscriptLine }
+  | { type: "HINT_RECEIVED"; hint: HintEntry }
   | {
       type: "SPEAKER_LABEL_ASSIGNED";
       originalLabel: string;
@@ -269,9 +307,25 @@ function reducer(state: HostState, action: Action): HostState {
           ...action.meeting,
           title: state.title,
           transcript: [],
+          hints: [],
           showTranscriptPanel: state.showTranscriptPanel,
           speakerOverrides: {},
         },
+      };
+    }
+    case "HINT_RECEIVED": {
+      if (state.kind !== "active") return state;
+      // Append + rolling-trim to HINT_PANEL_SIZE. If two hints share
+      // the same hint_id (engine and staff counter spaces are
+      // separate, but a single hint could arrive duplicated on the
+      // broadcast path), the later one replaces the earlier by id.
+      const filtered = state.meeting.hints.filter(
+        (h) => h.hintId !== action.hint.hintId,
+      );
+      const next = [...filtered, action.hint].slice(-HINT_PANEL_SIZE);
+      return {
+        ...state,
+        meeting: { ...state.meeting, hints: next },
       };
     }
     case "TRANSCRIPT_LINE": {
@@ -493,9 +547,33 @@ export function HostPage(): JSX.Element {
           },
           {
             onEvent: (event) => {
-              const line = transcriptLineFromEvent(event);
-              if (line !== null) {
-                dispatch({ type: "TRANSCRIPT_LINE", line });
+              if (event.kind === "transcript") {
+                const line = transcriptLineFromEvent(event);
+                if (line !== null) {
+                  dispatch({ type: "TRANSCRIPT_LINE", line });
+                }
+              } else if (event.kind === "hint") {
+                // Both engine-origin RAG hits and the host's own
+                // SendOfficerHint echoes land here — the host is a
+                // regular subscriber of its own session's fan-out, so
+                // a staff-authored hint round-trips through the
+                // gateway and arrives here alongside retriever hits.
+                // The UI does not distinguish the two sources.
+                // `rationale` is assembled conditionally — with
+                // `exactOptionalPropertyTypes: true`, an optional
+                // property cannot accept `undefined`; it must be
+                // omitted when absent.
+                const base = {
+                  hintId: event.hintId,
+                  suggestion: event.suggestion,
+                  urgency: event.urgency,
+                  receivedAt: Date.now(),
+                };
+                const hint: HintEntry =
+                  event.rationale !== undefined
+                    ? { ...base, rationale: event.rationale }
+                    : base;
+                dispatch({ type: "HINT_RECEIVED", hint });
               }
             },
             onError: (err) => {
@@ -965,6 +1043,25 @@ export function HostPage(): JSX.Element {
           )}
         </div>
       </section>
+
+      {/*
+        Prompter panel — engine-origin RAG hits + staff-authored officer
+        hints land in the same list (same proto shape, same fan-out).
+        Urgency drives the visual treatment, not the source. Staff input
+        panel below sends `SendOfficerHint` RPC, which round-trips through
+        the gateway and echoes back onto this very meeting's subscription —
+        the host's own sent hints appear in the panel above confirming
+        delivery.
+      */}
+      <section style={{ marginTop: "1.5rem" }}>
+        <h3 style={{ marginBottom: "0.5rem" }}>Prompter</h3>
+        <HintPanel hints={meeting.hints} />
+        <StaffHintInputPanel
+          sessionId={meeting.sessionId}
+          viewerToken={meeting.viewerToken}
+        />
+      </section>
+
       <TranscriptExportConsentModal
         open={exportModalOpen}
         userId={state.principal.userId}
@@ -1100,8 +1197,9 @@ function waitForIceGatheringComplete(peer: RTCPeerConnection): Promise<void> {
 
 /**
  * Map a ViewerEvent (from the TranscriptStreamProvider abstraction)
- * into the host-page TranscriptLine shape, or null for events the
- * host UI doesn't render (state changes, hints).
+ * into the host-page TranscriptLine shape, or null for events that
+ * are not transcript segments (state changes, hints — hints are
+ * dispatched separately via HINT_RECEIVED, see the onEvent handler).
  */
 function transcriptLineFromEvent(event: ViewerEvent): TranscriptLine | null {
   if (event.kind !== "transcript") return null;
@@ -1111,4 +1209,175 @@ function transcriptLineFromEvent(event: ViewerEvent): TranscriptLine | null {
     isFinal: event.isFinal,
     speaker: event.speakerLabel ?? "Speaker",
   };
+}
+
+/**
+ * Renders the rolling window of PrompterHints. Newest first so HIGH/
+ * URGENT hints float to the top of the visual stack without a
+ * separate "pinned" lane. Rationale is surfaced here (host-internal)
+ * but suppressed on the viewer side — see `ViewerPage.HintDisplay`.
+ */
+function HintPanel({
+  hints,
+}: {
+  readonly hints: readonly HintEntry[];
+}): JSX.Element {
+  if (hints.length === 0) {
+    return (
+      <p style={{ color: "#888", fontStyle: "italic" }}>
+        No hints yet. RAG hits from the engine and staff-authored prompts will
+        appear here.
+      </p>
+    );
+  }
+  const reversed = [...hints].reverse();
+  return (
+    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+      {reversed.map((hint) => {
+        const spec = hintStyleForUrgency(hint.urgency);
+        return (
+          <li
+            key={hint.hintId}
+            style={{ ...spec.style, marginBottom: "0.5rem" }}
+          >
+            {spec.label !== null && (
+              <div
+                style={{
+                  fontSize: "0.7rem",
+                  letterSpacing: "0.08em",
+                  marginBottom: "0.25rem",
+                }}
+              >
+                {spec.label}
+              </div>
+            )}
+            <strong>{hint.suggestion}</strong>
+            {hint.rationale !== undefined && hint.rationale !== "" && (
+              <div
+                style={{
+                  fontSize: "0.8rem",
+                  opacity: 0.75,
+                  marginTop: "0.25rem",
+                }}
+              >
+                {hint.rationale}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * Staff-authored hint input. Calls `gatewayClient.sendOfficerHint`;
+ * the gateway broadcasts via `Session.Broadcast` and the fan-out
+ * echoes back onto the host's own subscription, which lands in the
+ * HintPanel above — that's how the staff confirms the hint went out.
+ *
+ * Defaults to HIGH urgency: staff-authored hints are typically
+ * overrides / urgent interjections (see ROADMAP Phase 3c Slice 7
+ * rationale); LOW/NORMAL are there for completeness but rarely used.
+ * The 500-byte input cap matches the gateway's
+ * `maxOfficerHintSuggestionBytes` so oversize inputs surface as a
+ * local error before a wasted RPC round-trip.
+ */
+function StaffHintInputPanel({
+  sessionId,
+  viewerToken,
+}: {
+  readonly sessionId: string;
+  readonly viewerToken: string;
+}): JSX.Element {
+  const [suggestion, setSuggestion] = useState<string>("");
+  const [urgency, setUrgency] = useState<HintUrgency>("high");
+  const [sending, setSending] = useState<boolean>(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  const onSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const trimmed = suggestion.trim();
+      if (trimmed === "") return;
+      setSending(true);
+      setSendError(null);
+      try {
+        await gatewayClient.sendOfficerHint({
+          sessionId,
+          viewerToken,
+          suggestion: trimmed,
+          rationale: "",
+          urgency: toProtoUrgency(urgency),
+        });
+        setSuggestion("");
+      } catch (err) {
+        setSendError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSending(false);
+      }
+    },
+    [sessionId, viewerToken, suggestion, urgency],
+  );
+
+  return (
+    <form
+      onSubmit={(e) => void onSubmit(e)}
+      style={{
+        marginTop: "1rem",
+        padding: "0.75rem",
+        border: "1px solid #ddd",
+        borderRadius: "4px",
+      }}
+    >
+      <label
+        htmlFor="officer-hint-suggestion"
+        style={{
+          display: "block",
+          marginBottom: "0.3rem",
+          fontSize: "0.85rem",
+          color: "#555",
+        }}
+      >
+        Staff officer hint (broadcast to all viewers):
+      </label>
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <input
+          id="officer-hint-suggestion"
+          type="text"
+          maxLength={500}
+          value={suggestion}
+          onChange={(e) => setSuggestion(e.target.value)}
+          placeholder="e.g. Skip the Q4 number — it's stale."
+          disabled={sending}
+          style={{ flex: 1, padding: "0.4rem" }}
+        />
+        <select
+          value={urgency}
+          onChange={(e) => setUrgency(e.target.value as HintUrgency)}
+          disabled={sending}
+          aria-label="Hint urgency"
+        >
+          <option value="low">LOW</option>
+          <option value="normal">NORMAL</option>
+          <option value="high">HIGH</option>
+          <option value="urgent">URGENT</option>
+        </select>
+        <button type="submit" disabled={sending || suggestion.trim() === ""}>
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
+      {sendError !== null && (
+        <p
+          style={{
+            color: "#c0392b",
+            fontSize: "0.8rem",
+            marginTop: "0.3rem",
+          }}
+        >
+          Send failed: {sendError}
+        </p>
+      )}
+    </form>
+  );
 }

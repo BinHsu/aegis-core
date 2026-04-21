@@ -63,6 +63,7 @@ const (
 	Gateway_NegotiateWebRTC_FullMethodName = "/aegis.v1.Gateway/NegotiateWebRTC"
 	Gateway_JoinAsViewer_FullMethodName    = "/aegis.v1.Gateway/JoinAsViewer"
 	Gateway_EndMeeting_FullMethodName      = "/aegis.v1.Gateway/EndMeeting"
+	Gateway_SendOfficerHint_FullMethodName = "/aegis.v1.Gateway/SendOfficerHint"
 )
 
 // GatewayClient is the client API for Gateway service.
@@ -138,6 +139,29 @@ type GatewayClient interface {
 	//	NOT_FOUND             — unknown session_id
 	//	FAILED_PRECONDITION   — session already ended
 	EndMeeting(ctx context.Context, in *EndMeetingRequest, opts ...grpc.CallOption) (*EndMeetingResponse, error)
+	// Staff-authored hint broadcast. The chief-of-staff types a short
+	// suggestion (override a wrong RAG hit, inject an urgent fact the
+	// retriever can't know) and the gateway fans it out via
+	// `Session.Broadcast` as a `ViewerEvent.hint` with the chosen
+	// urgency — same on-wire shape as an engine-origin retriever hint,
+	// which means the viewer / host render paths don't need a second
+	// code path. Differentiation at the UI is urgency-driven (LOW/NORMAL
+	// render inline; HIGH/URGENT pin as a banner).
+	//
+	// MVP auth posture: any caller holding a valid session token may
+	// send (same check as `JoinAsViewer`). Host-only enforcement
+	// requires Cognito JWT role claims and lands with the Phase 5
+	// enterprise auth sprint — tracked as a Known Gap in ROADMAP.
+	//
+	// Errors:
+	//
+	//	UNAUTHENTICATED       — missing viewer_token
+	//	INVALID_ARGUMENT      — missing session_id, empty suggestion,
+	//	                        or UNSPECIFIED urgency
+	//	PERMISSION_DENIED     — invalid / expired token for this session
+	//	NOT_FOUND             — unknown session_id
+	//	FAILED_PRECONDITION   — session already ended
+	SendOfficerHint(ctx context.Context, in *SendOfficerHintRequest, opts ...grpc.CallOption) (*SendOfficerHintResponse, error)
 }
 
 type gatewayClient struct {
@@ -191,6 +215,16 @@ func (c *gatewayClient) EndMeeting(ctx context.Context, in *EndMeetingRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EndMeetingResponse)
 	err := c.cc.Invoke(ctx, Gateway_EndMeeting_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayClient) SendOfficerHint(ctx context.Context, in *SendOfficerHintRequest, opts ...grpc.CallOption) (*SendOfficerHintResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendOfficerHintResponse)
+	err := c.cc.Invoke(ctx, Gateway_SendOfficerHint_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +304,29 @@ type GatewayServer interface {
 	//	NOT_FOUND             — unknown session_id
 	//	FAILED_PRECONDITION   — session already ended
 	EndMeeting(context.Context, *EndMeetingRequest) (*EndMeetingResponse, error)
+	// Staff-authored hint broadcast. The chief-of-staff types a short
+	// suggestion (override a wrong RAG hit, inject an urgent fact the
+	// retriever can't know) and the gateway fans it out via
+	// `Session.Broadcast` as a `ViewerEvent.hint` with the chosen
+	// urgency — same on-wire shape as an engine-origin retriever hint,
+	// which means the viewer / host render paths don't need a second
+	// code path. Differentiation at the UI is urgency-driven (LOW/NORMAL
+	// render inline; HIGH/URGENT pin as a banner).
+	//
+	// MVP auth posture: any caller holding a valid session token may
+	// send (same check as `JoinAsViewer`). Host-only enforcement
+	// requires Cognito JWT role claims and lands with the Phase 5
+	// enterprise auth sprint — tracked as a Known Gap in ROADMAP.
+	//
+	// Errors:
+	//
+	//	UNAUTHENTICATED       — missing viewer_token
+	//	INVALID_ARGUMENT      — missing session_id, empty suggestion,
+	//	                        or UNSPECIFIED urgency
+	//	PERMISSION_DENIED     — invalid / expired token for this session
+	//	NOT_FOUND             — unknown session_id
+	//	FAILED_PRECONDITION   — session already ended
+	SendOfficerHint(context.Context, *SendOfficerHintRequest) (*SendOfficerHintResponse, error)
 }
 
 // UnimplementedGatewayServer should be embedded to have
@@ -290,6 +347,9 @@ func (UnimplementedGatewayServer) JoinAsViewer(*JoinAsViewerRequest, grpc.Server
 }
 func (UnimplementedGatewayServer) EndMeeting(context.Context, *EndMeetingRequest) (*EndMeetingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EndMeeting not implemented")
+}
+func (UnimplementedGatewayServer) SendOfficerHint(context.Context, *SendOfficerHintRequest) (*SendOfficerHintResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendOfficerHint not implemented")
 }
 func (UnimplementedGatewayServer) testEmbeddedByValue() {}
 
@@ -376,6 +436,24 @@ func _Gateway_EndMeeting_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Gateway_SendOfficerHint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendOfficerHintRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayServer).SendOfficerHint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Gateway_SendOfficerHint_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayServer).SendOfficerHint(ctx, req.(*SendOfficerHintRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Gateway_ServiceDesc is the grpc.ServiceDesc for Gateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -394,6 +472,10 @@ var Gateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EndMeeting",
 			Handler:    _Gateway_EndMeeting_Handler,
+		},
+		{
+			MethodName: "SendOfficerHint",
+			Handler:    _Gateway_SendOfficerHint_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -151,7 +151,7 @@ case "$cmd" in
     # (currently just frontend_web/) get their deps.
     exec "$PNPM_BIN" --dir "$REPO_ROOT" install "$@"
     ;;
-  dev|build|typecheck|preview|e2e|e2e:install)
+  dev|build|typecheck|test|preview|e2e|e2e:install)
     # Every other "named" command delegates to pnpm scripts inside
     # frontend_web's package.json.
     exec "$PNPM_BIN" --dir "$REPO_ROOT/frontend_web" run "$cmd" "$@"
@@ -165,6 +165,7 @@ Commands:
   dev                     Start Vite dev server (default port 5173).
   build                   Production build → frontend_web/dist/.
   typecheck               Run tsc --noEmit across the frontend tree.
+  test                    Run vitest (unit tests) once and exit.
   preview                 Preview the production build locally.
   e2e                     Run Playwright live-browser smoke tests
                           (chromium + webkit). Spawns its own dev

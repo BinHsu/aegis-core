@@ -173,6 +173,7 @@ mitigations are designed specifically to minimize it.
 | E3 | Compromised C++ engine process escalates to host OS | Container runtime | Pod `securityContext.runAsNonRoot: true`, `capabilities.drop: ALL`, `readOnlyRootFilesystem: true` except the tmpfs mounts; seccomp profile | Low |
 | E4 | Exploit in `getDisplayMedia` browser API escalates to OS | Browser / WebView | Vendor responsibility; Aegis stays on latest stable Chrome/Edge | Accepted |
 | E5 | Malicious RAG corpus file exploits vector DB | Vector DB | Corpus uploaded via signed manifest; schema validation at ingest | Low |
+| E6 | Compromised viewer abuses `SendOfficerHint` to inject fake staff-authored hints into the room | Go GW authorization | **Current:** any holder of a valid session token can send hints — E1's role-claim mitigation is not yet wired. **Known Gap:** lands with Cognito JWT role claims in Phase 5 auth sprint. Urgency-HIGH/URGENT hints from a compromised viewer could manipulate the meeting's shared context. | **Medium (accepted for MVP)** |
 
 ## Boundary Violations to Prevent
 

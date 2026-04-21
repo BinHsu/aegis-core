@@ -44,6 +44,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
@@ -86,6 +87,15 @@ type Session struct {
 	lastHostPing time.Time
 	ended        bool
 	subscribers  map[*subscriber]struct{}
+
+	// Monotonic counter for PrompterHint IDs assigned by the gateway
+	// (staff-origin SendOfficerHint path). Engine-origin hints carry
+	// their own session-local IDs from the retriever; the two ID
+	// spaces are deliberately separate so a hint's source is
+	// implicit in its numbering (engine hints start at 1 per
+	// session in C++ Retriever, gateway hints start at 1 here).
+	// atomic so SendOfficerHint can claim an id without grabbing mu.
+	nextHintID atomic.Uint64
 }
 
 // subscriber owns one fan-out channel and a counter of dropped events
@@ -273,6 +283,13 @@ func (s *Session) SubscriberCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.subscribers)
+}
+
+// NextHintID returns a monotonically increasing hint id starting at 1.
+// Used by SendOfficerHint to stamp staff-authored PrompterHints before
+// broadcasting them. Safe for concurrent use — atomic, not mu-guarded.
+func (s *Session) NextHintID() uint64 {
+	return s.nextHintID.Add(1)
 }
 
 // Config captures the create-time inputs for a new session — a direct

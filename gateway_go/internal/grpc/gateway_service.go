@@ -467,3 +467,75 @@ func (s *GatewayService) JoinAsViewer(
 		}
 	}
 }
+
+// maxOfficerHintSuggestionBytes caps staff-authored suggestion length.
+// Keeps the viewer UI from having to truncate client-side and limits
+// the damage of a runaway input box. 500 bytes ≈ 160 CJK chars or
+// 500 ASCII chars — comfortably over "one sentence" without sliding
+// into "mini-paragraph" territory that doesn't belong in a hint.
+const maxOfficerHintSuggestionBytes = 500
+
+// SendOfficerHint accepts a staff-authored hint and broadcasts it to
+// every subscriber of the given session as a `ViewerEvent.hint`. See
+// the proto docstring for the auth posture and error map.
+//
+// The gateway assigns the hint_id (atomic, session-scoped) so the
+// caller doesn't need to track it. Rationale is preserved verbatim
+// on the wire; the viewer UI suppresses it (staff-internal), the
+// host UI surfaces it.
+func (s *GatewayService) SendOfficerHint(
+	ctx context.Context,
+	req *aegisv1.SendOfficerHintRequest,
+) (*aegisv1.SendOfficerHintResponse, error) {
+	if req == nil || req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	if req.GetViewerToken() == "" {
+		return nil, status.Error(codes.Unauthenticated, "viewer_token is required")
+	}
+	if req.GetSuggestion() == "" {
+		return nil, status.Error(codes.InvalidArgument, "suggestion is required")
+	}
+	if len(req.GetSuggestion()) > maxOfficerHintSuggestionBytes {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"suggestion exceeds %d bytes", maxOfficerHintSuggestionBytes)
+	}
+	if req.GetUrgency() == aegisv1.HintUrgency_HINT_URGENCY_UNSPECIFIED {
+		return nil, status.Error(codes.InvalidArgument,
+			"urgency must be set (LOW/NORMAL/HIGH/URGENT)")
+	}
+
+	if _, err := s.issuer.Verify(req.GetViewerToken(), req.GetSessionId()); err != nil {
+		return nil, status.Error(codes.PermissionDenied, "invalid viewer_token")
+	}
+
+	sess, err := s.registry.Get(req.GetSessionId())
+	if err != nil {
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return nil, status.Error(codes.NotFound, "session not found")
+		}
+		return nil, status.Errorf(codes.Internal, "registry.Get: %v", err)
+	}
+	if sess.Ended() {
+		return nil, status.Error(codes.FailedPrecondition, "session already ended")
+	}
+
+	hintID := sess.NextHintID()
+	hint := &aegisv1.PrompterHint{
+		HintId:     hintID,
+		Suggestion: req.GetSuggestion(),
+		Rationale:  req.GetRationale(),
+		Urgency:    req.GetUrgency(),
+		// No citations — staff-authored hint has no RAG source.
+	}
+	ev := &aegisv1.ViewerEvent{
+		EmittedAt: timestamppb.New(time.Now()),
+		Payload:   &aegisv1.ViewerEvent_Hint{Hint: hint},
+	}
+	// Broadcast is non-blocking per ADR-0004; drops on slow
+	// subscribers are visible via sequence gaps on the viewer side
+	// (same posture as transcript broadcast).
+	sess.Broadcast(ev)
+
+	return &aegisv1.SendOfficerHintResponse{HintId: hintID}, nil
+}

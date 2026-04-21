@@ -122,6 +122,29 @@ service Gateway {
   //   FAILED_PRECONDITION   — session already ended
   rpc EndMeeting(EndMeetingRequest) returns (EndMeetingResponse);
 
+  // Staff-authored hint broadcast. The chief-of-staff types a short
+  // suggestion (override a wrong RAG hit, inject an urgent fact the
+  // retriever can't know) and the gateway fans it out via
+  // `Session.Broadcast` as a `ViewerEvent.hint` with the chosen
+  // urgency — same on-wire shape as an engine-origin retriever hint,
+  // which means the viewer / host render paths don't need a second
+  // code path. Differentiation at the UI is urgency-driven (LOW/NORMAL
+  // render inline; HIGH/URGENT pin as a banner).
+  //
+  // MVP auth posture: any caller holding a valid session token may
+  // send (same check as `JoinAsViewer`). Host-only enforcement
+  // requires Cognito JWT role claims and lands with the Phase 5
+  // enterprise auth sprint — tracked as a Known Gap in ROADMAP.
+  //
+  // Errors:
+  //   UNAUTHENTICATED       — missing viewer_token
+  //   INVALID_ARGUMENT      — missing session_id, empty suggestion,
+  //                           or UNSPECIFIED urgency
+  //   PERMISSION_DENIED     — invalid / expired token for this session
+  //   NOT_FOUND             — unknown session_id
+  //   FAILED_PRECONDITION   — session already ended
+  rpc SendOfficerHint(SendOfficerHintRequest) returns (SendOfficerHintResponse);
+
   // NOTE: an explicit query RPC (formerly "AskRAG") was considered
   // and removed before MVP. Automatic prompter hints delivered via
   // `ViewerEvent.hint` cover the target UX (host in live meeting,
@@ -382,6 +405,46 @@ message EndMeetingResponse {
 
   // Total number of prompter hints emitted.
   uint64 hint_count = 3;
+}
+
+// -----------------------------------------------------------------------------
+// SendOfficerHint
+// -----------------------------------------------------------------------------
+
+message SendOfficerHintRequest {
+  // Session the hint is bound to. The gateway looks up the Session in
+  // its local Registry (ADR-0004 per-replica state); mismatched
+  // routing surfaces as NOT_FOUND.
+  string session_id = 1;
+
+  // Same JWT the host and viewers use to subscribe via `JoinAsViewer`.
+  // Validated by the gateway's `token.Issuer` — any valid token for
+  // `session_id` is currently accepted (see Known Gap in ROADMAP).
+  string viewer_token = 2;
+
+  // Staff-authored suggestion text. Short (≤ 500 chars enforced by
+  // the gateway); longer inputs are rejected with INVALID_ARGUMENT
+  // so the viewer UI doesn't have to truncate.
+  string suggestion = 3;
+
+  // Optional reasoning. Surfaced in the host-side hint panel for
+  // the staff's own reference; suppressed on the viewer side
+  // (rationale is staff-internal, not meant for the room).
+  string rationale = 4;
+
+  // UI rendering tier. UNSPECIFIED is rejected — staff must pick a
+  // tier explicitly because the render path (inline annotation vs
+  // pinned banner) is tier-driven.
+  HintUrgency urgency = 5;
+}
+
+message SendOfficerHintResponse {
+  // Monotonic hint id assigned by the gateway within this session.
+  // Returned so the sender can correlate its own broadcast-echo when
+  // the fan-out lands back on its own subscription (the host is a
+  // regular viewer of its own session, so every officer hint it
+  // sends is also received).
+  uint64 hint_id = 1;
 }
 
 // =============================================================================
