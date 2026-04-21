@@ -190,6 +190,24 @@ func run() error {
 	// it during CreateMeeting, so it must be listening before we
 	// accept any viewer traffic.
 	//
+	// Env model: startChild sets cmd.Env = append(os.Environ(), extraEnv...),
+	// so every env var the launcher itself sees reaches both children by
+	// inheritance. extraEnv is therefore only for vars the launcher must
+	// INJECT (e.g. the CAS paths below, resolved from BUILD_WORKSPACE_DIRECTORY)
+	// or OVERRIDE (e.g. the empty AEGIS_ENGINE_METRICS_ADDR, forcing the
+	// engine's Prometheus exposer off so it doesn't collide with the
+	// gateway's on the same host in LOCAL mode).
+	//
+	// Optional env vars the engine reads purely via inheritance — the
+	// launcher does NOT touch them, so whatever the user exported in their
+	// shell reaches the engine verbatim:
+	//   QDRANT_URL            enables RAG retriever; unset → engine logs
+	//                         "QDRANT_URL unset (RAG hints disabled)" and
+	//                         fail-closes to transcript-only mode. See
+	//                         CONTRIBUTING.md §LAN smoke for the full setup.
+	//   QDRANT_API_KEY        only needed for Qdrant Cloud targets.
+	//   AEGIS_POD_MEMORY_LIMIT overrides the engine's ModelBudget ceiling.
+	//
 	// AEGIS_MODEL_PATH is the CAS ROOT dir (ADR-0026 layout) —
 	// engine's manifest walker resolves <root>/<id>/<sha>.<ext> for
 	// each required=true entry. AEGIS_MANIFEST_PATH points to the
