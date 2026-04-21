@@ -69,6 +69,15 @@ export function ViewerPage(): JSX.Element {
     if (!sessionId || !token) return;
 
     const onEvent = (event: ViewerEvent): void => {
+      // Clear any prior stream error on successful receipt. Without
+      // this, a transient `onError` call (e.g. the stray-text-frame
+      // warning surfaced per Incident 14's string-frame contract
+      // violation path, or a one-off malformed binary) latches the
+      // red "Stream error" banner forever, even though every
+      // subsequent transcript / hint frame arrives correctly. A
+      // healthy stream proves itself with each successful event;
+      // treat that as evidence the prior error was transient.
+      setError(null);
       switch (event.kind) {
         case "transcript":
           setTranscript((prev) => {

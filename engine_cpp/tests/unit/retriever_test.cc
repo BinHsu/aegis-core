@@ -126,20 +126,98 @@ TEST(RetrieverTest, BuildsHintFromTopMatchWithCitations) {
 TEST(RetrieverTest, HintIdsAreMonotonicStartingAtOne) {
   FakeEmbedder e;
   FakeVectorSearcher s;
-  s.results_ = {
-      MakeResult("uuid-1", 0.9f, "ctx", "doc.md", "0"),
-  };
-
   Retriever r(&e, &s, "aegis_col");
+
+  // Distinct point ids per call — otherwise the same-topic dedupe
+  // (Retriever::last_top_point_id_) suppresses h2 and h3.
+  s.results_ = {MakeResult("uuid-a", 0.9f, "ctx a", "doc.md", "0")};
   auto h1 = r.Retrieve("first");
+  s.results_ = {MakeResult("uuid-b", 0.9f, "ctx b", "doc.md", "1")};
   auto h2 = r.Retrieve("second");
+  s.results_ = {MakeResult("uuid-c", 0.9f, "ctx c", "doc.md", "2")};
   auto h3 = r.Retrieve("third");
+
   ASSERT_TRUE(h1.ok()) << h1.status();
   ASSERT_TRUE(h2.ok()) << h2.status();
   ASSERT_TRUE(h3.ok()) << h3.status();
   EXPECT_EQ(h1->hint_id(), 1u);
   EXPECT_EQ(h2->hint_id(), 2u);
   EXPECT_EQ(h3->hint_id(), 3u);
+}
+
+TEST(RetrieverTest, TopScoreBelowMinScoreReturnsNotFound) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  // Default min_score is 0.42; 0.30 is below the gate.
+  s.results_ = {MakeResult("uuid-low", 0.30f, "mediocre match", "doc.md", "0")};
+
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("ambient chatter that doesn't match the corpus");
+  ASSERT_FALSE(h.ok());
+  EXPECT_EQ(h.status().code(), absl::StatusCode::kNotFound);
+  EXPECT_NE(h.status().message().find("min_score"), std::string::npos)
+      << "NotFound message must mention min_score for operator debuggability";
+}
+
+TEST(RetrieverTest, MinScoreThresholdIsConfigurable) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  s.results_ = {MakeResult("uuid-mid", 0.35f, "borderline", "doc.md", "0")};
+
+  // Lower the gate to 0.30 — the same 0.35 result now passes.
+  Retriever::Config cfg;
+  cfg.min_score = 0.30f;
+  Retriever r(&e, &s, "aegis_col", cfg);
+  auto h = r.Retrieve("query");
+  ASSERT_TRUE(h.ok()) << h.status();
+  EXPECT_EQ(h->suggestion(), "borderline");
+}
+
+TEST(RetrieverTest, ConsecutiveSameTopPointIsDedupedToNotFound) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  // Same top point id on both calls — simulates a speaker staying on
+  // one topic across two 3 s flush windows.
+  s.results_ = {
+      MakeResult("uuid-same", 0.9f, "Taiwan climate is subtropical.", "doc.md",
+                 "0"),
+  };
+
+  Retriever r(&e, &s, "aegis_col");
+  auto h1 = r.Retrieve("what is the climate in Taiwan?");
+  ASSERT_TRUE(h1.ok()) << h1.status();
+
+  auto h2 = r.Retrieve("tell me about Taiwan's climate again");
+  ASSERT_FALSE(h2.ok());
+  EXPECT_EQ(h2.status().code(), absl::StatusCode::kNotFound);
+  EXPECT_NE(h2.status().message().find("dedupe"), std::string::npos)
+      << "NotFound message must name the dedupe condition";
+}
+
+TEST(RetrieverTest, TopicReturnSequenceABABaEmitsEachTime) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  Retriever r(&e, &s, "aegis_col");
+
+  auto result_a = MakeResult("uuid-A", 0.9f, "ctx A", "doc.md", "0");
+  auto result_b = MakeResult("uuid-B", 0.9f, "ctx B", "doc.md", "1");
+
+  // A → B → A should all emit — dedupe only suppresses consecutive
+  // same-top, not the whole history.
+  s.results_ = {result_a};
+  auto h1 = r.Retrieve("first mention of A");
+  ASSERT_TRUE(h1.ok()) << h1.status();
+  EXPECT_EQ(h1->suggestion(), "ctx A");
+
+  s.results_ = {result_b};
+  auto h2 = r.Retrieve("pivot to B");
+  ASSERT_TRUE(h2.ok()) << h2.status();
+  EXPECT_EQ(h2->suggestion(), "ctx B");
+
+  s.results_ = {result_a};
+  auto h3 = r.Retrieve("return to A");
+  ASSERT_TRUE(h3.ok()) << h3.status();
+  EXPECT_EQ(h3->suggestion(), "ctx A");
 }
 
 TEST(RetrieverTest, EmptyTranscriptReturnsNotFound) {

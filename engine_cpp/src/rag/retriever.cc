@@ -74,10 +74,34 @@ Retriever::Retrieve(std::string_view transcript_text) {
         absl::StrCat("Retriever: no matches in '", collection_, "'"));
   }
 
+  const auto &top = results->front();
+
+  // Score gate — Qdrant top-K always returns K results if the
+  // collection has ≥ K points, regardless of relevance. Without
+  // this check, every filler utterance ("um", "let me think") fires
+  // a hint with the nearest-but-irrelevant chunk. See Config::min_score.
+  if (top.score < config_.min_score) {
+    return absl::NotFoundError(
+        absl::StrFormat("Retriever: top score %.3f below min_score %.3f",
+                        top.score, config_.min_score));
+  }
+
+  // Consecutive-same-topic dedupe. When a speaker stays on one topic
+  // across multiple 3 s flush windows the top match is usually the
+  // same chunk; re-emitting it every window spams the viewer with
+  // an identical suggestion. Suppress when the top point id matches
+  // the last emission; let A → B → A through (intentional topic
+  // return). Empty last_top_point_id_ (first call) always passes.
+  if (top.id == last_top_point_id_) {
+    return absl::NotFoundError(
+        absl::StrCat("Retriever: top match '", top.id,
+                     "' matches last emission (same-topic dedupe)"));
+  }
+  last_top_point_id_ = top.id;
+
   aegis::v1::PrompterHint hint;
   hint.set_hint_id(next_hint_id_++);
 
-  const auto &top = results->front();
   const std::string top_text = LookupPayload(top.payload, "text");
   hint.set_suggestion(ClipExcerpt(top_text, config_.excerpt_bytes));
   hint.set_rationale(absl::StrFormat("Related context from '%s' (score=%.3f)",
