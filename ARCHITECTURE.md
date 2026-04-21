@@ -329,7 +329,7 @@ The engine image is built by CI on Linux runners; Camp B trust means no defensiv
 #### 10.3 Dynamic & Runtime Analysis
 
 - **Container scanning**: `Trivy` scans every built image for known CVEs. High / critical findings block image push to ECR. **Live as of Phase 4b mini-slice 2**: `aquasecurity/trivy-action` SHA-pinned in `release-staging-image.yml` scans gateway + engine images by `@sha256:` digest after Cosign sign; initial threshold `severity: CRITICAL` with `ignore-unfixed: true`; tighten to `HIGH,CRITICAL` is a one-line change. ADR-0029.
-- **Kubernetes manifest scanning**: `kube-score` + `kube-bench` validate manifests against CIS Kubernetes Benchmarks before ArgoCD sync.
+- **Kubernetes manifest & IaC scanning**: `kube-score` + `kube-bench` validate manifests against CIS Kubernetes Benchmarks before ArgoCD sync; `Checkov` adds policy-as-code misconfiguration checks on K8s manifests + Dockerfile + Helm charts (rejects `privileged: true`, missing `runAsNonRoot`, `hostPath` volumes, `:latest` image tags, missing resource limits, etc.). Checkov is scoped to the **misconfig / policy-as-code axis** — its built-in `CKV_SECRET_*` rules are incidental overlap, not the primary layer; secret-in-source defense lives in `gitleaks` + GitHub push protection (below), and plain-text secrets in K8s `Secret.data` are prevented architecturally by External Secrets Operator, not by post-hoc scan.
 - **Secret scanning**: `gitleaks` pre-commit hook (local) + **GitHub secret scanning with push protection** (server-side) catch committed credentials.
 - **DAST** (post-MVP): `OWASP ZAP` or equivalent runs against staging deployments on a schedule.
 
