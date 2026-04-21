@@ -82,7 +82,17 @@
    * The handbook (`CONTRIBUTING.md`, `docs/github-setup.md`) is the source of truth for these steps. The risk pattern to avoid: **"the docs said X, I skipped it, then I asked the user why my commits keep getting rewritten by clang-format in CI."** That is drift by omission, not drift by documentation error.
    * If you discover the pre-flight is missing a check that would have caught a real mistake in the current task, **add the check here** as part of closing that task.
 
-10. **Main Agent = Interaction & Progress; Delegate Background Execution**
-    * The main conversation thread is the human's point of contact. Its job is to drive the conversation, track progress, and produce the outputs the human will review (code edits, design decisions, test-result interpretation). It is **not** the substrate on which every investigation, file recon, or multi-round search plays out.
-    * Use subagents for work that does not require the main thread's attention — especially investigation (`Explore`), long-running builds or tests, and anything whose useful output is a summary, not the raw tool-call transcript. Prefer `run_in_background: true` when the subagent's work is independent of the next conversational step, so the main thread can keep talking with the human while the subagent works.
-    * The test is **role, not count**: if the main agent is doing *investigation* rather than *decision* or *edit*, consider delegating. This rule is a discipline convention, not a PR-review gate — the audit signal is the human noticing the main thread is drowning in stale tool results.
+10. **Main Agent vs Subagent: A Decision, Not a Default**
+    * **Rule:** The main conversation thread is the human's point of contact — it drives dialog, decisions, and edits. Delegate to subagents only when delegation is **net-cheaper** than inline execution.
+    * **Delegate when:**
+      - Output is a summary / answer (human won't read the raw tool output).
+      - Scope is wide: > 5 files, cross-directory scans, multi-round grep.
+      - Work is independent of the next conversational turn (use `run_in_background: true`).
+      - Investigation is pure recon with no downstream edit dependency.
+    * **Stay inline when:**
+      - Fewer than ~5 tool calls total.
+      - Raw content will be quoted, edited, or referenced verbatim.
+      - Result feeds directly into the next edit (no parallelism gain).
+      - Human is watching and wants to see each step.
+    * **Signal you mis-delegated:** subagent returns a summary but you have to re-read the files anyway to make the edit. Next time: inline.
+    * **Signal you mis-inlined:** main thread hit ~30% context on tool output before you even started the real work. Next time: delegate.
