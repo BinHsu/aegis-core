@@ -112,6 +112,59 @@ which violates [CLAUDE.md Rule 6](CLAUDE.md). Running Go through
 `tools/scripts/go.sh` keeps every byte of toolchain state inside the
 repo tree.
 
+### LAN smoke — full RAG stack end to end
+
+Exercises the full Local-mode pipeline: mic → WebRTC → gateway → engine →
+Whisper ASR → bge-m3 embedding → Qdrant → PrompterHint → WebSocket →
+viewer UI. Demo bar: speak `what's the weather like in Taiwan` into the
+host's mic and see both the transcript and a matching Taiwan-corpus hint
+appear on the phone viewer.
+
+This path is human-in-the-loop (a mic and a pair of ears are part of the
+test rig), so it is not covered by CI. The script below fails fast at
+every service-level prerequisite; the final "talk into the mic" step is
+yours.
+
+**Prerequisites** (one-time, ~5 min):
+
+```bash
+# Embedder: bge-m3 Q4_K_M (438 MB). required=false in the manifest, so
+# download_models.sh's default run skips it — pass --model explicitly.
+./tools/scripts/download_models.sh --model bge-m3-q4km
+
+# Qdrant: follow docs/runbooks/qdrant-local-setup.md to get a server
+# listening on localhost:6334. Keep that terminal open.
+```
+
+**Seed + run** (idempotent; re-run whenever the corpus changes):
+
+```bash
+./tools/scripts/lan-smoke.sh
+# Follow the printed instructions for the final `bazel run //:app_local`
+# step. QDRANT_URL must be exported in the shell that runs app_local —
+# the launcher inherits it via os.Environ() and passes it through to
+# the engine child (see gateway_go/cmd/app_local/main.go startChild).
+```
+
+**Drive it**:
+
+1. Open `http://localhost:5173` (the host UI served by Vite when
+   `--with-frontend` is on).
+2. Create a meeting with `rag_id=aegis_taiwan` — the collection name is
+   derived from the corpus filename by `DeriveCollectionName()` in
+   `engine_cpp/cmd/engine/seed.cc`.
+3. Scan the viewer QR with a phone on the same LAN.
+4. Speak into the mic. Every 3 s window produces a transcript segment
+   and triggers a RAG retrieval; hints fire on every window today (no
+   question gate, no score threshold) — documented in `ROADMAP.md`
+   Phase 4c as a UX-noise item, not a correctness bug.
+
+**If `QDRANT_URL` is unset** when you run `app_local`, the engine logs
+`QDRANT_URL unset (RAG hints disabled)` and falls through to
+transcript-only mode. That is the intentional fail-closed behaviour — the
+same binary that runs in Cloud today (where the K8s manifest also does
+not set `QDRANT_URL`, tracked as a Phase 4c follow-up in ROADMAP.md).
+
 ## Pull Request Conventions
 
 ### Branch naming
