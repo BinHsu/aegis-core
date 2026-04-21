@@ -56,13 +56,29 @@
 #include "grpcpp/grpcpp.h"
 #include "proto/aegis/v1/aegis.grpc.pb.h"
 
+namespace aegis::inference {
+class Embedder;
+} // namespace aegis::inference
+
+namespace aegis::vectordb {
+class VectorSearcher;
+} // namespace aegis::vectordb
+
 namespace aegis::session {
 
 class SessionBudget;
 
 class Session {
 public:
-  Session(SessionBudget *budget, const std::string &model_path) noexcept;
+  // `budget` and `model_path` must outlive the Session. `embedder` and
+  // `searcher` are OPTIONAL process-scoped handles for RAG retrieval;
+  // nullptr on either skips the hint-emission path entirely (transcript
+  // still flows). RAG is additionally gated per-session by
+  // `SessionStart.rag_id` (empty string = no retrieval even when both
+  // services are available). See Phase 3b ROADMAP.
+  Session(SessionBudget *budget, const std::string &model_path,
+          inference::Embedder *embedder = nullptr,
+          vectordb::VectorSearcher *searcher = nullptr) noexcept;
   ~Session() = default;
 
   // Drive the state machine to completion. Returns absl::OkStatus on
@@ -80,6 +96,8 @@ public:
 private:
   SessionBudget *budget_; // not owned
   std::string model_path_;
+  inference::Embedder *embedder_;      // not owned, may be nullptr
+  vectordb::VectorSearcher *searcher_; // not owned, may be nullptr
 };
 
 } // namespace aegis::session

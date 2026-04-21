@@ -19,13 +19,25 @@ namespace aegis::session {
 class SessionBudget;
 } // namespace aegis::session
 
+namespace aegis::inference {
+class Embedder;
+} // namespace aegis::inference
+
+namespace aegis::vectordb {
+class VectorSearcher;
+} // namespace aegis::vectordb
+
 namespace aegis::grpc_service {
 
 class AegisEngineServiceImpl final : public aegis::v1::Engine::Service {
 public:
   // `budget` and `model_path` must outlive this service instance.
-  AegisEngineServiceImpl(session::SessionBudget *budget,
-                         std::string model_path) noexcept;
+  // `embedder` and `searcher` are process-scoped RAG services — may be
+  // nullptr if the operator did not configure / could not load them.
+  // Downstream Sessions handle nullptrs gracefully (transcript-only).
+  AegisEngineServiceImpl(session::SessionBudget *budget, std::string model_path,
+                         inference::Embedder *embedder = nullptr,
+                         vectordb::VectorSearcher *searcher = nullptr) noexcept;
 
   ::grpc::Status StreamTranscribe(
       ::grpc::ServerContext *context,
@@ -39,6 +51,8 @@ public:
 private:
   session::SessionBudget *budget_; // not owned
   std::string model_path_;
+  inference::Embedder *embedder_;      // not owned, may be nullptr
+  vectordb::VectorSearcher *searcher_; // not owned, may be nullptr
 };
 
 } // namespace aegis::grpc_service

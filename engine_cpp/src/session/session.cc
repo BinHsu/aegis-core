@@ -14,6 +14,7 @@
 #include "absl/strings/str_cat.h"
 #include "engine_cpp/src/audio/opus_decoder.h"
 #include "engine_cpp/src/inference/whisper_engine.h"
+#include "engine_cpp/src/rag/retriever.h"
 #include "engine_cpp/src/session/session_budget.h"
 #include "proto/aegis/v1/aegis.pb.h"
 
@@ -91,8 +92,11 @@ absl::Status EmitTranscriptSegments(
 
 } // namespace
 
-Session::Session(SessionBudget *budget, const std::string &model_path) noexcept
-    : budget_(budget), model_path_(model_path) {}
+Session::Session(SessionBudget *budget, const std::string &model_path,
+                 inference::Embedder *embedder,
+                 vectordb::VectorSearcher *searcher) noexcept
+    : budget_(budget), model_path_(model_path), embedder_(embedder),
+      searcher_(searcher) {}
 
 absl::Status
 Session::Run(::grpc::ServerReaderWriter<aegis::v1::EgressMessage,
@@ -132,6 +136,18 @@ Session::Run(::grpc::ServerReaderWriter<aegis::v1::EgressMessage,
     return engine_or.status();
   }
   auto engine = std::move(*engine_or);
+
+  // Stage 3.5 — optional RAG retriever. Constructed only when the
+  // session has a RAG binding (SessionStart.rag_id non-empty) AND both
+  // process-scoped services were available at engine startup. Any of
+  // those conditions missing → retriever stays nullptr and the
+  // flush_window lambda below skips hint emission entirely (transcript
+  // still flows, matching ADR-0023 §Decision B "no corpus" mode).
+  std::unique_ptr<aegis::rag::Retriever> retriever;
+  if (!start.rag_id().empty() && embedder_ != nullptr && searcher_ != nullptr) {
+    retriever = std::make_unique<aegis::rag::Retriever>(embedder_, searcher_,
+                                                        start.rag_id());
+  }
 
   // Stage 4 — state machine over IngestMessage stream.
   //
@@ -193,6 +209,22 @@ Session::Run(::grpc::ServerReaderWriter<aegis::v1::EgressMessage,
                                         end_ms, stream);
         !s.ok()) {
       return s;
+    }
+    // Optional RAG hint emission. Errors are log-and-drop — RAG is a
+    // best-effort overlay on the transcript stream (same stance as
+    // per-frame Opus decode errors); a flaky Qdrant or a cold embedder
+    // must not tear the session down. A single failed retrieval simply
+    // means "no hint for this window."
+    if (retriever != nullptr) {
+      auto hint_or = retriever->Retrieve(*text_or);
+      if (hint_or.ok()) {
+        aegis::v1::EgressMessage egress;
+        *egress.mutable_hint() = *std::move(hint_or);
+        if (!stream->Write(egress)) {
+          return absl::AbortedError(
+              "Session: client closed stream before hint write");
+        }
+      }
     }
     return absl::OkStatus();
   };

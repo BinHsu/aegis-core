@@ -5,3 +5,19 @@ cc_library(
     srcs = ["chunker.cc"],
     hdrs = ["chunker.h"],
 )
+
+cc_library(
+    name = "retriever",
+    srcs = ["retriever.cc"],
+    hdrs = ["retriever.h"],
+    deps = [
+        "//engine_cpp/src/inference:embedder",
+        "//engine_cpp/src/vectordb:qdrant_client",
+        "//proto/aegis/v1:aegis_cc_proto",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
+)
