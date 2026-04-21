@@ -48,9 +48,11 @@ private:
 
 } // namespace
 
-AegisEngineServiceImpl::AegisEngineServiceImpl(session::SessionBudget *budget,
-                                               std::string model_path) noexcept
-    : budget_(budget), model_path_(std::move(model_path)) {}
+AegisEngineServiceImpl::AegisEngineServiceImpl(
+    session::SessionBudget *budget, std::string model_path,
+    inference::Embedder *embedder, vectordb::VectorSearcher *searcher) noexcept
+    : budget_(budget), model_path_(std::move(model_path)), embedder_(embedder),
+      searcher_(searcher) {}
 
 ::grpc::Status AegisEngineServiceImpl::StreamTranscribe(
     ::grpc::ServerContext * /*context*/,
@@ -60,7 +62,7 @@ AegisEngineServiceImpl::AegisEngineServiceImpl(session::SessionBudget *budget,
 
   // Per ADR-0010 Sub-decision 1: one Session per stream, lives on the
   // grpc-cpp sync thread's stack, runs top-to-bottom.
-  session::Session s(budget_, model_path_);
+  session::Session s(budget_, model_path_, embedder_, searcher_);
   const absl::Status status = s.Run(stream);
   if (!status.ok()) {
     ::grpc::Status result(static_cast<::grpc::StatusCode>(status.code()),

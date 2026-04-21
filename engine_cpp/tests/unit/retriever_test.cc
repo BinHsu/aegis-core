@@ -1,0 +1,231 @@
+// engine_cpp/tests/unit/retriever_test.cc
+//
+// Phase 3b final slice — unit coverage for `aegis::rag::Retriever`.
+//
+// Test-first discipline (CLAUDE.md Rule 2, Incident 14 lesson): this
+// file lands in the same commit as `retriever.{h,cc}`. If a future
+// refactor violates the Retriever contract (non-monotonic hint_id,
+// suggestion not from the top match, citations not populated), these
+// assertions catch it before the ROADMAP's "hint panel actually fires
+// on Taiwan corpus" demo regresses.
+//
+// Uses injected fakes (FakeEmbedder + FakeVectorSearcher) so the suite
+// runs in plain `bazel test //engine_cpp/tests/unit:retriever_test`
+// without requiring a live Qdrant or the 438 MB bge-m3 model. End-to-
+// end coverage (real embedder + real Qdrant + Session stream) is the
+// engine_seed integration test's territory.
+
+#include "engine_cpp/src/rag/retriever.h"
+
+#include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/types/span.h"
+#include "engine_cpp/src/inference/embedder.h"
+#include "engine_cpp/src/vectordb/qdrant_client.h"
+#include "gtest/gtest.h"
+
+namespace aegis::rag {
+namespace {
+
+// Returns a fixed 4-dim vector (or a canned error).
+class FakeEmbedder : public inference::Embedder {
+public:
+  absl::StatusOr<std::vector<float>> Embed(std::string_view text) override {
+    last_input_ = std::string(text);
+    if (fail_with_.has_value()) {
+      return *fail_with_;
+    }
+    if (text.empty()) {
+      return absl::InvalidArgumentError("FakeEmbedder: empty");
+    }
+    return vector_;
+  }
+  int Dimensions() const override { return static_cast<int>(vector_.size()); }
+  std::string_view ModelTag() const override { return "fake/test/v1"; }
+
+  std::vector<float> vector_ = {0.1f, 0.2f, 0.3f, 0.4f};
+  std::optional<absl::Status> fail_with_;
+  std::string last_input_;
+};
+
+class FakeVectorSearcher : public vectordb::VectorSearcher {
+public:
+  absl::StatusOr<std::vector<vectordb::SearchResult>>
+  Search(std::string_view collection, absl::Span<const float> query_vec,
+         int top_k) override {
+    last_collection_ = std::string(collection);
+    last_top_k_ = top_k;
+    last_query_vec_.assign(query_vec.begin(), query_vec.end());
+    if (fail_with_.has_value()) {
+      return *fail_with_;
+    }
+    return results_;
+  }
+
+  std::vector<vectordb::SearchResult> results_;
+  std::optional<absl::Status> fail_with_;
+  std::string last_collection_;
+  int last_top_k_ = 0;
+  std::vector<float> last_query_vec_;
+};
+
+vectordb::SearchResult MakeResult(std::string id, float score, std::string text,
+                                  std::string source_path,
+                                  std::string chunk_index) {
+  vectordb::SearchResult r;
+  r.id = std::move(id);
+  r.score = score;
+  r.payload["text"] = std::move(text);
+  r.payload["source_path"] = std::move(source_path);
+  r.payload["chunk_index"] = std::move(chunk_index);
+  return r;
+}
+
+TEST(RetrieverTest, BuildsHintFromTopMatchWithCitations) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  s.results_ = {
+      MakeResult("uuid-1", 0.921f, "Taiwan is an island in East Asia.",
+                 "docs/rag/taiwan.md", "0"),
+      MakeResult("uuid-2", 0.813f, "Its capital is Taipei.",
+                 "docs/rag/taiwan.md", "1"),
+  };
+
+  Retriever r(&e, &s, "aegis_taiwan");
+  auto hint_or = r.Retrieve("What is Taiwan?");
+  ASSERT_TRUE(hint_or.ok()) << hint_or.status();
+
+  EXPECT_EQ(hint_or->hint_id(), 1u);
+  EXPECT_EQ(hint_or->suggestion(), "Taiwan is an island in East Asia.");
+  EXPECT_EQ(hint_or->urgency(), aegis::v1::HINT_URGENCY_NORMAL);
+  EXPECT_NE(hint_or->rationale().find("aegis_taiwan"), std::string::npos);
+  EXPECT_NE(hint_or->rationale().find("0.921"), std::string::npos);
+
+  ASSERT_EQ(hint_or->citations_size(), 2);
+  EXPECT_EQ(hint_or->citations(0).doc_id(), "docs/rag/taiwan.md");
+  EXPECT_EQ(hint_or->citations(0).quote(), "Taiwan is an island in East Asia.");
+  EXPECT_EQ(hint_or->citations(0).location(), "0");
+  EXPECT_EQ(hint_or->citations(1).location(), "1");
+
+  // Searcher was called with the right collection, top_k, and the
+  // embedder's output vector.
+  EXPECT_EQ(s.last_collection_, "aegis_taiwan");
+  EXPECT_EQ(s.last_top_k_, 3);
+  ASSERT_EQ(s.last_query_vec_.size(), 4u);
+  EXPECT_FLOAT_EQ(s.last_query_vec_[0], 0.1f);
+  EXPECT_EQ(e.last_input_, "What is Taiwan?");
+}
+
+TEST(RetrieverTest, HintIdsAreMonotonicStartingAtOne) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  s.results_ = {
+      MakeResult("uuid-1", 0.9f, "ctx", "doc.md", "0"),
+  };
+
+  Retriever r(&e, &s, "aegis_col");
+  auto h1 = r.Retrieve("first");
+  auto h2 = r.Retrieve("second");
+  auto h3 = r.Retrieve("third");
+  ASSERT_TRUE(h1.ok()) << h1.status();
+  ASSERT_TRUE(h2.ok()) << h2.status();
+  ASSERT_TRUE(h3.ok()) << h3.status();
+  EXPECT_EQ(h1->hint_id(), 1u);
+  EXPECT_EQ(h2->hint_id(), 2u);
+  EXPECT_EQ(h3->hint_id(), 3u);
+}
+
+TEST(RetrieverTest, EmptyTranscriptReturnsNotFound) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("");
+  ASSERT_FALSE(h.ok());
+  EXPECT_EQ(h.status().code(), absl::StatusCode::kNotFound);
+  // Embedder was NOT called on empty input — contract is "skip early".
+  EXPECT_TRUE(e.last_input_.empty());
+}
+
+TEST(RetrieverTest, PropagatesEmbedderError) {
+  FakeEmbedder e;
+  e.fail_with_ = absl::InternalError("FakeEmbedder: boom");
+  FakeVectorSearcher s;
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("hello");
+  ASSERT_FALSE(h.ok());
+  EXPECT_EQ(h.status().code(), absl::StatusCode::kInternal);
+}
+
+TEST(RetrieverTest, PropagatesSearchError) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  s.fail_with_ = absl::UnavailableError("qdrant down");
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("hello");
+  ASSERT_FALSE(h.ok());
+  EXPECT_EQ(h.status().code(), absl::StatusCode::kUnavailable);
+}
+
+TEST(RetrieverTest, EmptySearchResultsReturnsNotFound) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  s.results_ = {}; // Qdrant returned nothing — no hint to emit.
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("hello");
+  ASSERT_FALSE(h.ok());
+  EXPECT_EQ(h.status().code(), absl::StatusCode::kNotFound);
+}
+
+TEST(RetrieverTest, CitationDocIdFallsBackToPointIdWhenNoSourcePath) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  vectordb::SearchResult r1;
+  r1.id = "just-an-id";
+  r1.score = 0.5f;
+  r1.payload["text"] = "some text";
+  // No "source_path" payload — doc_id MUST fall back to point id.
+  s.results_ = {r1};
+
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("hello");
+  ASSERT_TRUE(h.ok()) << h.status();
+  ASSERT_EQ(h->citations_size(), 1);
+  EXPECT_EQ(h->citations(0).doc_id(), "just-an-id");
+}
+
+TEST(RetrieverTest, LongTextIsClippedAtUtf8BoundaryInSuggestion) {
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  // Build a UTF-8 string where the byte-level cut at `excerpt_bytes`
+  // would land mid-codepoint. Each "台" is 3 UTF-8 bytes. With default
+  // excerpt_bytes=240, 80 "台" = 240 bytes exactly (boundary). We go
+  // one "台" over to force clipping back to the boundary.
+  std::string long_text;
+  for (int i = 0; i < 81; ++i) {
+    long_text += "台";
+  }
+  ASSERT_EQ(long_text.size(), 243u);
+
+  s.results_ = {MakeResult("u", 0.9f, long_text, "d.md", "0")};
+
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("query");
+  ASSERT_TRUE(h.ok()) << h.status();
+  // Suggestion must be clipped at a codepoint boundary — length is a
+  // multiple of 3 (UTF-8 width of "台"), NOT 240 which would split
+  // the 81st "台" after its second byte.
+  EXPECT_LE(h->suggestion().size(), 240u);
+  EXPECT_EQ(h->suggestion().size() % 3, 0u)
+      << "suggestion clipped mid-UTF-8-codepoint — ClipExcerpt did "
+         "not walk back to the boundary";
+}
+
+} // namespace
+} // namespace aegis::rag

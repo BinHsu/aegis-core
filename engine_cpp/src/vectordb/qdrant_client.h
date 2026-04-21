@@ -62,7 +62,26 @@ struct SearchResult {
   std::map<std::string, std::string> payload;
 };
 
-class QdrantClient {
+// Narrow read-side surface over a vector database. QdrantClient
+// implements it; `aegis::rag::Retriever` depends on this — not on
+// QdrantClient directly — so unit tests can inject a fake without
+// pulling in grpc + qdrant protos. Interface-segregation per CLAUDE.md:
+// the retriever only reads vectors, so that's the only method it sees.
+class VectorSearcher {
+public:
+  virtual ~VectorSearcher() = default;
+
+  virtual absl::StatusOr<std::vector<SearchResult>>
+  Search(std::string_view collection, absl::Span<const float> query_vec,
+         int top_k) = 0;
+
+protected:
+  VectorSearcher() = default;
+  VectorSearcher(const VectorSearcher &) = delete;
+  VectorSearcher &operator=(const VectorSearcher &) = delete;
+};
+
+class QdrantClient : public VectorSearcher {
 public:
   struct Config {
     std::string endpoint; // host:port, no scheme
@@ -106,7 +125,7 @@ public:
   // over-fetching is not a concern.
   absl::StatusOr<std::vector<SearchResult>>
   Search(std::string_view collection, absl::Span<const float> query_vec,
-         int top_k);
+         int top_k) override;
 
 private:
   struct Impl;

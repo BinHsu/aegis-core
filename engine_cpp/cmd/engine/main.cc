@@ -28,11 +28,13 @@
 
 #include "engine_cpp/cmd/engine/seed.h"
 #include "engine_cpp/src/grpc/aegis_engine_service.h"
+#include "engine_cpp/src/inference/ggml_embedder.h"
 #include "engine_cpp/src/inference/whisper_engine.h"
 #include "engine_cpp/src/metrics/metrics.h"
 #include "engine_cpp/src/models/manifest_loader.h"
 #include "engine_cpp/src/session/model_budget.h"
 #include "engine_cpp/src/session/session_budget.h"
+#include "engine_cpp/src/vectordb/qdrant_client.h"
 
 namespace {
 
@@ -162,8 +164,70 @@ int main(int argc, char **argv) {
 
   // Step 3: Construct SessionBudget from the remaining pool.
   aegis::session::SessionBudget session_budget(session_pool);
-  aegis::grpc_service::AegisEngineServiceImpl service(&session_budget,
-                                                      model_path);
+
+  // Step 3.5: Optional RAG services (Phase 3b retriever wiring).
+  //
+  // Both are best-effort at startup — if either is missing the engine
+  // still starts and transcribes; only the hint-emission path degrades
+  // (Session::Run constructs a Retriever only when both are non-null
+  // AND the session's rag_id is set, per ADR-0023 §Decision B). Being
+  // graceful here keeps the LAN demo unchanged: bge-m3 is `required=false`
+  // in manifest.json (438 MB opt-in download), and QDRANT_URL is unset
+  // unless a developer has a Qdrant instance running.
+  //
+  // The engine does NOT register bge-m3 with ModelBudget — since it is
+  // conditionally loaded it is not part of the baseline "fit inside
+  // pod memory" calculation. A future scale-up that makes bge-m3 part
+  // of the always-loaded set would promote it to required=true in the
+  // manifest and route it through Step 1 registration alongside whisper.
+  std::unique_ptr<aegis::inference::GGMLEmbedder> embedder;
+  for (const auto &e : manifest.models) {
+    if (e.id != "bge-m3-q4km") {
+      continue;
+    }
+    const std::string embedder_path =
+        aegis::models::ResolveCasPath(model_root, e);
+    auto or_embedder = aegis::inference::GGMLEmbedder::Create(embedder_path);
+    if (or_embedder.ok()) {
+      embedder = std::move(*or_embedder);
+      std::cout << "  rag embedder: " << e.id << " loaded from "
+                << embedder_path << std::endl;
+    } else {
+      std::cerr << "  rag embedder: " << e.id
+                << " not loaded (RAG hints will be disabled): "
+                << or_embedder.status() << std::endl;
+    }
+    break;
+  }
+  if (embedder == nullptr) {
+    std::cout << "  rag embedder: not configured (RAG hints disabled)"
+              << std::endl;
+  }
+
+  std::unique_ptr<aegis::vectordb::QdrantClient> qdrant_client;
+  if (std::getenv("QDRANT_URL") != nullptr) {
+    auto cfg = aegis::vectordb::QdrantClient::ConfigFromEnv();
+    if (cfg.ok()) {
+      auto cli = aegis::vectordb::QdrantClient::Create(*cfg);
+      if (cli.ok()) {
+        qdrant_client = std::move(*cli);
+        std::cout << "  rag qdrant: endpoint=" << cfg->endpoint
+                  << " tls=" << (cfg->use_tls ? "on" : "off") << std::endl;
+      } else {
+        std::cerr << "  rag qdrant: not connected (RAG hints disabled): "
+                  << cli.status() << std::endl;
+      }
+    } else {
+      std::cerr << "  rag qdrant: QDRANT_URL invalid (RAG hints disabled): "
+                << cfg.status() << std::endl;
+    }
+  } else {
+    std::cout << "  rag qdrant: QDRANT_URL unset (RAG hints disabled)"
+              << std::endl;
+  }
+
+  aegis::grpc_service::AegisEngineServiceImpl service(
+      &session_budget, model_path, embedder.get(), qdrant_client.get());
 
   ::grpc::ServerBuilder builder;
   // Insecure for dev + staging. CLOUD mode mTLS is NOT mesh-provided
