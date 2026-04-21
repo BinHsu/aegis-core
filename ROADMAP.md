@@ -319,7 +319,7 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 - [x] Trivy container scan; block push on critical CVEs (ADR-0029) — `aquasecurity/trivy-action` SHA-pinned scans gateway + engine images by `@sha256:` digest after push (no tag-race), `severity: CRITICAL` + `ignore-unfixed: true` initial threshold; `exit-code: 1` blocks workflow on CRITICAL findings. Tighten to `HIGH,CRITICAL` is a one-line change when ops bandwidth supports the triage.
 - [x] Verify no binary contains `AEGIS_DEV_AUDIO_DUMP` symbol (ADR-0005 R7) — Bazel `sh_test` `//engine_cpp/tests/unit:no_dev_audio_dump_symbol_test` greps the linked engine binary for the string; passes in default fastbuild, fails under `--config=debug`. Included in PR CI via `ci-baseline.yml` → `bazel test`; `--strip=always` on release strips symbols but not `.rodata`, so the string survives stripping and the gate still detects leaked copts.
 - [ ] kube-score + kube-bench manifest scan
-- [ ] Checkov IaC scanner for K8s manifests + Dockerfile + Helm charts (complements kube-score/kube-bench from the misconfiguration / policy-as-code angle; see debrief discussion 2026-04-12)
+- [ ] Checkov IaC scanner for K8s manifests + Dockerfile + Helm charts (complements kube-score/kube-bench from the misconfiguration / policy-as-code angle — **not** a secret-scan layer; `gitleaks` + GitHub push protection remain primary per `ARCHITECTURE.md` §10.3; see debrief discussion 2026-04-12)
 - [ ] CodeQL, Semgrep, gosec, govulncheck, clang-tidy in CI (ARCH §10.2)
 - [ ] ECR push pipeline; ArgoCD in `aegis-aws-landing-zone` repository polls the manifests in this repository
 
