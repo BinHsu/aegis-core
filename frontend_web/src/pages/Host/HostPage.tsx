@@ -120,9 +120,13 @@ const TRANSCRIPT_TAIL = 5;
 // Number of most-recent hints kept on the host panel. Hints
 // accumulate (unlike the viewer's single-hint-at-a-time render) so
 // the staff can scan a short scrollback without losing the current
-// RAG hit. 10 is a shelf size, not a retention policy — older hints
-// just fall off the bottom; nothing is persisted.
-const HINT_PANEL_SIZE = 10;
+// RAG hit. 5 matches `TRANSCRIPT_TAIL` / viewer `PROMPTER_WINDOW` so
+// host + viewer have the same visual rhythm, and the shelf stays
+// short enough that `StaffHintInputPanel` (rendered above `HintPanel`
+// in the Prompter section) is always on-screen without scrolling.
+// Shelf size, not a retention policy — older hints just fall off the
+// bottom; nothing is persisted.
+const HINT_PANEL_SIZE = 5;
 
 // ARCH §9.2 Speaker Labels — Privacy by Design. The UI MUST NOT
 // accept free-text speaker names, because a real name converts a
@@ -1048,18 +1052,19 @@ export function HostPage(): JSX.Element {
         Prompter panel — engine-origin RAG hits + staff-authored officer
         hints land in the same list (same proto shape, same fan-out).
         Urgency drives the visual treatment, not the source. Staff input
-        panel below sends `SendOfficerHint` RPC, which round-trips through
-        the gateway and echoes back onto this very meeting's subscription —
-        the host's own sent hints appear in the panel above confirming
-        delivery.
+        panel renders ABOVE `HintPanel` so the input field stays on-screen
+        regardless of how many hints have accumulated below. Sending via
+        `SendOfficerHint` round-trips through the gateway and the fan-out
+        echoes back onto this meeting's own subscription — the host's own
+        sent hints appear in the panel below, confirming delivery.
       */}
       <section style={{ marginTop: "1.5rem" }}>
         <h3 style={{ marginBottom: "0.5rem" }}>Prompter</h3>
-        <HintPanel hints={meeting.hints} />
         <StaffHintInputPanel
           sessionId={meeting.sessionId}
           viewerToken={meeting.viewerToken}
         />
+        <HintPanel hints={meeting.hints} />
       </section>
 
       <TranscriptExportConsentModal
@@ -1274,7 +1279,7 @@ function HintPanel({
  * Staff-authored hint input. Calls `gatewayClient.sendOfficerHint`;
  * the gateway broadcasts via `Session.Broadcast` and the fan-out
  * echoes back onto the host's own subscription, which lands in the
- * HintPanel above — that's how the staff confirms the hint went out.
+ * HintPanel below — that's how the staff confirms the hint went out.
  *
  * Defaults to HIGH urgency: staff-authored hints are typically
  * overrides / urgent interjections (see ROADMAP Phase 3c Slice 7
