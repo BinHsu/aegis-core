@@ -156,10 +156,9 @@ yours.
    derived from the corpus filename by `DeriveCollectionName()` in
    `engine_cpp/cmd/engine/seed.cc`.
 3. Scan the viewer QR with a phone on the same LAN.
-4. Speak into the mic. Every 3 s window produces a transcript segment
-   and triggers a RAG retrieval; hints fire on every window today (no
-   question gate, no score threshold) — documented in `ROADMAP.md`
-   Phase 4c as a UX-noise item, not a correctness bug.
+4. Speak into the mic. Every 5 s window produces a transcript segment
+   and triggers a RAG retrieval; hints fire on every window gated by
+   `min_score=0.42` and consecutive-same-topic dedupe (PR #66).
 
 **If `QDRANT_URL` is unset** when you run `app_local`, the engine logs
 `QDRANT_URL unset (RAG hints disabled)` and falls through to

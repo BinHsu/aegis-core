@@ -177,7 +177,7 @@ TEST(RetrieverTest, ConsecutiveSameTopPointIsDedupedToNotFound) {
   FakeEmbedder e;
   FakeVectorSearcher s;
   // Same top point id on both calls — simulates a speaker staying on
-  // one topic across two 3 s flush windows.
+  // one topic across two flush windows.
   s.results_ = {
       MakeResult("uuid-same", 0.9f, "Taiwan climate is subtropical.", "doc.md",
                  "0"),

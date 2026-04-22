@@ -29,18 +29,27 @@ constexpr std::size_t kDefaultReservationBytes = 200ULL * 1024 * 1024;
 
 // Live-transcribe window size (MVP).
 //
-// 3 seconds @ 16 kHz mono = 48000 samples. Trade-off summary:
+// 5 seconds @ 16 kHz mono = 80 000 samples. Trade-off summary:
 //   - Smaller window → lower latency to first segment, worse whisper
-//     accuracy (whisper's encoder was trained for ~30 s windows).
+//     accuracy (whisper's encoder was trained for ~30 s windows),
+//     more mid-sentence cuts in the emitted transcript.
 //   - Larger window → better accuracy, higher first-segment latency,
-//     higher per-session peak memory.
-// 3 s is the cheapest "live" cadence that still produces usable
-// transcription on tiny.en. No overlap is kept for MVP — words may
-// cut at window boundaries; VAD-based boundary selection is Phase 2+.
-// Final-flush at stream end (below) emits the remaining < window
-// sub-window so no audio is lost on EndMeeting.
+//     higher per-session peak memory, more context per transcript
+//     segment (fewer "1-second fragments" on the viewer).
+// Bumped from 3 → 5 s on 2026-04-22 after a LAN smoke drive exposed
+// the short-segment noise: at 3 s, speech routinely cut mid-phrase
+// (e.g. "臺灣是一個位於" | "東亞的島嶼"), and each segment felt
+// unfinished. 5 s restores enough context per segment for a natural
+// "cadence-of-reading" feel at the cost of +2 s to first hint.
+// Still cheap enough to keep "live" expectations intact; VAD-based
+// boundary selection (which decouples segment length from window
+// size entirely) is still Phase 2+.
+// No overlap is kept for MVP — words may still cut at window
+// boundaries, just less often. Final-flush at stream end (below)
+// emits the remaining < window sub-window so no audio is lost on
+// EndMeeting.
 constexpr std::size_t kSampleRateHz = 16000;
-constexpr std::size_t kLiveWindowSeconds = 3;
+constexpr std::size_t kLiveWindowSeconds = 5;
 constexpr std::size_t kLiveWindowSamples = kLiveWindowSeconds * kSampleRateHz;
 
 enum class State {

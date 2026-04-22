@@ -118,9 +118,9 @@ Retriever::Retrieve(std::string_view transcript_text) {
   }
 
   // Consecutive-same-topic dedupe. When a speaker stays on one topic
-  // across multiple 3 s flush windows the top match is usually the
-  // same chunk; re-emitting it every window spams the viewer with
-  // an identical suggestion. Suppress when the top point id matches
+  // across multiple flush windows the top match is usually the same
+  // chunk; re-emitting it every window spams the viewer with an
+  // identical suggestion. Suppress when the top point id matches
   // the last emission; let A → B → A through (intentional topic
   // return). Empty last_top_point_id_ (first call) always passes.
   if (top.id == last_top_point_id_) {

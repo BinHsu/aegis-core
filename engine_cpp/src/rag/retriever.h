@@ -56,7 +56,7 @@ public:
     // Minimum cosine-similarity score for a hint to be emitted.
     // Qdrant's top-K search always returns K results when the
     // collection has ≥ K points, regardless of how far off-topic the
-    // query is — without this threshold every 3 s transcript window
+    // query is — without this threshold every transcript window
     // fires a hint even when the speaker says "um, let me think" and
     // the viewer UI overwrites with garbage. 0.42 is conservative
     // for bge-m3 multilingual (zh-TW tokens are semantic-dense; the
@@ -113,7 +113,7 @@ private:
   // as a hint. Consecutive Retrieve() calls whose top match is the
   // SAME point id return NotFound — a speaker staying on the same
   // topic should not flood the viewer with the same corpus chunk
-  // every 3 s. Cleared back to the new top whenever a different
+  // every window. Cleared back to the new top whenever a different
   // point wins, so A → B → A is three distinct emissions (topic
   // changed away and back).
   std::string last_top_point_id_;
