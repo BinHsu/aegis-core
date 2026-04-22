@@ -213,15 +213,17 @@ coverage/
 # and its data dir live inside the repo per CLAUDE.md Rule 6 but are
 # per-machine state, never committed. `config` and `LICENSE_BSL_4.0.txt`
 # ship inside Qdrant's release tarball and land at the repo root on
-# extraction. `storage/` + `.qdrant-initialized` are created when
-# Qdrant runs without `--config-path` (its default storage location
-# is ./storage/), so guard those too.
+# extraction. `storage/`, `snapshots/`, and `.qdrant-initialized` are
+# created when Qdrant runs without `--config-path` (its default
+# storage + snapshot paths are ./storage/ + ./snapshots/), so guard
+# those too.
 /qdrant
 /.qdrant-data/
 /.qdrant-initialized
 /config
 /LICENSE_BSL_4.0.txt
 /storage/
+/snapshots/
 
 # --- Author-personal files (NOT for repo consumers) ---------------------
 # Private interview-prep reference maintained by the author. Contains
