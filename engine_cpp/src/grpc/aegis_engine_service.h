@@ -25,6 +25,7 @@ class Embedder;
 
 namespace aegis::vectordb {
 class VectorSearcher;
+class CollectionLister;
 } // namespace aegis::vectordb
 
 namespace aegis::grpc_service {
@@ -32,12 +33,15 @@ namespace aegis::grpc_service {
 class AegisEngineServiceImpl final : public aegis::v1::Engine::Service {
 public:
   // `budget` and `model_path` must outlive this service instance.
-  // `embedder` and `searcher` are process-scoped RAG services — may be
-  // nullptr if the operator did not configure / could not load them.
-  // Downstream Sessions handle nullptrs gracefully (transcript-only).
+  // `embedder`, `searcher`, `lister` are process-scoped RAG services —
+  // each may be nullptr if the operator did not configure / could not
+  // load them. Downstream Sessions handle nullptrs gracefully
+  // (transcript-only); `ListCorpora` returns UNAVAILABLE when
+  // `lister == nullptr`.
   AegisEngineServiceImpl(session::SessionBudget *budget, std::string model_path,
                          inference::Embedder *embedder = nullptr,
-                         vectordb::VectorSearcher *searcher = nullptr) noexcept;
+                         vectordb::VectorSearcher *searcher = nullptr,
+                         vectordb::CollectionLister *lister = nullptr) noexcept;
 
   ::grpc::Status StreamTranscribe(
       ::grpc::ServerContext *context,
@@ -48,11 +52,17 @@ public:
                         const aegis::v1::HealthRequest *request,
                         aegis::v1::HealthResponse *response) override;
 
+  ::grpc::Status
+  ListCorpora(::grpc::ServerContext *context,
+              const aegis::v1::EngineListCorporaRequest *request,
+              aegis::v1::EngineListCorporaResponse *response) override;
+
 private:
   session::SessionBudget *budget_; // not owned
   std::string model_path_;
   inference::Embedder *embedder_;      // not owned, may be nullptr
   vectordb::VectorSearcher *searcher_; // not owned, may be nullptr
+  vectordb::CollectionLister *lister_; // not owned, may be nullptr
 };
 
 } // namespace aegis::grpc_service

@@ -196,7 +196,8 @@ export class CreateMeetingRequest extends Message<CreateMeetingRequest> {
   /**
    * Identifier of the RAG corpus to bind to this meeting. In Cloud mode
    * this is a DynamoDB partition key; in Local mode it is a Qdrant
-   * collection name (e.g., `aegis_taiwan` from `engine seed`).
+   * collection name (e.g., `aegis_demo_taiwan` from `engine seed
+   * --tenant=demo --corpus=docs/rag/taiwan.md`).
    *
    * An empty string means NO RAG binding — the meeting runs transcript-
    * only and the chief-of-staff provides hints manually. This is a
@@ -1395,6 +1396,288 @@ export class SendOfficerHintResponse extends Message<SendOfficerHintResponse> {
       | undefined,
   ): boolean {
     return proto3.util.equals(SendOfficerHintResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message aegis.v1.ListCorporaRequest
+ */
+export class ListCorporaRequest extends Message<ListCorporaRequest> {
+  /**
+   * Tenant whose collections to list. Advisory on the public
+   * (Gateway) surface: the gateway overrides with the JWT tenant in
+   * cloud mode (ADR-0022) or hardcodes `"demo"` in LAN mode (Phase 3).
+   * Required on the internal (Engine) surface — empty is
+   * INVALID_ARGUMENT.
+   *
+   * @generated from field: string tenant_id = 1;
+   */
+  tenantId = "";
+
+  constructor(data?: PartialMessage<ListCorporaRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.ListCorporaRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "tenant_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ListCorporaRequest {
+    return new ListCorporaRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ListCorporaRequest {
+    return new ListCorporaRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ListCorporaRequest {
+    return new ListCorporaRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ListCorporaRequest | PlainMessage<ListCorporaRequest> | undefined,
+    b: ListCorporaRequest | PlainMessage<ListCorporaRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(ListCorporaRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message aegis.v1.CorpusInfo
+ */
+export class CorpusInfo extends Message<CorpusInfo> {
+  /**
+   * Qdrant collection name as it appears in the vector store — e.g.
+   * `aegis_demo_taiwan`. The Host UI uses this verbatim as the
+   * `rag_id` it sends to `CreateMeeting`.
+   *
+   * @generated from field: string id = 1;
+   */
+  id = "";
+
+  /**
+   * Display label shown in the dropdown. Derived from `id` by
+   * stripping the `aegis_<tenant>_` prefix and restoring underscores
+   * to spaces ("aegis_demo_taiwan" → "taiwan"). The engine computes
+   * this so every caller renders the same label.
+   *
+   * @generated from field: string label = 2;
+   */
+  label = "";
+
+  constructor(data?: PartialMessage<CorpusInfo>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.CorpusInfo";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "label", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): CorpusInfo {
+    return new CorpusInfo().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): CorpusInfo {
+    return new CorpusInfo().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): CorpusInfo {
+    return new CorpusInfo().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: CorpusInfo | PlainMessage<CorpusInfo> | undefined,
+    b: CorpusInfo | PlainMessage<CorpusInfo> | undefined,
+  ): boolean {
+    return proto3.util.equals(CorpusInfo, a, b);
+  }
+}
+
+/**
+ * @generated from message aegis.v1.ListCorporaResponse
+ */
+export class ListCorporaResponse extends Message<ListCorporaResponse> {
+  /**
+   * Collections matching the tenant prefix, sorted by id ascending
+   * for stable UI rendering. Empty list is a valid response (tenant
+   * has not seeded any corpus yet).
+   *
+   * @generated from field: repeated aegis.v1.CorpusInfo corpora = 1;
+   */
+  corpora: CorpusInfo[] = [];
+
+  constructor(data?: PartialMessage<ListCorporaResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.ListCorporaResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "corpora", kind: "message", T: CorpusInfo, repeated: true },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ListCorporaResponse {
+    return new ListCorporaResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ListCorporaResponse {
+    return new ListCorporaResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ListCorporaResponse {
+    return new ListCorporaResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ListCorporaResponse | PlainMessage<ListCorporaResponse> | undefined,
+    b: ListCorporaResponse | PlainMessage<ListCorporaResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(ListCorporaResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message aegis.v1.EngineListCorporaRequest
+ */
+export class EngineListCorporaRequest extends Message<EngineListCorporaRequest> {
+  /**
+   * @generated from field: string tenant_id = 1;
+   */
+  tenantId = "";
+
+  constructor(data?: PartialMessage<EngineListCorporaRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.EngineListCorporaRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "tenant_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): EngineListCorporaRequest {
+    return new EngineListCorporaRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): EngineListCorporaRequest {
+    return new EngineListCorporaRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): EngineListCorporaRequest {
+    return new EngineListCorporaRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a:
+      | EngineListCorporaRequest
+      | PlainMessage<EngineListCorporaRequest>
+      | undefined,
+    b:
+      | EngineListCorporaRequest
+      | PlainMessage<EngineListCorporaRequest>
+      | undefined,
+  ): boolean {
+    return proto3.util.equals(EngineListCorporaRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message aegis.v1.EngineListCorporaResponse
+ */
+export class EngineListCorporaResponse extends Message<EngineListCorporaResponse> {
+  /**
+   * @generated from field: repeated aegis.v1.CorpusInfo corpora = 1;
+   */
+  corpora: CorpusInfo[] = [];
+
+  constructor(data?: PartialMessage<EngineListCorporaResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "aegis.v1.EngineListCorporaResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "corpora", kind: "message", T: CorpusInfo, repeated: true },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): EngineListCorporaResponse {
+    return new EngineListCorporaResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): EngineListCorporaResponse {
+    return new EngineListCorporaResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): EngineListCorporaResponse {
+    return new EngineListCorporaResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a:
+      | EngineListCorporaResponse
+      | PlainMessage<EngineListCorporaResponse>
+      | undefined,
+    b:
+      | EngineListCorporaResponse
+      | PlainMessage<EngineListCorporaResponse>
+      | undefined,
+  ): boolean {
+    return proto3.util.equals(EngineListCorporaResponse, a, b);
   }
 }
 

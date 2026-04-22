@@ -152,9 +152,11 @@ yours.
 
 1. Open `http://localhost:5173` (the host UI served by Vite when
    `--with-frontend` is on).
-2. Create a meeting with `rag_id=aegis_taiwan` — the collection name is
-   derived from the corpus filename by `DeriveCollectionName()` in
-   `engine_cpp/cmd/engine/seed.cc`.
+2. Create a meeting — the RAG dropdown is auto-populated from the
+   engine's `ListCorpora` RPC (PR #75). Pick "Taiwan (zh-TW Wikipedia
+   demo)" which binds `rag_id=aegis_demo_taiwan`. Naming is
+   `aegis_<tenant>_<corpus-stem>` per ADR-0022, computed by
+   `DeriveCollectionName()` in `engine_cpp/cmd/engine/seed.cc`.
 3. Scan the viewer QR with a phone on the same LAN.
 4. Speak into the mic. Every 5 s window produces a transcript segment
    and triggers a RAG retrieval; hints fire on every window gated by

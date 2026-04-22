@@ -8,9 +8,11 @@ cc_library(
         "//engine_cpp/src/metrics:metrics",
         "//engine_cpp/src/session:session_budget",
         "//engine_cpp/src/session:session",
+        "//engine_cpp/src/vectordb:qdrant_client",
         "//proto/aegis/v1:aegis_cc_grpc",
         "//proto/aegis/v1:aegis_cc_proto",
         "@com_github_grpc_grpc//:grpc++",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )

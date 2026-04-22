@@ -40,6 +40,12 @@ import (
 // they don't have to stand up a full gRPC client.
 type healthProber func(ctx context.Context) (*aegisv1.HealthResponse, error)
 
+// corporaLister forwards ListCorpora to the engine. Nil when the
+// service was constructed via `newWithProber` (tests without the
+// full EngineClient); the public handler then returns UNIMPLEMENTED.
+// Tests that need the real behaviour can set it via `withCorporaLister`.
+type corporaLister func(ctx context.Context, tenantID string) (*aegisv1.ListCorporaResponse, error)
+
 // WebRTCNegotiator is the interface injected into GatewayService for
 // the SDP-exchange and PeerConnection lifecycle. The concrete type is
 // *webrtc.Negotiator from //gateway_go/internal/webrtc; tests supply a
@@ -72,10 +78,11 @@ type AudioPipelineStartFn func(sess *session.Session, sessionID string) (stopFn 
 type GatewayService struct {
 	aegisv1.UnimplementedGatewayServer
 
-	registry   *session.Registry
-	issuer     *token.Issuer
-	health     healthProber
-	webrtcNeg  WebRTCNegotiator     // nil → NegotiateWebRTC returns UNIMPLEMENTED
+	registry     *session.Registry
+	issuer       *token.Issuer
+	health       healthProber
+	listCorpora  corporaLister // nil → ListCorpora returns UNIMPLEMENTED
+	webrtcNeg    WebRTCNegotiator     // nil → NegotiateWebRTC returns UNIMPLEMENTED
 	pipelineStart AudioPipelineStartFn // nil → no audio pipeline on NegotiateWebRTC
 
 	// pipelineStops tracks per-session stopFns returned by pipelineStart.
@@ -130,6 +137,13 @@ func New(cfg Config) (*GatewayService, error) {
 			return engine.Health(ctx, &aegisv1.HealthRequest{})
 		},
 		cfg.EngineProbeTimeout)
+	svc.listCorpora = func(ctx context.Context, tenantID string) (*aegisv1.ListCorporaResponse, error) {
+		resp, err := engine.ListCorpora(ctx, &aegisv1.EngineListCorporaRequest{TenantId: tenantID})
+		if err != nil {
+			return nil, err
+		}
+		return &aegisv1.ListCorporaResponse{Corpora: resp.GetCorpora()}, nil
+	}
 	svc.webrtcNeg = cfg.WebRTCNegotiator
 	svc.pipelineStart = cfg.AudioPipelineStart
 	return svc, nil
@@ -538,4 +552,37 @@ func (s *GatewayService) SendOfficerHint(
 	sess.Broadcast(ev)
 
 	return &aegisv1.SendOfficerHintResponse{HintId: hintID}, nil
+}
+
+
+// Phase 3 demo tenant — the LAN deployment is single-tenant so the
+// gateway overrides whatever `tenant_id` the client sent with this
+// constant. Phase 4 replaces this with a JWT-derived tenant
+// (ADR-0022 §Decision).
+const phase3DefaultTenant = "demo"
+
+// ListCorpora returns the RAG corpora the caller can bind to a new
+// meeting. The Host UI populates its dropdown from the response. The
+// gateway currently overrides the wire `tenant_id` with the hardcoded
+// Phase 3 value; when Phase 4 wires Cognito, this is where the JWT
+// claim substitution happens (same enforcement point — never trust
+// the client's `tenant_id`).
+//
+// Error mapping:
+//   - UNIMPLEMENTED   — Gateway was constructed without an engine
+//                       client (tests; misconfigured startup).
+//   - UNAVAILABLE     — engine unreachable OR engine has no Qdrant.
+func (s *GatewayService) ListCorpora(
+	ctx context.Context,
+	req *aegisv1.ListCorporaRequest,
+) (*aegisv1.ListCorporaResponse, error) {
+	_ = req // Phase 3: wire tenant_id is ignored; see comment above.
+	if s.listCorpora == nil {
+		return nil, status.Error(codes.Unimplemented, "ListCorpora not wired")
+	}
+	resp, err := s.listCorpora(ctx, phase3DefaultTenant)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "engine ListCorpora: %v", err)
+	}
+	return resp, nil
 }

@@ -346,4 +346,26 @@ QdrantClient::Search(std::string_view collection,
   return out;
 }
 
+// -----------------------------------------------------------------------------
+// ListCollections
+// -----------------------------------------------------------------------------
+
+absl::StatusOr<std::vector<std::string>> QdrantClient::ListCollections() {
+  qdrant::ListCollectionsRequest req;
+  qdrant::ListCollectionsResponse resp;
+  grpc::ClientContext ctx;
+  AddApiKeyIfSet(ctx, impl_->api_key);
+  const auto gstatus = impl_->collections->List(&ctx, req, &resp);
+  if (!gstatus.ok()) {
+    return FromGrpcStatus(gstatus);
+  }
+
+  std::vector<std::string> out;
+  out.reserve(resp.collections_size());
+  for (const auto &c : resp.collections()) {
+    out.push_back(c.name());
+  }
+  return out;
+}
+
 } // namespace aegis::vectordb

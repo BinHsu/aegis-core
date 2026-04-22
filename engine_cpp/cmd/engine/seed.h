@@ -44,13 +44,21 @@ int RunSeed(int argc, char **argv);
 // the Qdrant upsert layer. Exposed for unit testing.
 std::string ContentHashUuid(std::string_view text);
 
-// Derive a Qdrant collection name from a corpus file path:
-//   docs/rag/taiwan.md  → aegis_taiwan
-//   /tmp/foo-bar.v2.md  → aegis_foo_bar_v2
+// Derive a Qdrant collection name from a corpus file path + tenant:
+//   ("docs/rag/taiwan.md",  "demo")  → aegis_demo_taiwan
+//   ("/tmp/foo-bar.v2.md",  "acme")  → aegis_acme_foo_bar_v2
 // Takes the basename, strips the extension, lowercases A–Z, and maps
-// any character outside `[a-z0-9_]` to `_`. Empty stems fall back to
-// `aegis_unnamed`. Exposed for unit testing.
-std::string DeriveCollectionName(std::string_view corpus_path);
+// any character outside `[a-z0-9_]` to `_` (same rule applied to
+// `tenant`). Empty stems fall back to `unnamed`; empty tenant falls
+// back to `demo`. Exposed for unit testing.
+//
+// The `aegis_<tenant>_<stem>` format is the ADR-0022 §Decision
+// single-axis isolation convention: `<tenant>` is derived from the
+// JWT in cloud mode or hardcoded to `demo` in LAN mode; the Host UI's
+// `ListCorpora` surface filters by this prefix so a tenant never
+// sees another tenant's collection names.
+std::string DeriveCollectionName(std::string_view corpus_path,
+                                 std::string_view tenant);
 
 } // namespace aegis::engine_cmd
 
