@@ -52,6 +52,19 @@ public:
     // signal. 240 bytes ≈ 80 CJK characters or 240 ASCII characters,
     // matches the chunker's overlap window (ADR-0019 §Decision.2).
     std::size_t excerpt_bytes = 240;
+
+    // Minimum cosine-similarity score for a hint to be emitted.
+    // Qdrant's top-K search always returns K results when the
+    // collection has ≥ K points, regardless of how far off-topic the
+    // query is — without this threshold every 3 s transcript window
+    // fires a hint even when the speaker says "um, let me think" and
+    // the viewer UI overwrites with garbage. 0.42 is conservative
+    // for bge-m3 multilingual (zh-TW tokens are semantic-dense; the
+    // 0.40–0.50 band is industry-standard "meaningful match" vs
+    // "random noise"). Tune higher to be stricter; set to 0 to
+    // disable the gate entirely (pre-gate behaviour for regression
+    // bisection).
+    float min_score = 0.42f;
   };
 
   // `embedder` and `searcher` must outlive this Retriever. `collection`
@@ -72,9 +85,13 @@ public:
   // starting at 1.
   //
   // Status codes:
-  //   NotFound         — empty transcript, OR search returned zero
-  //                      results. Caller treats as "no hint to emit";
-  //                      session continues.
+  //   NotFound         — empty transcript; OR search returned zero
+  //                      results; OR top match scored below
+  //                      `config_.min_score`; OR top match is the
+  //                      same Qdrant point id as the previous
+  //                      emission (consecutive-same-topic dedupe).
+  //                      Caller treats as "no hint to emit"; session
+  //                      continues.
   //   InvalidArgument  — embedder produced an empty vector.
   //   (propagated)     — whatever the embedder or searcher surfaced.
   absl::StatusOr<aegis::v1::PrompterHint>
@@ -91,6 +108,15 @@ private:
   std::string collection_;
   Config config_;
   std::uint64_t next_hint_id_ = 1;
+
+  // Dedupe state: the Qdrant point id of the top result last emitted
+  // as a hint. Consecutive Retrieve() calls whose top match is the
+  // SAME point id return NotFound — a speaker staying on the same
+  // topic should not flood the viewer with the same corpus chunk
+  // every 3 s. Cleared back to the new top whenever a different
+  // point wins, so A → B → A is three distinct emissions (topic
+  // changed away and back).
+  std::string last_top_point_id_;
 };
 
 } // namespace aegis::rag
