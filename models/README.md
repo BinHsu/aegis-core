@@ -56,11 +56,16 @@ model's hash (threat-model.md threat T6).
 ## Download Script
 
 ```bash
-# Download all required models (verifies SHA-256 after download)
+# Download every pinned model — whisper-tiny + bge-m3 (verifies
+# SHA-256 after each download). Default since 2026-04-22.
 ./tools/scripts/download_models.sh
 
+# Lightweight mode — only models that are required=true at engine
+# startup. Skips bge-m3; suitable for CI / minimal installs.
+./tools/scripts/download_models.sh --required-only
+
 # Download a specific model by ID
-./tools/scripts/download_models.sh --model=whisper-large-v3-turbo-q4
+./tools/scripts/download_models.sh --model whisper-large-v3-turbo-q4
 
 # Verify existing models without downloading
 ./tools/scripts/download_models.sh --verify-only

@@ -17,7 +17,7 @@ The contract is documented in
 If you cloned this repo to try the **single-machine experience** —
 
 ```bash
-./tools/scripts/download_models.sh --all
+./tools/scripts/download_models.sh
 ./tools/bazelisk/bazelisk run //:app_local
 ```
 

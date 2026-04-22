@@ -9,7 +9,10 @@
 #
 # Sequence:
 #
-#   1. bge-m3 embedder present (via download_models.sh --model)
+#   1. bge-m3 embedder present (safety net — verifies via
+#      download_models.sh --verify-only; fetches with --model only if
+#      still missing. Expected no-op when the user ran the default
+#      download_models.sh at clone time per README §Quick Start)
 #   2. Qdrant supervisor:
 #        - If :6333 already healthy → treat as user-started external
 #          instance; reuse + DO NOT manage its lifecycle.
@@ -113,7 +116,22 @@ trap cleanup_qdrant EXIT INT TERM
 # --- Step 1: embedder -------------------------------------------------------
 
 say "step 1/3 — bge-m3 embedder"
-"$REPO_ROOT/tools/scripts/download_models.sh" --model bge-m3-q4km
+# Safety net: README Quick Start's default `download_models.sh` run
+# already fetched bge-m3 (since 2026-04-22 the default covers every
+# non-PLACEHOLDER model). Verify silently; only fall through to a real
+# download if the CAS file is actually missing. Capture output via a
+# variable to sidestep pipefail interactions with a non-matching
+# `grep -q` in an `if` condition.
+if ! verify_output=$("$REPO_ROOT/tools/scripts/download_models.sh" --verify-only 2>&1); then
+  printf '%s\n' "$verify_output" >&2
+  die "download_models.sh --verify-only failed (see above)"
+fi
+if printf '%s\n' "$verify_output" | grep -q "^\[miss\] bge-m3-q4km"; then
+  say "  bge-m3 missing — fetching (438 MB, one-time)"
+  "$REPO_ROOT/tools/scripts/download_models.sh" --model bge-m3-q4km
+else
+  say "  bge-m3 already present — skip"
+fi
 
 # --- Step 2: Qdrant supervisor ---------------------------------------------
 

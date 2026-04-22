@@ -280,8 +280,10 @@ for the specific known gaps before you start.
 git clone https://github.com/BinHsu/aegis-core.git
 cd aegis-core
 
-# One-time: fetch the whisper model (~75 MB, SHA-256-verified)
-./tools/scripts/download_models.sh --all
+# One-time: fetch every pinned model (~75 MB whisper + 438 MB bge-m3,
+# all SHA-256-verified). Default covers every non-PLACEHOLDER entry;
+# pass --required-only to skip the optional bge-m3 embedder.
+./tools/scripts/download_models.sh
 
 # Run everything — engine + gateway, one command
 ./tools/bazelisk/bazelisk run //:app_local
