@@ -14,10 +14,19 @@
 # it is moved (not re-downloaded) to its new CAS path.
 #
 # Usage:
-#   ./tools/scripts/download_models.sh                 # all required=true models
+#   ./tools/scripts/download_models.sh                 # all non-PLACEHOLDER models (default)
+#   ./tools/scripts/download_models.sh --required-only # only required=true entries (lightweight)
 #   ./tools/scripts/download_models.sh --model <id>    # one model by id
 #   ./tools/scripts/download_models.sh --verify-only   # no download, just check
-#   ./tools/scripts/download_models.sh --all           # include optional (required=false) models
+#   ./tools/scripts/download_models.sh --all           # alias for the default (back-compat)
+#
+# Default changed on 2026-04-22 from `--required` to "all non-PLACEHOLDER":
+# `required=true` governs engine-startup MUST-LOAD behavior, not distribution.
+# When download defaults followed `required`, fresh clones silently skipped
+# bge-m3 (438 MB, `required=false`) and the LAN demo's hint panel stayed
+# empty — "why is the hint not firing?" was a recurring support cost. The
+# new default ships every pinned model; `--required-only` remains as the
+# opt-in lightweight mode for CI / minimal installs.
 #
 # The engine CAS preflight walker (engine_cpp/src/models/manifest_loader)
 # verifies SHA-256 at startup; this script is the pre-flight that saves
@@ -30,17 +39,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MODELS_DIR="$REPO_ROOT/models"
 MANIFEST="$MODELS_DIR/manifest.json"
 
-MODE="required"    # required | all | one | verify
+MODE="all"    # all | required | one
 ONLY_ID=""
 VERIFY_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model)        MODE="one"; ONLY_ID="${2:-}"; shift 2 ;;
-    --all)          MODE="all"; shift ;;
-    --verify-only)  VERIFY_ONLY=1; shift ;;
+    --model)          MODE="one"; ONLY_ID="${2:-}"; shift 2 ;;
+    --all)            MODE="all"; shift ;;
+    --required-only)  MODE="required"; shift ;;
+    --verify-only)    VERIFY_ONLY=1; shift ;;
     --help|-h)
-      sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '3,31p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac

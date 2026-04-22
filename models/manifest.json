@@ -77,7 +77,7 @@
       "upstream_model_license_url": "https://huggingface.co/BAAI/bge-m3",
       "required": false,
       "phase": 3,
-      "notes": "~700 MB RAM estimate (conservative; file is 438 MB, runtime adds tokenizer + activations). Currently required=false: only loaded by the opt-in `engine seed` subcommand (`engine_cpp/cmd/engine/seed.cc` via GGMLEmbedder::Create) — not loaded at engine startup. Promote back to required=true when engine main wires GGMLEmbedder eagerly (comment at main.cc:90 reserves this for 'Phase 3b'; not yet implemented). Embedding dimension: 1024 (bge-m3 dense). Max sequence length: 8192 tokens. Feeds ModelBudget per ADR-0010 revision (Phase 3b Slice 1)."
+      "notes": "~700 MB RAM estimate (conservative; file is 438 MB, runtime adds tokenizer + activations). Currently required=false because startup is graceful-degrade: `engine_cpp/cmd/engine/main.cc` best-effort loads bge-m3 for the live-path retriever (Session::Run wires a Retriever only when both the embedder and a Qdrant client come up), and the opt-in `engine seed` subcommand also uses the same GGMLEmbedder to build the corpus index. Either caller missing ⇒ retriever stays nullptr and sessions degrade to transcript-only — no hard boot failure. Promote to required=true when bge-m3 joins the baseline ModelBudget set (i.e. no graceful-degrade path left). Embedding dimension: 1024 (bge-m3 dense). Max sequence length: 8192 tokens. Feeds ModelBudget per ADR-0010 revision (Phase 3b Slice 1)."
     },
     {
       "id": "llama-3-8b-instruct-q4km",

@@ -128,9 +128,11 @@ yours.
 **Prerequisites** (one-time, ~5 min):
 
 ```bash
-# Embedder: bge-m3 Q4_K_M (438 MB). required=false in the manifest, so
-# download_models.sh's default run skips it — pass --model explicitly.
-./tools/scripts/download_models.sh --model bge-m3-q4km
+# Models: the default download_models.sh run fetches every pinned
+# (non-PLACEHOLDER) model, including bge-m3 Q4_K_M (438 MB) — which the
+# RAG path needs. If you already ran the Quick Start from the top of
+# this doc, this is a no-op.
+./tools/scripts/download_models.sh
 
 # Qdrant: follow docs/runbooks/qdrant-local-setup.md to get a server
 # listening on localhost:6334. Keep that terminal open.
