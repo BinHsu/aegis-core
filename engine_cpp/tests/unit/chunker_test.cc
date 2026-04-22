@@ -167,11 +167,14 @@ TEST(MarkdownChunkerCorpusTest, TaiwanCorpusChunksWithinBounds) {
   MarkdownChunker c; // default: target=450, overlap=80
   auto chunks = c.Split(corpus);
 
-  // The corpus is ~2800 bytes / ~1400+ code points of zh-TW content
-  // plus an ~1100-char HTML comment. With target=450 and overlap=80,
-  // expect roughly 5–15 chunks.
+  // The corpus is zh-TW content plus a ~1400-char HTML comment, with
+  // roughly a dozen `##` sub-section headers each scoped to one
+  // sub-topic. With target=450 + overlap=80 + markdown-aware
+  // segmentation, each section becomes its own chunk. Expected range
+  // covers the header count plus comment-split chunks with headroom
+  // for future corpus evolution.
   ASSERT_GE(chunks.size(), 3u) << "Too few chunks — splitting broken?";
-  ASSERT_LE(chunks.size(), 20u) << "Too many chunks — oversplitting?";
+  ASSERT_LE(chunks.size(), 30u) << "Too many chunks — oversplitting?";
 
   for (std::size_t i = 0; i < chunks.size(); ++i) {
     const auto &ch = chunks[i];
