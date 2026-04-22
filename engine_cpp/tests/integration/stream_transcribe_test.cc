@@ -266,9 +266,12 @@ TEST(StreamTranscribeTest, LiveWindowEmitsMidStream) {
   auto samples_or = audio::ReadWav16kMono(wav_path);
   ASSERT_TRUE(samples_or.ok()) << samples_or.status();
   const std::vector<float> &samples = *samples_or;
-  // Require enough audio to span at least two 3-second windows.
-  ASSERT_GE(samples.size(), static_cast<std::size_t>(6 * 16000))
-      << "fixture too short for multi-window regression; need ≥6s, got "
+  // Require enough audio to span at least two live windows (session.cc
+  // kLiveWindowSeconds — 5 as of 2026-04-22, so ≥ 10 s of PCM
+  // guarantees ≥ 2 full flushes before final-flush). jfk.wav ships
+  // ~11 s, comfortably above the bar.
+  ASSERT_GE(samples.size(), static_cast<std::size_t>(10 * 16000))
+      << "fixture too short for multi-window regression; need ≥10s, got "
       << (samples.size() / 16000) << "s";
   const std::string int16_le = FloatsToInt16LE(samples);
 
@@ -301,9 +304,9 @@ TEST(StreamTranscribeTest, LiveWindowEmitsMidStream) {
   }
 
   // Chunk strategy: split PCM into ~32 KB PcmChunks (same as
-  // JfkEndToEnd). With 6+ seconds of audio at 32 KB per chunk
-  // (= 16384 samples = ~1.02 s), we feed at least 6 chunks —
-  // which triggers at least 2 window flushes at 3-second boundaries.
+  // JfkEndToEnd). With 10+ seconds of audio at 32 KB per chunk
+  // (= 16384 samples = ~1.02 s), we feed at least 10 chunks —
+  // which triggers at least 2 window flushes at 5-second boundaries.
   constexpr std::size_t kChunkBytes = 32 * 1024;
   std::uint64_t chunk_id = 0;
   for (std::size_t off = 0; off < int16_le.size(); off += kChunkBytes) {
