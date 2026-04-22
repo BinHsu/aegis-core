@@ -8,7 +8,7 @@
 //   - show "Host reconnecting..." on transient state changes
 //   - NO export, NO history (L3, L4 — intentional features)
 
-import { useEffect, useMemo, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import {
@@ -18,6 +18,10 @@ import {
   type ViewerEvent,
 } from "@/providers/TranscriptStreamProvider";
 import { hintStyleForUrgency } from "@/lib/hintStyling";
+import {
+  useSentenceStitcher,
+  type StitchedLine,
+} from "@/hooks/useSentenceStitcher";
 
 const PROMPTER_WINDOW = 5;
 
@@ -65,6 +69,28 @@ export function ViewerPage(): JSX.Element {
     [],
   );
 
+  // Stitch consecutive engine TranscriptSegments into sentence-scoped
+  // display lines. The engine emits one segment per 5 s PCM flush
+  // window (session.cc kLiveWindowSeconds, PR #72); some windows end
+  // mid-phrase ("臺灣是一個" | "位於東亞的島嶼。"). The stitcher
+  // waits for sentence-closing punctuation (`。/？/！/.`/?!) or a 4 s
+  // timeout before rendering, so the viewer sees natural sentences
+  // instead of fragments.
+  const appendStitchedLine = useCallback((line: StitchedLine): void => {
+    setTranscript((prev) => {
+      const next = [
+        ...prev,
+        {
+          text: line.text,
+          speaker: line.speaker,
+          isQuestion: line.isQuestion,
+        },
+      ];
+      return next.slice(-PROMPTER_WINDOW);
+    });
+  }, []);
+  const { pushSegment } = useSentenceStitcher({ onLine: appendStitchedLine });
+
   useEffect(() => {
     if (!sessionId || !token) return;
 
@@ -80,16 +106,10 @@ export function ViewerPage(): JSX.Element {
       setError(null);
       switch (event.kind) {
         case "transcript":
-          setTranscript((prev) => {
-            const next = [
-              ...prev,
-              {
-                text: event.text,
-                speaker: event.speakerLabel,
-                isQuestion: event.isQuestion,
-              },
-            ];
-            return next.slice(-PROMPTER_WINDOW);
+          pushSegment({
+            text: event.text,
+            speakerLabel: event.speakerLabel,
+            isQuestion: event.isQuestion,
           });
           break;
         case "hint":
@@ -115,7 +135,7 @@ export function ViewerPage(): JSX.Element {
       { onEvent, onError, onClose },
     );
     return () => sub.unsubscribe();
-  }, [provider, sessionId, token]);
+  }, [provider, sessionId, token, pushSegment]);
 
   if (!sessionId || !token) {
     return (
