@@ -194,44 +194,178 @@ TEST(MarkdownChunkerCorpusTest, OverlapPresentBetweenAdjacentChunks) {
   ss << f.rdbuf();
   const std::string corpus = ss.str();
 
-  MarkdownChunker c; // default overlap=80
+  MarkdownChunker c; // default overlap=80, boundary_search=40
   auto chunks = c.Split(corpus);
   ASSERT_GE(chunks.size(), 2u);
 
-  // For each adjacent pair, verify the tail of chunk N appears at
-  // the start of chunk N+1 (that's what overlap means).
+  // Verify the minimum contract: SOME non-empty suffix of chunk N-1
+  // appears as a prefix of chunk N. (Exact tail length varies once
+  // the sentence-aware overlap walk is in play — the walk may shorten
+  // the tail to end cleanly at `。` / `\n`. "At least one adjacent
+  // pair overlaps by at least one byte" is the stable invariant; the
+  // exact size isn't.) Byte-level comparison — overlap is always
+  // copied byte-exact, so any suffix/prefix byte match is genuine.
   std::size_t overlaps_found = 0;
   for (std::size_t i = 1; i < chunks.size(); ++i) {
-    const std::string &prev = chunks[i - 1].text;
-    const std::string &cur = chunks[i].text;
-    // Extract the last 80 chars of prev (by bytes via Utf8 helpers).
-    const std::size_t prev_chars = Utf8CharCount(prev);
-    if (prev_chars <= 80)
-      continue; // prev is entirely within overlap — skip
-    // Find the byte start of the last 80 chars.
-    std::size_t chars_seen = 0;
-    std::size_t byte_pos = 0;
-    const std::size_t skip = prev_chars - 80;
-    while (byte_pos < prev.size() && chars_seen < skip) {
-      auto leading = static_cast<unsigned char>(prev[byte_pos]);
-      if (leading < 0x80)
-        byte_pos += 1;
-      else if (leading < 0xE0)
-        byte_pos += 2;
-      else if (leading < 0xF0)
-        byte_pos += 3;
-      else
-        byte_pos += 4;
-      ++chars_seen;
-    }
-    std::string_view tail(prev.data() + byte_pos, prev.size() - byte_pos);
-    // cur should start with this tail.
-    if (!tail.empty() && std::string_view(cur).substr(0, tail.size()) == tail) {
-      ++overlaps_found;
+    const std::string_view prev = chunks[i - 1].text;
+    const std::string_view cur = chunks[i].text;
+    const std::size_t max_len = std::min(prev.size(), cur.size());
+    for (std::size_t len = 1; len <= max_len; ++len) {
+      if (prev.substr(prev.size() - len) == cur.substr(0, len)) {
+        ++overlaps_found;
+        break;
+      }
     }
   }
   EXPECT_GE(overlaps_found, 1u)
       << "No overlap found between any adjacent chunk pair";
+}
+
+// --- Rework tests (2026-04-22): markdown-aware + sentence-aware overlap ---
+
+TEST(MarkdownChunkerTest, HeaderIsHardSegmentBoundary) {
+  // Section A has enough content that, with the v1 separator-only
+  // cascade, overlap would pull its tail across `## B` into the
+  // second chunk's prefix (producing "...A tail...## B B body").
+  // With respect_markdown_headers=true (default), the second chunk
+  // must NOT contain any text from section A.
+  MarkdownChunker c; // default: respect_markdown_headers = true
+  std::string input =
+      "## A\n\n"
+      "A body sentence one. A body sentence two. A body sentence three.\n\n"
+      "## B\n\n"
+      "B body sentence one. B body sentence two.";
+  auto chunks = c.Split(input);
+  ASSERT_GE(chunks.size(), 2u);
+
+  // The chunk containing "## B" must NOT contain any of "A body".
+  bool found_b_chunk = false;
+  for (const auto &ch : chunks) {
+    if (ch.text.find("## B") != std::string::npos) {
+      found_b_chunk = true;
+      EXPECT_EQ(ch.text.find("A body"), std::string::npos)
+          << "Header hard-boundary violated — chunk crossed `## B`:\n"
+          << ch.text;
+    }
+  }
+  EXPECT_TRUE(found_b_chunk) << "No chunk contained `## B`";
+}
+
+TEST(MarkdownChunkerTest, OverlapWalksForwardToSentenceStart) {
+  // Construct zh-TW input where chunk 0 contains a full sentence
+  // mid-body (with `。` in its interior, not at its end) — so the
+  // raw N-char tail lands mid-sentence, and walking forward should
+  // advance to the next `。`.
+  //
+  // Chunker trace at target=20, sep `\n\n` splits:
+  //   Piece 0: "超長第一句內容。超長第二句內容。" (16 chars)
+  //   Piece 1: "第三段。" (4 chars)
+  //   Merge: buf="超長第一句內容。超長第二句內容。" (16) — adding
+  //   Piece 1 with sep "\n\n" gives 16+2+4=22 > 20 → flush. Chunk
+  //   0 = "超長第一句內容。超長第二句內容。". Chunk 1 = "第三段。".
+  //
+  // Overlap pass (overlap=10, search=20):
+  //   Chunk 0 has 16 chars. Raw last-10-char tail starts at char 6
+  //   = byte 18 → tail begins mid-sentence at "容。超長第二句內容。".
+  //   Walk forward: first `。` at byte 21. boundary_start = 24.
+  //   Walked tail = "超長第二句內容。" (8 chars) — clean sentence
+  //   start.
+  //
+  // Assertion: chunk[1] must NOT contain "容。超" (raw-tail marker)
+  // — it must begin with the post-`。` "超長第二".
+  MarkdownChunker c({.target_chunk_chars = 20,
+                     .overlap_chars = 10,
+                     .respect_markdown_headers = false,
+                     .overlap_boundary_search_chars = 20});
+  std::string input = "超長第一句內容。超長第二句內容。\n\n第三段。";
+  auto chunks = c.Split(input);
+  ASSERT_GE(chunks.size(), 2u);
+
+  const std::string &second = chunks[1].text;
+  EXPECT_EQ(second.find("容。超"), std::string::npos)
+      << "Second chunk starts mid-sentence — walk did not advance past `。`:\n"
+      << second;
+  EXPECT_EQ(second.find("超長第二"), 0u)
+      << "Second chunk does not start at the post-`。` clean sentence:\n"
+      << second;
+}
+
+TEST(MarkdownChunkerTest, OverlapDoesNotCrossHeader) {
+  // Two sections. Section A's trailing sentences are exactly the
+  // text we'd expect overlap to grab. With header respect on, no
+  // chunk in section B may contain any of section A's content —
+  // not even in its overlap prefix.
+  MarkdownChunker c({.target_chunk_chars = 30,
+                     .overlap_chars = 20,
+                     .respect_markdown_headers = true,
+                     .overlap_boundary_search_chars = 0});
+  std::string input = "## A\n\nsection A unique marker AAAA.\n\n"
+                      "## B\n\nsection B unique marker BBBB.";
+  auto chunks = c.Split(input);
+  ASSERT_GE(chunks.size(), 2u);
+
+  for (const auto &ch : chunks) {
+    if (ch.text.find("BBBB") != std::string::npos) {
+      EXPECT_EQ(ch.text.find("AAAA"), std::string::npos)
+          << "Overlap crossed `## B` header:\n"
+          << ch.text;
+    }
+  }
+}
+
+TEST(MarkdownChunkerTest, RespectMarkdownHeadersFalseRestoresV1) {
+  // When the flag is off, headers are just text. Confirm the
+  // splitter merges across headers like before — this is the
+  // explicit escape hatch for plain-text corpora where `#` has no
+  // semantic meaning.
+  MarkdownChunker c({.target_chunk_chars = 200,
+                     .overlap_chars = 0,
+                     .respect_markdown_headers = false,
+                     .overlap_boundary_search_chars = 0});
+  std::string input = "## A\n\nshort body.\n\n## B\n\nanother short body.";
+  auto chunks = c.Split(input);
+  // Without segmentation, this whole input fits in one chunk
+  // (target=200, total < 60 chars) — so we get exactly one chunk.
+  // With segmentation, we'd get at least 3.
+  ASSERT_EQ(chunks.size(), 1u);
+  EXPECT_NE(chunks[0].text.find("## A"), std::string::npos);
+  EXPECT_NE(chunks[0].text.find("## B"), std::string::npos);
+}
+
+TEST(MarkdownChunkerCorpusTest, TaiwanCorpusNoChunkSpansTwoHeaders) {
+  // Regression for the 2026-04-21 LAN smoke finding: a chunk's text
+  // included "130公里...## 地理與氣候臺灣島的總..." — overlap from
+  // the "概覽" section bleeding across `## 地理與氣候` into the next
+  // section's content. With respect_markdown_headers=true, no chunk
+  // may contain more than one `##` header line.
+  const std::string path = ResolveTaiwanCorpusPath();
+  std::ifstream f(path);
+  ASSERT_TRUE(f.good()) << "Cannot open corpus: " << path;
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  const std::string corpus = ss.str();
+
+  MarkdownChunker c; // default
+  auto chunks = c.Split(corpus);
+  ASSERT_GE(chunks.size(), 2u);
+
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    const std::string &t = chunks[i].text;
+    std::size_t header_count = 0;
+    // Count occurrences of `\n## ` plus a starting `## ` if the
+    // chunk begins with a header line.
+    if (t.size() >= 3 && t.substr(0, 3) == "## ")
+      ++header_count;
+    std::size_t pos = 0;
+    while ((pos = t.find("\n## ", pos)) != std::string::npos) {
+      ++header_count;
+      ++pos;
+    }
+    EXPECT_LE(header_count, 1u)
+        << "Chunk " << i << " spans " << header_count
+        << " `## ` headers — overlap crossed a section boundary:\n"
+        << t;
+  }
 }
 
 TEST(MarkdownChunkerCorpusTest, ByteOffsetsAreNonDecreasing) {

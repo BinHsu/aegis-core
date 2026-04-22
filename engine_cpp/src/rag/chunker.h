@@ -70,6 +70,31 @@ public:
     // here — Split() handles it automatically.
     std::vector<std::string> separators = {"\n\n", "\n", "。", "！",
                                            "？",   "，", " "};
+
+    // When true, treat lines matching `^#+\s+` (markdown ATX
+    // headers) as HARD segment boundaries: no chunk (including
+    // its overlap prefix) crosses a header. The header line
+    // joins the section BELOW it (its own section's content).
+    // Setting this false restores the v1 behavior where headers
+    // are just text — useful for plain-text corpora. Default true
+    // because the 2026-04-21 LAN smoke showed overlap pulling
+    // sentences from the previous section across `## 地理與氣候`
+    // into the next chunk's prefix, producing nonsensical excerpts
+    // like "130公里...## 地理與氣候臺灣島的總".
+    bool respect_markdown_headers = true;
+
+    // For `ApplyOverlap`: after computing the raw last-N-char tail
+    // of chunk N, walk FORWARD up to this many UTF-8 code points
+    // looking for a sentence boundary (`。`, `！`, `？`, `\n`).
+    // If one is found, the overlap tail begins AFTER that boundary
+    // — the overlap prefix of chunk N+1 then starts cleanly at a
+    // new sentence. If no boundary is found within the budget,
+    // fall back to the raw tail (v1 behavior). 0 disables the walk.
+    // Note: `，` (CJK comma) is intentionally NOT a boundary here —
+    // it's intra-sentence, so starting after a `，` still starts
+    // mid-thought. Default 40 is chosen to clear most zh-TW
+    // sentence-ends without making overlap unbounded.
+    std::size_t overlap_boundary_search_chars = 40;
   };
 
   MarkdownChunker();
