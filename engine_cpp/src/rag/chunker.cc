@@ -197,19 +197,66 @@ std::vector<Chunk> SplitRecursive(std::string_view text,
   return out;
 }
 
+// Walk forward from `raw_start_byte` through up to `max_walk_chars`
+// UTF-8 code points of `text`, looking for a sentence-ending mark
+// (`。`, `！`, `？`, `\n`). If found, return the byte offset
+// IMMEDIATELY AFTER that mark (so the overlap tail starts on the
+// next sentence). If no mark is found within the budget, return
+// `raw_start_byte` unchanged (caller falls back to the raw tail).
+//
+// `，` is intentionally NOT a boundary: CJK comma is intra-sentence,
+// and starting a chunk prefix just after `，` still strands readers
+// mid-thought. The goal is a CLEAN sentence start.
+std::size_t WalkForwardToSentenceStart(std::string_view text,
+                                       std::size_t raw_start_byte,
+                                       std::size_t max_walk_chars) {
+  if (max_walk_chars == 0 || raw_start_byte >= text.size())
+    return raw_start_byte;
+
+  static constexpr std::string_view kSentenceEnds[] = {
+      "。",
+      "！",
+      "？",
+      "\n",
+  };
+
+  std::size_t pos = raw_start_byte;
+  std::size_t walked = 0;
+  while (pos < text.size() && walked < max_walk_chars) {
+    for (const auto &end : kSentenceEnds) {
+      if (text.size() - pos >= end.size() &&
+          text.substr(pos, end.size()) == end) {
+        return pos + end.size();
+      }
+    }
+    pos += Utf8CharByteLen(static_cast<unsigned char>(text[pos]));
+    ++walked;
+  }
+  return raw_start_byte;
+}
+
 // Second pass: apply overlap by prepending the last `overlap_chars`
-// UTF-8 code points of chunk N to the front of chunk N+1.
-// Byte offset for chunk N+1 moves back by the overlap length.
-void ApplyOverlap(std::vector<Chunk> &chunks, std::size_t overlap_chars) {
+// UTF-8 code points of chunk N to the front of chunk N+1. When
+// `boundary_search_chars` > 0, walk the tail start forward to the
+// next sentence boundary so the prefix begins cleanly. Overlap is
+// only applied WITHIN a segment — the caller is responsible for
+// splitting inputs on header boundaries before calling this.
+// Byte offset for chunk N+1 moves back by the effective tail's byte length.
+void ApplyOverlap(std::vector<Chunk> &chunks, std::size_t overlap_chars,
+                  std::size_t boundary_search_chars) {
   if (overlap_chars == 0 || chunks.size() < 2)
     return;
   for (std::size_t i = 1; i < chunks.size(); ++i) {
     const Chunk &prev = chunks[i - 1];
-    const std::size_t overlap_start_byte_in_prev =
+    const std::size_t raw_start =
         Utf8DropAllButLastChars(prev.text, overlap_chars);
+    const std::size_t boundary_start =
+        WalkForwardToSentenceStart(prev.text, raw_start, boundary_search_chars);
     const std::string_view tail =
-        std::string_view(prev.text).substr(overlap_start_byte_in_prev);
+        std::string_view(prev.text).substr(boundary_start);
     const std::size_t tail_chars = Utf8CharCount(tail);
+    if (tail.empty())
+      continue; // Entire raw tail was skipped past — no overlap this step.
 
     Chunk &cur = chunks[i];
     std::string stitched;
@@ -222,6 +269,46 @@ void ApplyOverlap(std::vector<Chunk> &chunks, std::size_t overlap_chars) {
         cur.byte_offset >= tail.size() ? cur.byte_offset - tail.size() : 0;
     cur.char_count += tail_chars;
   }
+}
+
+// Segment `text` on markdown ATX headers — lines matching
+// `^#+\s+`. Each returned pair is `[start_byte, end_byte)` covering
+// a contiguous segment; the header line joins the segment BELOW it
+// (its own section's content). The first segment starts at byte 0
+// (and may precede any header — e.g., the HTML comment at the top
+// of `docs/rag/taiwan.md`).
+//
+// Byte-level scanning is intentional: ASCII `\n` (0x0A) and `#`
+// (0x23) never appear as UTF-8 continuation bytes, so this finds
+// header lines correctly regardless of CJK content in between.
+std::vector<std::pair<std::size_t, std::size_t>>
+SegmentOnHeaders(std::string_view text) {
+  std::vector<std::size_t> boundaries;
+  boundaries.push_back(0);
+
+  for (std::size_t pos = 0; pos < text.size(); ++pos) {
+    const bool at_line_start = (pos == 0 || text[pos - 1] == '\n');
+    if (!at_line_start || text[pos] != '#')
+      continue;
+    std::size_t hash_end = pos;
+    while (hash_end < text.size() && text[hash_end] == '#')
+      ++hash_end;
+    if (hash_end < text.size() &&
+        (text[hash_end] == ' ' || text[hash_end] == '\t')) {
+      if (pos > 0)
+        boundaries.push_back(pos);
+    }
+  }
+
+  std::vector<std::pair<std::size_t, std::size_t>> segments;
+  segments.reserve(boundaries.size());
+  for (std::size_t i = 0; i < boundaries.size(); ++i) {
+    const std::size_t start = boundaries[i];
+    const std::size_t end =
+        (i + 1 < boundaries.size()) ? boundaries[i + 1] : text.size();
+    segments.emplace_back(start, end);
+  }
+  return segments;
 }
 
 } // namespace
@@ -243,10 +330,31 @@ MarkdownChunker::MarkdownChunker(Config config) : config_(std::move(config)) {}
 std::vector<Chunk> MarkdownChunker::Split(std::string_view markdown) const {
   if (markdown.empty())
     return {};
-  auto chunks = SplitRecursive(markdown, /*base_byte_offset=*/0,
-                               config_.target_chunk_chars, config_.separators);
-  ApplyOverlap(chunks, config_.overlap_chars);
-  return chunks;
+
+  std::vector<std::pair<std::size_t, std::size_t>> segments;
+  if (config_.respect_markdown_headers) {
+    segments = SegmentOnHeaders(markdown);
+  } else {
+    segments.emplace_back(0, markdown.size());
+  }
+
+  std::vector<Chunk> all_chunks;
+  for (const auto &[seg_start, seg_end] : segments) {
+    const std::string_view seg =
+        markdown.substr(seg_start, seg_end - seg_start);
+    if (seg.empty())
+      continue;
+    auto seg_chunks = SplitRecursive(seg, seg_start, config_.target_chunk_chars,
+                                     config_.separators);
+    // Overlap is applied ONLY within a segment — headers are hard
+    // boundaries, so overlap must not pull text across them.
+    ApplyOverlap(seg_chunks, config_.overlap_chars,
+                 config_.overlap_boundary_search_chars);
+    for (auto &c : seg_chunks) {
+      all_chunks.push_back(std::move(c));
+    }
+  }
+  return all_chunks;
 }
 
 } // namespace aegis::rag

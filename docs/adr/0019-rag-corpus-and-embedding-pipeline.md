@@ -97,6 +97,25 @@ choices:
    Target chunk size ≈ 450 characters; overlap ≈ 80. No word-based
    splitter — Chinese has no word boundaries and naive tokenization
    mangles sentences.
+
+   > **Amendment — 2026-04-22 (post-LAN-smoke demo polish).** Two
+   > orthogonal rules added on top of the separator cascade, neither
+   > altering the 450/80 sizing contract:
+   > - **Markdown-aware segmentation.** Lines matching `^#+\s+` are
+   >   HARD segment boundaries — chunks never merge across a header,
+   >   and overlap prefixes never cross one. The header line joins
+   >   the section BELOW it. Trigger: 2026-04-21 LAN smoke produced
+   >   `"...130公里...## 地理與氣候臺灣島的總..."` when overlap pulled
+   >   the `概覽` section's tail through the `## 地理與氣候` header
+   >   into the next chunk's prefix. Opt-out via
+   >   `Config::respect_markdown_headers = false` for plain-text
+   >   corpora.
+   > - **Sentence-aware overlap walk.** After computing the raw last-N-char
+   >   tail, walk forward up to `Config::overlap_boundary_search_chars`
+   >   UTF-8 code points (default 40) to the next `。/！/？/\n` and
+   >   start the overlap prefix there. `，` is intentionally NOT a
+   >   boundary — intra-sentence, starting the prefix there still
+   >   strands readers mid-thought.
 3. **Embeddings**: `BAAI/bge-m3` via `FlagEmbedding`. Open weights,
    runs locally on Apple Silicon via sentence-transformers-compatible
    tooling, multilingual across 100+ languages, 1024-dim dense
