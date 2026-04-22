@@ -96,7 +96,8 @@ TEST_F(EngineSeedIntegrationTest, SeedLandsCorpusChunksIntoQdrant) {
 
   // Verify via QdrantClient::Search that the canary paragraph's
   // content is retrievable from the expected collection.
-  const std::string collection = DeriveCollectionName(corpus_path_.string());
+  const std::string collection =
+      DeriveCollectionName(corpus_path_.string(), "demo");
   auto cfg = vectordb::QdrantClient::ConfigFromEnv();
   ASSERT_TRUE(cfg.ok()) << cfg.status();
   auto client = vectordb::QdrantClient::Create(*cfg);

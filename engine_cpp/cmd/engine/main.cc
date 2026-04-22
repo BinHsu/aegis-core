@@ -226,8 +226,13 @@ int main(int argc, char **argv) {
               << std::endl;
   }
 
+  // QdrantClient implements both VectorSearcher (retrieval) and
+  // CollectionLister (ListCorpora metadata). Pass it to the service
+  // through both slots so the ListCorpora RPC has a backing source
+  // and sessions retain their retrieval path unchanged.
   aegis::grpc_service::AegisEngineServiceImpl service(
-      &session_budget, model_path, embedder.get(), qdrant_client.get());
+      &session_budget, model_path, embedder.get(), qdrant_client.get(),
+      qdrant_client.get());
 
   ::grpc::ServerBuilder builder;
   // Insecure for dev + staging. CLOUD mode mTLS is NOT mesh-provided

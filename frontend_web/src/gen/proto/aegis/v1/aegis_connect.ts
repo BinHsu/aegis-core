@@ -48,10 +48,14 @@ import {
   EgressMessage,
   EndMeetingRequest,
   EndMeetingResponse,
+  EngineListCorporaRequest,
+  EngineListCorporaResponse,
   HealthRequest,
   HealthResponse,
   IngestMessage,
   JoinAsViewerRequest,
+  ListCorporaRequest,
+  ListCorporaResponse,
   NegotiateWebRTCRequest,
   NegotiateWebRTCResponse,
   SendOfficerHintRequest,
@@ -197,6 +201,36 @@ export const Gateway = {
       O: SendOfficerHintResponse,
       kind: MethodKind.Unary,
     },
+    /**
+     * Lists RAG corpora available to this caller. Backs the Host UI's
+     * "pick a corpus" dropdown — the UI calls this on mount, populates
+     * options from the response, and falls back to an empty list on
+     * error. See ADR-0023 §"Decision B — RAG opt-in".
+     *
+     * Phase 3 (LAN / single-tenant): the gateway ignores `tenant_id` on
+     * the wire and hardcodes `"demo"` when forwarding to engine —
+     * ensures every `aegis_demo_*` collection in the local Qdrant is
+     * surfaced.
+     *
+     * Phase 4+ (cloud / multi-tenant per ADR-0022 §Decision): gateway
+     * MUST extract tenant_id from the JWT and substitute it; the field
+     * on the wire is advisory — clients that send a mismatched
+     * tenant_id are silently normalized. This keeps malicious / curious
+     * clients from enumerating other tenants' collections even if the
+     * field looks permissive.
+     *
+     * Errors:
+     *   UNAUTHENTICATED       — missing Cognito JWT (Cloud mode)
+     *   UNAVAILABLE           — engine unreachable
+     *
+     * @generated from rpc aegis.v1.Gateway.ListCorpora
+     */
+    listCorpora: {
+      name: "ListCorpora",
+      I: ListCorporaRequest,
+      O: ListCorporaResponse,
+      kind: MethodKind.Unary,
+    },
   },
 } as const;
 
@@ -256,6 +290,31 @@ export const Engine = {
       name: "Health",
       I: HealthRequest,
       O: HealthResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * Lists RAG collections visible to `tenant_id`. Backs the gateway's
+     * public `ListCorpora` RPC. The engine filters Qdrant's
+     * `CollectionsService.List()` output by prefix `aegis_<tenant_id>_`
+     * (collection-level tenant isolation per ADR-0022 §Decision).
+     *
+     * Payload count / any other per-collection metadata is deliberately
+     * NOT returned: Qdrant's list endpoint is O(1) name-only, but a
+     * per-collection count would force N calls to `GetCollectionInfo`.
+     * The viewer UI does not surface counts today — if that changes,
+     * add a narrow `include_stats` request flag and pay the N+1 only
+     * when asked.
+     *
+     * Errors:
+     *   INVALID_ARGUMENT      — empty tenant_id
+     *   UNAVAILABLE           — Qdrant unreachable
+     *
+     * @generated from rpc aegis.v1.Engine.ListCorpora
+     */
+    listCorpora: {
+      name: "ListCorpora",
+      I: EngineListCorporaRequest,
+      O: EngineListCorporaResponse,
       kind: MethodKind.Unary,
     },
   },

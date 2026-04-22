@@ -145,6 +145,28 @@ service Gateway {
   //   FAILED_PRECONDITION   — session already ended
   rpc SendOfficerHint(SendOfficerHintRequest) returns (SendOfficerHintResponse);
 
+  // Lists RAG corpora available to this caller. Backs the Host UI's
+  // "pick a corpus" dropdown — the UI calls this on mount, populates
+  // options from the response, and falls back to an empty list on
+  // error. See ADR-0023 §"Decision B — RAG opt-in".
+  //
+  // Phase 3 (LAN / single-tenant): the gateway ignores `tenant_id` on
+  // the wire and hardcodes `"demo"` when forwarding to engine —
+  // ensures every `aegis_demo_*` collection in the local Qdrant is
+  // surfaced.
+  //
+  // Phase 4+ (cloud / multi-tenant per ADR-0022 §Decision): gateway
+  // MUST extract tenant_id from the JWT and substitute it; the field
+  // on the wire is advisory — clients that send a mismatched
+  // tenant_id are silently normalized. This keeps malicious / curious
+  // clients from enumerating other tenants' collections even if the
+  // field looks permissive.
+  //
+  // Errors:
+  //   UNAUTHENTICATED       — missing Cognito JWT (Cloud mode)
+  //   UNAVAILABLE           — engine unreachable
+  rpc ListCorpora(ListCorporaRequest) returns (ListCorporaResponse);
+
   // NOTE: an explicit query RPC (formerly "AskRAG") was considered
   // and removed before MVP. Automatic prompter hints delivered via
   // `ViewerEvent.hint` cover the target UX (host in live meeting,
@@ -161,7 +183,8 @@ service Gateway {
 message CreateMeetingRequest {
   // Identifier of the RAG corpus to bind to this meeting. In Cloud mode
   // this is a DynamoDB partition key; in Local mode it is a Qdrant
-  // collection name (e.g., `aegis_taiwan` from `engine seed`).
+  // collection name (e.g., `aegis_demo_taiwan` from `engine seed
+  // --tenant=demo --corpus=docs/rag/taiwan.md`).
   //
   // An empty string means NO RAG binding — the meeting runs transcript-
   // only and the chief-of-staff provides hints manually. This is a
@@ -447,6 +470,39 @@ message SendOfficerHintResponse {
   uint64 hint_id = 1;
 }
 
+// -----------------------------------------------------------------------------
+// ListCorpora — shared by Gateway and Engine services
+// -----------------------------------------------------------------------------
+
+message ListCorporaRequest {
+  // Tenant whose collections to list. Advisory on the public
+  // (Gateway) surface: the gateway overrides with the JWT tenant in
+  // cloud mode (ADR-0022) or hardcodes `"demo"` in LAN mode (Phase 3).
+  // Required on the internal (Engine) surface — empty is
+  // INVALID_ARGUMENT.
+  string tenant_id = 1;
+}
+
+message CorpusInfo {
+  // Qdrant collection name as it appears in the vector store — e.g.
+  // `aegis_demo_taiwan`. The Host UI uses this verbatim as the
+  // `rag_id` it sends to `CreateMeeting`.
+  string id = 1;
+
+  // Display label shown in the dropdown. Derived from `id` by
+  // stripping the `aegis_<tenant>_` prefix and restoring underscores
+  // to spaces ("aegis_demo_taiwan" → "taiwan"). The engine computes
+  // this so every caller renders the same label.
+  string label = 2;
+}
+
+message ListCorporaResponse {
+  // Collections matching the tenant prefix, sorted by id ascending
+  // for stable UI rendering. Empty list is a valid response (tenant
+  // has not seeded any corpus yet).
+  repeated CorpusInfo corpora = 1;
+}
+
 // =============================================================================
 // Service: aegis.v1.Engine  (internal, Go Gateway -> C++ engine)
 // =============================================================================
@@ -487,6 +543,41 @@ service Engine {
   // Health / readiness probe. Called by the Gateway for routing
   // decisions and by Kubernetes liveness / readiness probes.
   rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Lists RAG collections visible to `tenant_id`. Backs the gateway's
+  // public `ListCorpora` RPC. The engine filters Qdrant's
+  // `CollectionsService.List()` output by prefix `aegis_<tenant_id>_`
+  // (collection-level tenant isolation per ADR-0022 §Decision).
+  //
+  // Payload count / any other per-collection metadata is deliberately
+  // NOT returned: Qdrant's list endpoint is O(1) name-only, but a
+  // per-collection count would force N calls to `GetCollectionInfo`.
+  // The viewer UI does not surface counts today — if that changes,
+  // add a narrow `include_stats` request flag and pay the N+1 only
+  // when asked.
+  //
+  // Errors:
+  //   INVALID_ARGUMENT      — empty tenant_id
+  //   UNAVAILABLE           — Qdrant unreachable
+  rpc ListCorpora(EngineListCorporaRequest) returns (EngineListCorporaResponse);
+}
+
+// -----------------------------------------------------------------------------
+// Engine.ListCorpora — internal wire-level messages distinct from the
+// gateway's public pair (buf lint RPC_REQUEST_RESPONSE_UNIQUE).
+//
+// Kept structurally identical to the public pair so the gateway's
+// proxy handler is a near-passthrough; if the two surfaces ever need
+// to diverge (e.g. engine exposes debug fields the gateway redacts),
+// they can evolve independently without a breaking-change flag day.
+// -----------------------------------------------------------------------------
+
+message EngineListCorporaRequest {
+  string tenant_id = 1;
+}
+
+message EngineListCorporaResponse {
+  repeated CorpusInfo corpora = 1;
 }
 
 // -----------------------------------------------------------------------------

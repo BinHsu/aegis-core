@@ -166,7 +166,7 @@ say "step 3/3 — seed $CORPUS into Qdrant (target=local)"
 AEGIS_MANIFEST_PATH="$REPO_ROOT/models/manifest.json" \
 AEGIS_MODEL_PATH="$REPO_ROOT/models" \
   "$REPO_ROOT/tools/bazelisk/bazelisk" run //engine_cpp/cmd/engine -- \
-    seed --corpus="$CORPUS" --target=local
+    seed --corpus="$CORPUS" --target=local --tenant=demo
 
 # --- Next step ---------------------------------------------------------------
 
@@ -182,7 +182,8 @@ Start the full stack in a separate terminal:
 Then:
 
   1. Open http://localhost:5173
-  2. Create a meeting with rag_id=aegis_taiwan
+  2. Create a meeting with rag_id=aegis_demo_taiwan (auto-populated
+     in the Host UI dropdown via ListCorpora since PR #75)
   3. Scan the viewer QR on a phone on the same LAN
   4. Speak into the mic
 

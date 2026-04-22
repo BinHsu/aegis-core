@@ -64,6 +64,7 @@ const (
 	Gateway_JoinAsViewer_FullMethodName    = "/aegis.v1.Gateway/JoinAsViewer"
 	Gateway_EndMeeting_FullMethodName      = "/aegis.v1.Gateway/EndMeeting"
 	Gateway_SendOfficerHint_FullMethodName = "/aegis.v1.Gateway/SendOfficerHint"
+	Gateway_ListCorpora_FullMethodName     = "/aegis.v1.Gateway/ListCorpora"
 )
 
 // GatewayClient is the client API for Gateway service.
@@ -162,6 +163,28 @@ type GatewayClient interface {
 	//	NOT_FOUND             — unknown session_id
 	//	FAILED_PRECONDITION   — session already ended
 	SendOfficerHint(ctx context.Context, in *SendOfficerHintRequest, opts ...grpc.CallOption) (*SendOfficerHintResponse, error)
+	// Lists RAG corpora available to this caller. Backs the Host UI's
+	// "pick a corpus" dropdown — the UI calls this on mount, populates
+	// options from the response, and falls back to an empty list on
+	// error. See ADR-0023 §"Decision B — RAG opt-in".
+	//
+	// Phase 3 (LAN / single-tenant): the gateway ignores `tenant_id` on
+	// the wire and hardcodes `"demo"` when forwarding to engine —
+	// ensures every `aegis_demo_*` collection in the local Qdrant is
+	// surfaced.
+	//
+	// Phase 4+ (cloud / multi-tenant per ADR-0022 §Decision): gateway
+	// MUST extract tenant_id from the JWT and substitute it; the field
+	// on the wire is advisory — clients that send a mismatched
+	// tenant_id are silently normalized. This keeps malicious / curious
+	// clients from enumerating other tenants' collections even if the
+	// field looks permissive.
+	//
+	// Errors:
+	//
+	//	UNAUTHENTICATED       — missing Cognito JWT (Cloud mode)
+	//	UNAVAILABLE           — engine unreachable
+	ListCorpora(ctx context.Context, in *ListCorporaRequest, opts ...grpc.CallOption) (*ListCorporaResponse, error)
 }
 
 type gatewayClient struct {
@@ -225,6 +248,16 @@ func (c *gatewayClient) SendOfficerHint(ctx context.Context, in *SendOfficerHint
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SendOfficerHintResponse)
 	err := c.cc.Invoke(ctx, Gateway_SendOfficerHint_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayClient) ListCorpora(ctx context.Context, in *ListCorporaRequest, opts ...grpc.CallOption) (*ListCorporaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCorporaResponse)
+	err := c.cc.Invoke(ctx, Gateway_ListCorpora_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +360,28 @@ type GatewayServer interface {
 	//	NOT_FOUND             — unknown session_id
 	//	FAILED_PRECONDITION   — session already ended
 	SendOfficerHint(context.Context, *SendOfficerHintRequest) (*SendOfficerHintResponse, error)
+	// Lists RAG corpora available to this caller. Backs the Host UI's
+	// "pick a corpus" dropdown — the UI calls this on mount, populates
+	// options from the response, and falls back to an empty list on
+	// error. See ADR-0023 §"Decision B — RAG opt-in".
+	//
+	// Phase 3 (LAN / single-tenant): the gateway ignores `tenant_id` on
+	// the wire and hardcodes `"demo"` when forwarding to engine —
+	// ensures every `aegis_demo_*` collection in the local Qdrant is
+	// surfaced.
+	//
+	// Phase 4+ (cloud / multi-tenant per ADR-0022 §Decision): gateway
+	// MUST extract tenant_id from the JWT and substitute it; the field
+	// on the wire is advisory — clients that send a mismatched
+	// tenant_id are silently normalized. This keeps malicious / curious
+	// clients from enumerating other tenants' collections even if the
+	// field looks permissive.
+	//
+	// Errors:
+	//
+	//	UNAUTHENTICATED       — missing Cognito JWT (Cloud mode)
+	//	UNAVAILABLE           — engine unreachable
+	ListCorpora(context.Context, *ListCorporaRequest) (*ListCorporaResponse, error)
 }
 
 // UnimplementedGatewayServer should be embedded to have
@@ -350,6 +405,9 @@ func (UnimplementedGatewayServer) EndMeeting(context.Context, *EndMeetingRequest
 }
 func (UnimplementedGatewayServer) SendOfficerHint(context.Context, *SendOfficerHintRequest) (*SendOfficerHintResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendOfficerHint not implemented")
+}
+func (UnimplementedGatewayServer) ListCorpora(context.Context, *ListCorporaRequest) (*ListCorporaResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListCorpora not implemented")
 }
 func (UnimplementedGatewayServer) testEmbeddedByValue() {}
 
@@ -454,6 +512,24 @@ func _Gateway_SendOfficerHint_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Gateway_ListCorpora_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCorporaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayServer).ListCorpora(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Gateway_ListCorpora_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayServer).ListCorpora(ctx, req.(*ListCorporaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Gateway_ServiceDesc is the grpc.ServiceDesc for Gateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -477,6 +553,10 @@ var Gateway_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "SendOfficerHint",
 			Handler:    _Gateway_SendOfficerHint_Handler,
 		},
+		{
+			MethodName: "ListCorpora",
+			Handler:    _Gateway_ListCorpora_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -491,6 +571,7 @@ var Gateway_ServiceDesc = grpc.ServiceDesc{
 const (
 	Engine_StreamTranscribe_FullMethodName = "/aegis.v1.Engine/StreamTranscribe"
 	Engine_Health_FullMethodName           = "/aegis.v1.Engine/Health"
+	Engine_ListCorpora_FullMethodName      = "/aegis.v1.Engine/ListCorpora"
 )
 
 // EngineClient is the client API for Engine service.
@@ -532,6 +613,23 @@ type EngineClient interface {
 	// Health / readiness probe. Called by the Gateway for routing
 	// decisions and by Kubernetes liveness / readiness probes.
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
+	// Lists RAG collections visible to `tenant_id`. Backs the gateway's
+	// public `ListCorpora` RPC. The engine filters Qdrant's
+	// `CollectionsService.List()` output by prefix `aegis_<tenant_id>_`
+	// (collection-level tenant isolation per ADR-0022 §Decision).
+	//
+	// Payload count / any other per-collection metadata is deliberately
+	// NOT returned: Qdrant's list endpoint is O(1) name-only, but a
+	// per-collection count would force N calls to `GetCollectionInfo`.
+	// The viewer UI does not surface counts today — if that changes,
+	// add a narrow `include_stats` request flag and pay the N+1 only
+	// when asked.
+	//
+	// Errors:
+	//
+	//	INVALID_ARGUMENT      — empty tenant_id
+	//	UNAVAILABLE           — Qdrant unreachable
+	ListCorpora(ctx context.Context, in *EngineListCorporaRequest, opts ...grpc.CallOption) (*EngineListCorporaResponse, error)
 }
 
 type engineClient struct {
@@ -559,6 +657,16 @@ func (c *engineClient) Health(ctx context.Context, in *HealthRequest, opts ...gr
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
 	err := c.cc.Invoke(ctx, Engine_Health_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *engineClient) ListCorpora(ctx context.Context, in *EngineListCorporaRequest, opts ...grpc.CallOption) (*EngineListCorporaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EngineListCorporaResponse)
+	err := c.cc.Invoke(ctx, Engine_ListCorpora_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -604,6 +712,23 @@ type EngineServer interface {
 	// Health / readiness probe. Called by the Gateway for routing
 	// decisions and by Kubernetes liveness / readiness probes.
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
+	// Lists RAG collections visible to `tenant_id`. Backs the gateway's
+	// public `ListCorpora` RPC. The engine filters Qdrant's
+	// `CollectionsService.List()` output by prefix `aegis_<tenant_id>_`
+	// (collection-level tenant isolation per ADR-0022 §Decision).
+	//
+	// Payload count / any other per-collection metadata is deliberately
+	// NOT returned: Qdrant's list endpoint is O(1) name-only, but a
+	// per-collection count would force N calls to `GetCollectionInfo`.
+	// The viewer UI does not surface counts today — if that changes,
+	// add a narrow `include_stats` request flag and pay the N+1 only
+	// when asked.
+	//
+	// Errors:
+	//
+	//	INVALID_ARGUMENT      — empty tenant_id
+	//	UNAVAILABLE           — Qdrant unreachable
+	ListCorpora(context.Context, *EngineListCorporaRequest) (*EngineListCorporaResponse, error)
 }
 
 // UnimplementedEngineServer should be embedded to have
@@ -618,6 +743,9 @@ func (UnimplementedEngineServer) StreamTranscribe(grpc.BidiStreamingServer[Inges
 }
 func (UnimplementedEngineServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedEngineServer) ListCorpora(context.Context, *EngineListCorporaRequest) (*EngineListCorporaResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListCorpora not implemented")
 }
 func (UnimplementedEngineServer) testEmbeddedByValue() {}
 
@@ -664,6 +792,24 @@ func _Engine_Health_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Engine_ListCorpora_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineListCorporaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EngineServer).ListCorpora(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Engine_ListCorpora_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EngineServer).ListCorpora(ctx, req.(*EngineListCorporaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Engine_ServiceDesc is the grpc.ServiceDesc for Engine service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -674,6 +820,10 @@ var Engine_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _Engine_Health_Handler,
+		},
+		{
+			MethodName: "ListCorpora",
+			Handler:    _Engine_ListCorpora_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

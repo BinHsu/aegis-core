@@ -91,23 +91,28 @@ const ALL_MODES: { readonly value: CaptureMode; readonly label: string }[] = [
 // plenty of meetings are better served by staff providing hints
 // manually than by a mediocre retrieval hit.
 //
-// The list is authored here and must stay in sync with what `engine
-// seed` has actually populated in the target Qdrant — only
-// `aegis_taiwan` ships today (seeded from `docs/rag/taiwan.md`).
-// A live multi-tenant system replaces this with a per-tenant
-// `ListCorpora` RPC once the query path lands (Phase 4+); until
-// then, offering collections that don't exist upstream is a UX lie
-// — CreateMeeting would silently bind to a missing `rag_id` and the
-// retriever would log `no matches in '<missing>'` every window.
+// HARDCODED FALLBACK: the live dropdown is populated at runtime from
+// the gateway's `ListCorpora` RPC (see `loadCorporaDynamic` below).
+// When that call fails — engine down, Qdrant unreachable, gateway
+// unimplemented, CORS block — the UI falls back to this minimal
+// static list so the Host page is still operable (empty `rag_id`
+// always works; `aegis_demo_taiwan` is the canonical LAN seed).
 //
-// The `value` is what the Gateway's CreateMeeting RPC sees in the
+// The `value` is what the Gateway's `CreateMeeting` RPC sees in the
 // `rag_id` proto field; empty string means "no RAG binding". The
 // `label` is the human-friendly dropdown text.
-const RAG_CORPORA: { readonly value: string; readonly label: string }[] = [
+const RAG_CORPORA_FALLBACK: {
+  readonly value: string;
+  readonly label: string;
+}[] = [
   { value: "", label: "(No corpus — staff provides hints manually)" },
-  { value: "aegis_taiwan", label: "Taiwan (zh-TW Wikipedia demo)" },
+  { value: "aegis_demo_taiwan", label: "Taiwan (zh-TW Wikipedia demo)" },
 ];
-const DEFAULT_RAG_ID = RAG_CORPORA[0]!.value; // "" — opt-in RAG
+// Default selection = the opt-out entry (empty string) regardless of
+// whether we're showing the fallback list or a dynamically fetched
+// one. Kept as a constant so the reducer / form reset paths don't
+// have to reach into the corpus state.
+const DEFAULT_RAG_ID = "";
 
 // Rolling transcript window shown on the host UI. Matches the
 // Viewer-side `PROMPTER_WINDOW` (5) so host and viewers see the same
@@ -441,6 +446,19 @@ export function HostPage(): JSX.Element {
   const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // RAG corpus list — fetched live from `Gateway.ListCorpora` on mount
+  // so the dropdown reflects what's actually seeded in the backing
+  // Qdrant (a Host UI that offers a corpus the engine can't resolve
+  // silently produces "no matches" hints on every window). Falls back
+  // to the hardcoded 2-entry list on any error so the page is still
+  // operable when the engine is down.
+  const [corporaOptions, setCorporaOptions] =
+    useState<{ readonly value: string; readonly label: string }[]>(
+      RAG_CORPORA_FALLBACK,
+    );
+  const [corporaLoading, setCorporaLoading] = useState<boolean>(true);
+  const [corporaError, setCorporaError] = useState<string | null>(null);
+
   // ──────────────────────────────────────────────────────────────────
   // Auth subscription. Local mode fires once with the synthetic
   // principal; Cloud mode fires on sign-in completion.
@@ -450,6 +468,45 @@ export function HostPage(): JSX.Element {
       dispatch({ type: "AUTH_RESOLVED", principal });
     });
     return unsubscribe;
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Fetch RAG corpora once on mount. The gateway proxies this to the
+  // engine, which filters Qdrant's list-collections output by tenant
+  // prefix. `cancelled` guards against the response landing after the
+  // user navigated away.
+  // ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async (): Promise<void> => {
+      try {
+        const resp = await gatewayClient.listCorpora({ tenantId: "" });
+        if (cancelled) return;
+        // Always prepend the opt-out entry so "No corpus" is present
+        // even when the engine returns zero seeded corpora.
+        const dynamicEntries = resp.corpora.map((c) => ({
+          value: c.id,
+          label: c.label !== "" ? c.label : c.id,
+        }));
+        setCorporaOptions([
+          { value: "", label: "(No corpus — staff provides hints manually)" },
+          ...dynamicEntries,
+        ]);
+        setCorporaError(null);
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setCorporaError(msg);
+        // Keep the fallback list (already set in state initializer) —
+        // operator can still start a meeting against the hardcoded
+        // `aegis_demo_taiwan` or No-corpus.
+      } finally {
+        if (!cancelled) setCorporaLoading(false);
+      }
+    })();
+    return (): void => {
+      cancelled = true;
+    };
   }, []);
 
   // ──────────────────────────────────────────────────────────────────
@@ -758,7 +815,7 @@ export function HostPage(): JSX.Element {
             RAG corpus:&nbsp;
             <select
               value={ragId}
-              disabled={isCreating}
+              disabled={isCreating || corporaLoading}
               onChange={(e) =>
                 dispatch({
                   type: "FORM_FIELD_CHANGED",
@@ -767,12 +824,35 @@ export function HostPage(): JSX.Element {
                 })
               }
             >
-              {RAG_CORPORA.map((c) => (
+              {corporaOptions.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
                 </option>
               ))}
             </select>
+            {corporaLoading && (
+              <span
+                style={{
+                  marginLeft: "0.5rem",
+                  color: "#888",
+                  fontSize: "0.85rem",
+                }}
+              >
+                (loading…)
+              </span>
+            )}
+            {corporaError !== null && (
+              <span
+                style={{
+                  marginLeft: "0.5rem",
+                  color: "#c0392b",
+                  fontSize: "0.85rem",
+                }}
+                title={corporaError}
+              >
+                (live corpus list unavailable — using fallback)
+              </span>
+            )}
           </label>
           <label style={{ display: "block", marginBottom: "0.5rem" }}>
             Meeting title:&nbsp;

@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -831,5 +832,77 @@ func TestSendOfficerHintHappyPathBroadcastsToSubscriber(t *testing.T) {
 	}
 	if got := ev.GetHint().GetHintId(); got != 2 {
 		t.Fatalf("broadcast #2 hint_id: got %d, want 2", got)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// ListCorpora
+// -----------------------------------------------------------------------------
+
+func TestListCorporaUnimplementedWhenNotWired(t *testing.T) {
+	// newTestService uses newWithProber which does NOT set listCorpora.
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	client, cleanup := setupServer(t, svc)
+	defer cleanup()
+
+	_, err := client.ListCorpora(context.Background(), &aegisv1.ListCorporaRequest{})
+	if err == nil {
+		t.Fatal("expected UNIMPLEMENTED error, got nil")
+	}
+	if got, want := status.Code(err), codes.Unimplemented; got != want {
+		t.Fatalf("status code: got %v, want %v", got, want)
+	}
+}
+
+func TestListCorporaOverridesTenantIDToDemo(t *testing.T) {
+	// The gateway must substitute phase3DefaultTenant regardless of what
+	// the client sent — guards against client enumeration of other
+	// tenants' collection names (ADR-0022 enforcement point).
+	var capturedTenant string
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	svc.listCorpora = func(ctx context.Context, tenantID string) (*aegisv1.ListCorporaResponse, error) {
+		capturedTenant = tenantID
+		return &aegisv1.ListCorporaResponse{
+			Corpora: []*aegisv1.CorpusInfo{
+				{Id: "aegis_demo_taiwan", Label: "taiwan"},
+			},
+		}, nil
+	}
+	client, cleanup := setupServer(t, svc)
+	defer cleanup()
+
+	// Client tries to impersonate a different tenant.
+	resp, err := client.ListCorpora(context.Background(), &aegisv1.ListCorporaRequest{
+		TenantId: "attacker-tenant",
+	})
+	if err != nil {
+		t.Fatalf("ListCorpora: %v", err)
+	}
+	if capturedTenant != "demo" {
+		t.Fatalf("gateway did not override tenant_id: got %q, want %q",
+			capturedTenant, "demo")
+	}
+	if len(resp.GetCorpora()) != 1 {
+		t.Fatalf("got %d corpora, want 1", len(resp.GetCorpora()))
+	}
+	if got := resp.GetCorpora()[0].GetId(); got != "aegis_demo_taiwan" {
+		t.Fatalf("corpus id: got %q, want %q", got, "aegis_demo_taiwan")
+	}
+}
+
+func TestListCorporaUnavailableOnEngineError(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	svc.listCorpora = func(ctx context.Context, tenantID string) (*aegisv1.ListCorporaResponse, error) {
+		return nil, errors.New("engine offline")
+	}
+	client, cleanup := setupServer(t, svc)
+	defer cleanup()
+
+	_, err := client.ListCorpora(context.Background(), &aegisv1.ListCorporaRequest{})
+	if err == nil {
+		t.Fatal("expected UNAVAILABLE error, got nil")
+	}
+	if got, want := status.Code(err), codes.Unavailable; got != want {
+		t.Fatalf("status code: got %v, want %v", got, want)
 	}
 }

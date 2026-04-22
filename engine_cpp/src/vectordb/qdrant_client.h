@@ -81,7 +81,29 @@ protected:
   VectorSearcher &operator=(const VectorSearcher &) = delete;
 };
 
-class QdrantClient : public VectorSearcher {
+// Metadata-side surface over the vector database — enumerate
+// collection names. Used by the engine's `ListCorpora` gRPC handler
+// so the Host UI's corpus dropdown can reflect what's actually
+// seeded. Kept separate from `VectorSearcher` so the retriever's
+// minimal dependency surface stays exactly "I need to search" —
+// listing collections is an admin / UI concern, not an inference
+// concern, and most tests do not need to fake it.
+class CollectionLister {
+public:
+  virtual ~CollectionLister() = default;
+
+  // Returns the complete list of collection names the backing
+  // Qdrant knows about. Caller is responsible for any tenant /
+  // prefix filtering (the list API has no server-side filter).
+  virtual absl::StatusOr<std::vector<std::string>> ListCollections() = 0;
+
+protected:
+  CollectionLister() = default;
+  CollectionLister(const CollectionLister &) = delete;
+  CollectionLister &operator=(const CollectionLister &) = delete;
+};
+
+class QdrantClient : public VectorSearcher, public CollectionLister {
 public:
   struct Config {
     std::string endpoint; // host:port, no scheme
@@ -126,6 +148,11 @@ public:
   absl::StatusOr<std::vector<SearchResult>>
   Search(std::string_view collection, absl::Span<const float> query_vec,
          int top_k) override;
+
+  // Lists every collection name the Qdrant instance currently knows
+  // about. No server-side filter (the Qdrant API exposes none);
+  // callers apply their own prefix matching.
+  absl::StatusOr<std::vector<std::string>> ListCollections() override;
 
 private:
   struct Impl;

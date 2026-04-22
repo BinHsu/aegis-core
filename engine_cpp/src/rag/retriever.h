@@ -69,7 +69,8 @@ public:
 
   // `embedder` and `searcher` must outlive this Retriever. `collection`
   // is the Qdrant collection name bound via `SessionStart.rag_id` —
-  // typically `aegis_<corpus_stem>` per `seed::DeriveCollectionName`.
+  // typically `aegis_<tenant>_<corpus_stem>` per
+  // `seed::DeriveCollectionName` (ADR-0022 naming).
   //
   // Two overloads instead of `Config config = {}`: the default-argument
   // form would need `Config`'s in-class initializers visible at the

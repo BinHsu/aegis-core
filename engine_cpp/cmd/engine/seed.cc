@@ -30,6 +30,11 @@ ABSL_FLAG(std::string, corpus, "",
 ABSL_FLAG(std::string, target, "local",
           "Where to write vectors: 'local' (localhost:6334, plaintext) or "
           "'cloud' (reads QDRANT_URL + QDRANT_API_KEY from env).");
+ABSL_FLAG(std::string, tenant, "demo",
+          "Tenant namespace for collection naming (ADR-0022). The seeded "
+          "collection is named `aegis_<tenant>_<corpus-stem>`. LAN demo "
+          "defaults to 'demo'; cloud seed jobs should pass the owning "
+          "tenant (JWT sub) explicitly.");
 ABSL_FLAG(bool, verbose, false,
           "Print per-chunk progress to stderr. Default is silent on success.");
 
@@ -60,7 +65,8 @@ std::string ContentHashUuid(std::string_view text) {
       u[12], u[13], u[14], u[15]);
 }
 
-std::string DeriveCollectionName(std::string_view corpus_path) {
+std::string DeriveCollectionName(std::string_view corpus_path,
+                                 std::string_view tenant) {
   // Take basename (strip directory) then strip trailing extension.
   size_t slash = corpus_path.find_last_of('/');
   std::string_view base = slash == std::string_view::npos
@@ -70,25 +76,36 @@ std::string DeriveCollectionName(std::string_view corpus_path) {
   std::string_view stem =
       dot == std::string_view::npos ? base : base.substr(0, dot);
 
+  auto sanitize = [](std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+      if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+        out.push_back(c);
+      } else if (c >= 'A' && c <= 'Z') {
+        out.push_back(static_cast<char>(c + ('a' - 'A')));
+      } else {
+        out.push_back('_');
+      }
+    }
+    return out;
+  };
+
   // Sanitize: allow [a-z0-9_], lowercase A–Z, any other character
   // becomes '_'. Qdrant accepts a broader charset but staying
   // conservative keeps the name safe for URL-style references and
-  // shell quoting.
-  std::string sanitized;
-  sanitized.reserve(stem.size());
-  for (char c : stem) {
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
-      sanitized.push_back(c);
-    } else if (c >= 'A' && c <= 'Z') {
-      sanitized.push_back(static_cast<char>(c + ('a' - 'A')));
-    } else {
-      sanitized.push_back('_');
-    }
+  // shell quoting. Same rule applies to the tenant segment so a
+  // hostile / malformed `--tenant` value cannot inject `_`-separated
+  // characters that break the `aegis_<tenant>_<stem>` prefix parse.
+  std::string sanitized_stem = sanitize(stem);
+  if (sanitized_stem.empty()) {
+    sanitized_stem = "unnamed";
   }
-  if (sanitized.empty()) {
-    sanitized = "unnamed";
+  std::string sanitized_tenant = sanitize(tenant);
+  if (sanitized_tenant.empty()) {
+    sanitized_tenant = "demo";
   }
-  return absl::StrCat("aegis_", sanitized);
+  return absl::StrCat("aegis_", sanitized_tenant, "_", sanitized_stem);
 }
 
 namespace {
@@ -175,6 +192,7 @@ int RunSeed(int argc, char **argv) {
 
   const std::string corpus_path = absl::GetFlag(FLAGS_corpus);
   const std::string target = absl::GetFlag(FLAGS_target);
+  const std::string tenant = absl::GetFlag(FLAGS_tenant);
   const bool verbose = absl::GetFlag(FLAGS_verbose);
 
   if (corpus_path.empty()) {
@@ -228,7 +246,7 @@ int RunSeed(int argc, char **argv) {
 
   // Stage 5 — create the collection (idempotent via CollectionExists
   // fast-path in QdrantClient).
-  const std::string collection = DeriveCollectionName(corpus_path);
+  const std::string collection = DeriveCollectionName(corpus_path, tenant);
   const auto create_status = (*client)->CreateCollection(
       collection, kBgeM3Dim, vectordb::DistanceMetric::kCosine);
   if (!create_status.ok()) {

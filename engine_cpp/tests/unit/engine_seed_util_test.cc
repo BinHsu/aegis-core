@@ -67,39 +67,52 @@ TEST(ContentHashUuidTest, EmptyStringHasDefinedOutput) {
 }
 
 // -----------------------------------------------------------------------------
-// DeriveCollectionName — basename + sanitize + `aegis_` prefix.
+// DeriveCollectionName — basename + sanitize + `aegis_<tenant>_` prefix.
 // -----------------------------------------------------------------------------
 
 TEST(DeriveCollectionNameTest, StripsDirectoryAndExtension) {
-  EXPECT_EQ(DeriveCollectionName("docs/rag/taiwan.md"), "aegis_taiwan");
+  EXPECT_EQ(DeriveCollectionName("docs/rag/taiwan.md", "demo"),
+            "aegis_demo_taiwan");
 }
 
 TEST(DeriveCollectionNameTest, NoDirectoryStillWorks) {
-  EXPECT_EQ(DeriveCollectionName("corpus.md"), "aegis_corpus");
+  EXPECT_EQ(DeriveCollectionName("corpus.md", "demo"), "aegis_demo_corpus");
 }
 
 TEST(DeriveCollectionNameTest, NoExtensionStillWorks) {
-  EXPECT_EQ(DeriveCollectionName("corpus"), "aegis_corpus");
+  EXPECT_EQ(DeriveCollectionName("corpus", "demo"), "aegis_demo_corpus");
 }
 
 TEST(DeriveCollectionNameTest, LowercasesCapitals) {
-  EXPECT_EQ(DeriveCollectionName("MixedCaseName.md"), "aegis_mixedcasename");
+  EXPECT_EQ(DeriveCollectionName("MixedCaseName.md", "demo"),
+            "aegis_demo_mixedcasename");
 }
 
 TEST(DeriveCollectionNameTest, MapsUnsafeCharactersToUnderscore) {
   // Hyphens, dots (in stem), and spaces all collapse to '_'.
-  EXPECT_EQ(DeriveCollectionName("foo-bar.v2.md"), "aegis_foo_bar_v2");
-  EXPECT_EQ(DeriveCollectionName("a b c.md"), "aegis_a_b_c");
+  EXPECT_EQ(DeriveCollectionName("foo-bar.v2.md", "demo"),
+            "aegis_demo_foo_bar_v2");
+  EXPECT_EQ(DeriveCollectionName("a b c.md", "demo"), "aegis_demo_a_b_c");
 }
 
 TEST(DeriveCollectionNameTest, EmptyStemFallsBack) {
   // `.md` has no stem after stripping the extension.
-  EXPECT_EQ(DeriveCollectionName(".md"), "aegis_unnamed");
+  EXPECT_EQ(DeriveCollectionName(".md", "demo"), "aegis_demo_unnamed");
 }
 
 TEST(DeriveCollectionNameTest, AbsolutePathWorks) {
-  EXPECT_EQ(DeriveCollectionName("/tmp/Corpus-Name.V1.md"),
-            "aegis_corpus_name_v1");
+  EXPECT_EQ(DeriveCollectionName("/tmp/Corpus-Name.V1.md", "demo"),
+            "aegis_demo_corpus_name_v1");
+}
+
+TEST(DeriveCollectionNameTest, TenantSegmentIsSanitized) {
+  // Tenant with unsafe chars: uppercase + hyphen + slash.
+  EXPECT_EQ(DeriveCollectionName("taiwan.md", "Acme-Corp/team"),
+            "aegis_acme_corp_team_taiwan");
+}
+
+TEST(DeriveCollectionNameTest, EmptyTenantFallsBackToDemo) {
+  EXPECT_EQ(DeriveCollectionName("taiwan.md", ""), "aegis_demo_taiwan");
 }
 
 } // namespace
