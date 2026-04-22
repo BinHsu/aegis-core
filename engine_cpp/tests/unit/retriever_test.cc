@@ -305,5 +305,52 @@ TEST(RetrieverTest, LongTextIsClippedAtUtf8BoundaryInSuggestion) {
          "not walk back to the boundary";
 }
 
+TEST(RetrieverTest, LeadingMarkdownHeaderIsStrippedFromSuggestionAndCitations) {
+  // Post-PR-#67 chunks begin with the section's `##` header line (e.g.
+  // "## 氣候\n\n氣候方面，北回歸線貫穿全島..."). The hint UI renders
+  // plain text, so the literal `##` is visual noise. Both suggestion
+  // and citation quote must have the header prefix stripped — the
+  // body content (starting with "氣候方面") should appear from char 0.
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  s.results_ = {
+      MakeResult("u", 0.9f,
+                 "## 氣候\n\n氣候方面，北回歸線貫穿全島，氣候炎熱夏季偏長。",
+                 "taiwan.md", "2"),
+  };
+
+  Retriever r(&e, &s, "aegis_taiwan");
+  auto h = r.Retrieve("Taiwan weather");
+  ASSERT_TRUE(h.ok()) << h.status();
+
+  EXPECT_EQ(h->suggestion().find("##"), std::string::npos)
+      << "suggestion still contains `##`: " << h->suggestion();
+  EXPECT_EQ(h->suggestion().rfind("氣候", 0), 0u)
+      << "suggestion does not begin with post-header content: "
+      << h->suggestion();
+
+  ASSERT_GT(h->citations_size(), 0);
+  EXPECT_EQ(h->citations(0).quote().find("##"), std::string::npos)
+      << "citation quote still contains `##`: " << h->citations(0).quote();
+}
+
+TEST(RetrieverTest, NonHeaderHashMarksAreNotStripped) {
+  // In-text `#` without a trailing space (URL fragment, hashtag, code
+  // sample, etc.) must NOT be treated as a markdown header. Only the
+  // `^#+\s+` ATX-header pattern triggers stripping.
+  FakeEmbedder e;
+  FakeVectorSearcher s;
+  s.results_ = {
+      MakeResult("u", 0.9f, "#taiwan is a trending tag; see #foo/#bar.",
+                 "doc.md", "0"),
+  };
+
+  Retriever r(&e, &s, "aegis_col");
+  auto h = r.Retrieve("tag");
+  ASSERT_TRUE(h.ok()) << h.status();
+  EXPECT_EQ(h->suggestion().rfind("#taiwan", 0), 0u)
+      << "hashtag at start was incorrectly stripped: " << h->suggestion();
+}
+
 } // namespace
 } // namespace aegis::rag

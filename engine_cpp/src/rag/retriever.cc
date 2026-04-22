@@ -16,6 +16,37 @@ namespace aegis::rag {
 
 namespace {
 
+// Strip a leading markdown ATX header (`^#+\s+`) from the chunk
+// text. Since PR #67 the chunker treats `##` lines as hard segment
+// boundaries, so each section's first chunk begins with the header
+// line itself ("## 氣候\n\n氣候方面，北回歸線..."). The hint panel
+// renders plain text, so the literal `##` reads as visual noise.
+// Stripping it preserves the semantic anchor (the header WORD) —
+// only the `#` characters and the single whitespace run immediately
+// after them are removed.
+//
+// Requires at least one space/tab after the `#` run to qualify as
+// a header, so an in-text fragment like `#taiwan` or URL hash is
+// left untouched. UTF-8 safe — CJK bytes are never in 0x20-0x23
+// range.
+std::string_view StripLeadingMarkdownHeader(std::string_view text) {
+  std::size_t pos = 0;
+  while (pos < text.size() && text[pos] == '#') {
+    ++pos;
+  }
+  if (pos == 0) {
+    return text;
+  }
+  // Must be followed by whitespace to qualify as an ATX header.
+  if (pos >= text.size() || (text[pos] != ' ' && text[pos] != '\t')) {
+    return text;
+  }
+  while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t')) {
+    ++pos;
+  }
+  return text.substr(pos);
+}
+
 // Byte-level clip that walks back to a UTF-8 codepoint boundary so we
 // never leave a half-encoded character in the UI. UTF-8 continuation
 // bytes match `10xxxxxx` (0x80–0xBF); lead bytes are anything else.
@@ -103,7 +134,8 @@ Retriever::Retrieve(std::string_view transcript_text) {
   hint.set_hint_id(next_hint_id_++);
 
   const std::string top_text = LookupPayload(top.payload, "text");
-  hint.set_suggestion(ClipExcerpt(top_text, config_.excerpt_bytes));
+  hint.set_suggestion(
+      ClipExcerpt(StripLeadingMarkdownHeader(top_text), config_.excerpt_bytes));
   hint.set_rationale(absl::StrFormat("Related context from '%s' (score=%.3f)",
                                      collection_, top.score));
   hint.set_urgency(aegis::v1::HINT_URGENCY_NORMAL);
@@ -112,8 +144,9 @@ Retriever::Retrieve(std::string_view transcript_text) {
     auto *cit = hint.add_citations();
     const std::string src = LookupPayload(r.payload, "source_path");
     cit->set_doc_id(src.empty() ? r.id : src);
-    cit->set_quote(
-        ClipExcerpt(LookupPayload(r.payload, "text"), config_.excerpt_bytes));
+    cit->set_quote(ClipExcerpt(
+        StripLeadingMarkdownHeader(LookupPayload(r.payload, "text")),
+        config_.excerpt_bytes));
     cit->set_location(LookupPayload(r.payload, "chunk_index"));
   }
   return hint;
