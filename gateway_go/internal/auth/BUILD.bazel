@@ -7,11 +7,14 @@ go_library(
         "interceptor.go",
         "jwt.go",
         "noop.go",
+        "oidc_provider.go",
     ],
     importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/auth",
     visibility = ["//gateway_go:__subpackages__"],
     deps = [
         "@com_github_golang_jwt_jwt_v5//:jwt",
+        "@com_github_lestrrat_go_jwx_v2//jwk",
+        "@com_github_lestrrat_go_jwx_v2//jwt",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//metadata",
@@ -22,10 +25,16 @@ go_library(
 go_test(
     name = "auth_test",
     size = "small",
-    srcs = ["auth_test.go"],
+    srcs = [
+        "auth_test.go",
+        "oidc_provider_test.go",
+    ],
     embed = [":auth"],
     deps = [
         "@com_github_golang_jwt_jwt_v5//:jwt",
+        "@com_github_lestrrat_go_jwx_v2//jwa",
+        "@com_github_lestrrat_go_jwx_v2//jwk",
+        "@com_github_lestrrat_go_jwx_v2//jwt",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//metadata",
