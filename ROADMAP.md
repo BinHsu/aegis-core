@@ -356,31 +356,32 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 
 Gated behind LDZ's `staging/auth/` Terraform apply (ldz ADR-026, cross-repo aegis-core #76 Partially Accepted 2026-04-23). Design recorded in [ADR-0034](docs/adr/0034-cloud-auth-cognito-jwt.md); Phase 2's `StaticJWTProvider` is preserved for integration-test scenarios (`DEPLOY_MODE=cloud-test`).
 
-#### 4e-1 Gateway JWT middleware
+#### 4e-1 Gateway JWT middleware — PR #78 merged 2026-04-23 (`864fcbb`)
 
-- [ ] `gateway_go/internal/auth/oidc_provider.go` — `OIDCProvider` implementing the existing `auth.Provider` port (`gateway_go/internal/auth/auth.go:69-71`)
-- [ ] `github.com/lestrrat-go/jwx/v2` dep added via `go get`; `go.mod` + `MODULE.bazel` + `gateway_go/BUILD.bazel` updated
-- [ ] `cmd/gateway/main.go` factory extended — `DEPLOY_MODE` switch: `local` → `NoOpProvider`, `cloud` → `OIDCProvider`, `cloud-test` → `StaticJWTProvider` (preserves pre-Cognito integration-test scaffold)
-- [ ] Unit tests (`oidc_provider_test.go`) — `httptest` mock JWKS server + synthesised JWTs covering: happy path, expired token, wrong audience, wrong issuer, missing `custom:tenant_id`, signature mismatch, JWKS fetch failure + refresh retry, JWKS key rotation mid-flight
-- [ ] Structured error logging — failure category only (signature / expired / missing claim / JWKS fetch), never the token bytes
+- [x] `gateway_go/internal/auth/oidc_provider.go` — `OIDCProvider` implementing the existing `auth.Provider` port (`gateway_go/internal/auth/auth.go:69-71`)
+- [x] `github.com/lestrrat-go/jwx/v2` dep added via `go get`; `go.mod` + `MODULE.bazel` + `gateway_go/BUILD.bazel` updated
+- [x] `cmd/gateway/main.go` factory extended — `DEPLOY_MODE` switch: `local` → `NoOpProvider`, `cloud` → `OIDCProvider`, `cloud-test` → `StaticJWTProvider` (preserves pre-Cognito integration-test scaffold)
+- [x] Unit tests (`oidc_provider_test.go`) — `httptest` mock JWKS server + synthesised JWTs covering: happy path, expired token, wrong audience, wrong issuer, missing `custom:tenant_id`, signature mismatch, config-fail-on-unreachable-JWKS. ~~JWKS key rotation mid-flight~~ **DEFERRED** to 4e-4: asserting jwk.Cache's internal background-refresh with an httptest server tests the library, not our code; real rotation semantics surface honestly only against a live Cognito pool.
+- [x] Structured error logging — failure category only (signature / expired / missing claim / JWKS fetch), never the token bytes
 
-#### 4e-2 SPA OAuth scaffold
+#### 4e-2 SPA OAuth scaffold — PR #79 merged 2026-04-23 (`04205c1`)
 
-- [ ] `frontend_web/package.json` — `react-oidc-context` + `oidc-client-ts` deps (Cognito Hosted UI flow, provider-agnostic wrapper so future IdP swap is config-level)
-- [ ] `frontend_web/src/main.tsx` — `<AuthProvider>` wrapper with Vite env-var config (`VITE_COGNITO_AUTHORITY` / `VITE_COGNITO_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` / `VITE_COGNITO_LOGOUT_URI`)
-- [ ] `frontend_web/src/routes/AuthCallback.tsx` — PKCE completion + navigate to post-login landing
-- [ ] `frontend_web/src/lib/gateway-client.ts` — `Authorization: Bearer ${idToken}` injection on every outbound gRPC-Web call
-- [ ] `frontend_web/src/lib/auth.ts` — decide (per ADR-0034 Open Question 1): extend with Cognito ID-token accessor, OR deprecate in favor of `useAuth()` hook + keep session-token storage for viewer-join
-- [ ] Logout button → `user.signoutRedirect()` (Cognito global logout)
-- [ ] Token storage: memory-only (`InMemoryWebStorage`) to mitigate XSS; silent-auth refresh on SPA reload
-- [ ] Vitest for `AuthCallback` route + bearer injection
+- [x] `frontend_web/package.json` — `react-oidc-context` + `oidc-client-ts` deps (Cognito Hosted UI flow, provider-agnostic wrapper so future IdP swap is config-level)
+- [x] `frontend_web/src/main.tsx` — `<AegisAuthShell>` wrapper (mode-branches to react-oidc-context's `<AuthProvider userManager={cloudUserManager}>` in CLOUD, renders children directly in LOCAL). Env vars use the existing `VITE_AEGIS_*` prefix: `VITE_AEGIS_COGNITO_AUTHORITY` / `_CLIENT_ID` / `_REDIRECT_URI` / `_LOGOUT_URI`.
+- [x] `frontend_web/src/pages/AuthCallback/AuthCallbackPage.tsx` — PKCE completion via module-level `handleSignInCallback` helper + navigate to /host
+- [x] `frontend_web/src/lib/gateway-client.ts` — `Authorization: Bearer ${idToken}` injection via interceptor (pre-existing from Phase 3; confirmed in 4e-2 recon)
+- [x] `frontend_web/src/lib/auth.ts` — **ADR-0034 Open Question 1 resolved**: rewritten to own the module-level Cognito UserManager (CLOUD only), subscribe to UserManager events for a synchronous User cache, wire `getAccessToken` to the gateway-client interceptor, export `handleSignInCallback` for AuthCallbackPage. Viewer-join session-token (ADR-0001 Option B) confirmed orthogonal — handled via `useSearchParams()` in ViewerPage, never touched the `auth` path.
+- [x] Logout button → `signOut()` from `useAegisAuth()` → `oidc.signoutRedirect()` (Cognito global logout). Post-logout URL wired via optional `VITE_AEGIS_COGNITO_LOGOUT_URI`.
+- [ ] ~~Token storage: memory-only~~ — **DEVIATION from ADR-0034 §D2**. Preserved as `WebStorageStateStore({ store: window.localStorage })` matching the Phase 3 SPA scaffold's explicit choice (page-reload session survival during meetings). Storage posture is independent of the library pick and should be revisited in a dedicated ADR revision when LDZ's Cognito pool goes live; bundling it with the library refactor would conflate two concerns.
+- [ ] ~~Vitest for AuthCallback route + bearer injection~~ — **DEFERRED** pending `@testing-library/react` scope decision. Pure `userToPrincipal` claim mapper (7 vitest cases in `AegisAuthShell.test.ts`) covers the branching logic that matters most; full component-render harness is a separate PR.
 
-#### 4e-3 `custom:tenant_id` propagation verification
+#### 4e-3 `custom:tenant_id` propagation verification — PR #80 merged 2026-04-23 (`320c272`)
 
-- [ ] Verify (and extend if needed) `gateway_go/internal/pipeline/` forwards `tenant_id` + `sub` via gRPC metadata to engine (per ADR-0022 §"Query path"); may be LAN-only today — per ADR-0034 Open Question 2
-- [ ] Engine-side: `AuthContext` interceptor reads metadata → populates `session.TenantID` → Qdrant search honours ADR-0022 collection naming (`aegis_<tenant_id>_<corpus>`) + payload filter
-- [ ] Integration test: 2-tenant seed + cross-tenant query must return empty (structural + filter-level isolation both verified)
-- [ ] Explicit failure-mode test: empty `custom:tenant_id` in JWT → gateway rejects with `Unauthenticated` at middleware, never reaches engine
+- [x] Verified `gateway_go/internal/pipeline/pipeline.go:147` forwards `sess.TenantID` via the `SessionStart` proto message to the engine — pre-existing; ADR-0034 Open Question 2 resolved by recon.
+- [x] Gateway `CreateMeeting` + `ListCorpora` handlers derive tenant from the authenticated Principal via new `effectiveTenantID(ctx)` helper: CLOUD → `Principal.TenantID`, LOCAL → `"demo"`. Wire-side `tenant_id` on the request is IGNORED (ADR-0022 §Decision enforcement point — gateway is sole derivation authority).
+- [x] ~~Engine-side AuthContext interceptor~~ — **NOT NEEDED**. `engine_cpp/src/grpc/aegis_engine_service.cc:113-148` already reads `tenant_id` from `ListCorporaRequest.tenant_id` for the Qdrant collection prefix filter; the RAG retriever reads it from the session's `SessionStart.tenant_id` carried through `Session::Run`. No additional metadata plumbing on the engine side.
+- [~] Integration test: 2-tenant seed + cross-tenant query — **STRUCTURAL boundary covered** (`TestCreateMeetingCrossTenantIsolationStructural` asserts two Cloud Principals produce sessions with disjoint `aegis_<tenant_id>_*` collection namespaces). Filter-level per-user isolation (same tenant, different users → Qdrant `user_id` payload filter) deferred to 4e-4 against a real Qdrant.
+- [x] Explicit failure-mode test: missing `custom:tenant_id` in JWT → gateway rejects with `Unauthenticated` at middleware — covered by `TestOIDCRejectsMissingTenantID` in `oidc_provider_test.go` (4e-1 PR #78).
 
 #### 4e-4 Integration + E2E
 
