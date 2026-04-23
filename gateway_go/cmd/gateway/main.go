@@ -33,10 +33,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -268,12 +270,23 @@ func main() {
 		die("gatewaygrpc.New", "err", err)
 	}
 
-	// Auth provider: Local mode uses NoOp (synthetic "local" Principal
-	// on every RPC); Cloud mode would swap in a StaticJWTProvider or
-	// (future) a real Cognito client — see internal/auth for the port
-	// definition and Phase 2 "Known Gaps" in ROADMAP.md for the
-	// Cognito-integration scope that is descoped from this phase.
-	authProvider := auth.NoOpProvider{}
+	// Auth provider: picked by DEPLOY_MODE per ADR-0034 §LOCAL mode
+	// posture. One binary, three modes, one env-var switch:
+	//
+	//   local        → NoOpProvider (synthetic "local" Principal; ADR-0007)
+	//   cloud        → OIDCProvider (Cognito JWKS; ADR-0034 §D1)
+	//   cloud-test   → StaticJWTProvider (HS256 pre-shared-secret;
+	//                  Phase 2 A2 scaffold preserved for integration-
+	//                  test scenarios)
+	//
+	// Empty / unset DEPLOY_MODE defaults to local to preserve Phase 3
+	// LAN demo posture. Unrecognised values panic loudly rather than
+	// silently degrade to NoOp — a typo like `DEPLOY_MODE=prod` must
+	// not accidentally disable auth in a cloud deploy.
+	authProvider, err := buildAuthProvider(processCtx)
+	if err != nil {
+		die("build auth provider", "err", err)
+	}
 
 	// gRPC server for aegis.v1.Gateway. Interceptors fire in registration
 	// order: auth first (attaches Principal to ctx); future additions
@@ -668,5 +681,55 @@ func corsAllowed(p *corspolicy.Policy, h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		h(w, r)
+	}
+}
+
+// buildAuthProvider selects the auth.Provider implementation at startup
+// based on the DEPLOY_MODE env var, per ADR-0034 §LOCAL mode posture.
+//
+//	""     / "local" → NoOpProvider  (synthetic "local" Principal; ADR-0007)
+//	"cloud"          → OIDCProvider   (Cognito JWKS + claim mapping; ADR-0034 §D1)
+//	"cloud-test"     → StaticJWTProvider (HS256 pre-shared-secret; Phase 2 A2 scaffold)
+//
+// Unrecognised DEPLOY_MODE values return an error that causes main to
+// die() — a typo like `DEPLOY_MODE=prod` must not silently fall through
+// to NoOp in a cloud deploy.
+//
+// Required env vars per mode:
+//
+//	local        — (none)
+//	cloud        — AEGIS_COGNITO_ISSUER, AEGIS_COGNITO_AUDIENCE;
+//	               optional AEGIS_COGNITO_JWKS_URL (default derived from issuer).
+//	cloud-test   — AEGIS_JWT_STATIC_SECRET; optional AEGIS_JWT_STATIC_AUDIENCE.
+func buildAuthProvider(ctx context.Context) (auth.Provider, error) {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("DEPLOY_MODE")))
+	switch mode {
+	case "", "local":
+		return auth.NoOpProvider{}, nil
+
+	case "cloud":
+		issuer := os.Getenv("AEGIS_COGNITO_ISSUER")
+		audience := os.Getenv("AEGIS_COGNITO_AUDIENCE")
+		if issuer == "" || audience == "" {
+			return nil, fmt.Errorf("DEPLOY_MODE=cloud requires AEGIS_COGNITO_ISSUER and AEGIS_COGNITO_AUDIENCE")
+		}
+		return auth.NewOIDCProvider(ctx, auth.OIDCConfig{
+			Issuer:   issuer,
+			Audience: audience,
+			JWKSURL:  os.Getenv("AEGIS_COGNITO_JWKS_URL"),
+		})
+
+	case "cloud-test":
+		secret := os.Getenv("AEGIS_JWT_STATIC_SECRET")
+		if secret == "" {
+			return nil, errors.New("DEPLOY_MODE=cloud-test requires AEGIS_JWT_STATIC_SECRET")
+		}
+		return auth.StaticJWTProvider{
+			Secret:           []byte(secret),
+			ExpectedAudience: os.Getenv("AEGIS_JWT_STATIC_AUDIENCE"),
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unrecognized DEPLOY_MODE %q (valid: local, cloud, cloud-test)", mode)
 	}
 }

@@ -184,6 +184,7 @@ use_repo(
     "com_github_coder_websocket",
     "com_github_golang_jwt_jwt_v5",
     "com_github_improbable_eng_grpc_web",
+    "com_github_lestrrat_go_jwx_v2",
     "com_github_pion_webrtc_v4",
     "com_github_prometheus_client_golang",
     "org_golang_google_grpc",
