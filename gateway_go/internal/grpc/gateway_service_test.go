@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
 )
@@ -855,9 +856,11 @@ func TestListCorporaUnimplementedWhenNotWired(t *testing.T) {
 }
 
 func TestListCorporaOverridesTenantIDToDemo(t *testing.T) {
-	// The gateway must substitute phase3DefaultTenant regardless of what
-	// the client sent — guards against client enumeration of other
-	// tenants' collection names (ADR-0022 enforcement point).
+	// The gateway must substitute the Principal's tenant regardless of
+	// what the client sent — guards against client enumeration of
+	// other tenants' collection names (ADR-0022 enforcement point).
+	// No Principal on ctx (bufconn client strips interceptors) falls
+	// back to phase3DefaultTenant = "demo" per effectiveTenantID().
 	var capturedTenant string
 	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
 	svc.listCorpora = func(ctx context.Context, tenantID string) (*aegisv1.ListCorporaResponse, error) {
@@ -887,6 +890,176 @@ func TestListCorporaOverridesTenantIDToDemo(t *testing.T) {
 	}
 	if got := resp.GetCorpora()[0].GetId(); got != "aegis_demo_taiwan" {
 		t.Fatalf("corpus id: got %q, want %q", got, "aegis_demo_taiwan")
+	}
+}
+
+// TestListCorporaSubstitutesCloudPrincipalTenant verifies that when a
+// Cloud-mode Principal is on ctx, ListCorpora forwards the Principal's
+// tenant (from the Cognito `custom:tenant_id` claim) to the engine,
+// and NOT whatever the wire request claimed. ADR-0022 §Decision hard
+// rule: gateway is the tenant-derivation authority; clients cannot
+// pivot via the wire field.
+func TestListCorporaSubstitutesCloudPrincipalTenant(t *testing.T) {
+	var capturedTenant string
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	svc.listCorpora = func(ctx context.Context, tenantID string) (*aegisv1.ListCorporaResponse, error) {
+		capturedTenant = tenantID
+		return &aegisv1.ListCorporaResponse{}, nil
+	}
+
+	// Call the handler directly with an injected Cloud Principal —
+	// the bufconn client path doesn't run the auth interceptor in
+	// these tests, so we skip the client hop for Principal-aware
+	// coverage.
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		UserID: "cognito-user-abc", TenantID: "tenant-alpha", Mode: auth.ModeCloud,
+	})
+	_, err := svc.ListCorpora(ctx, &aegisv1.ListCorporaRequest{
+		TenantId: "attacker-tenant", // malicious: tries to enumerate another tenant
+	})
+	if err != nil {
+		t.Fatalf("ListCorpora: %v", err)
+	}
+	if capturedTenant != "tenant-alpha" {
+		t.Fatalf("gateway did not forward Principal tenant: got %q, want %q",
+			capturedTenant, "tenant-alpha")
+	}
+}
+
+// TestListCorporaLocalPrincipalResolvesToDemo confirms LOCAL mode
+// falls through to "demo" even when an explicit Principal is on ctx
+// (ModeLocal, empty TenantID is the canonical shape per auth.go).
+// This keeps LAN-demo behavior stable under the new wiring.
+func TestListCorporaLocalPrincipalResolvesToDemo(t *testing.T) {
+	var capturedTenant string
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+	svc.listCorpora = func(ctx context.Context, tenantID string) (*aegisv1.ListCorporaResponse, error) {
+		capturedTenant = tenantID
+		return &aegisv1.ListCorporaResponse{}, nil
+	}
+
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		UserID: "local", TenantID: "", Mode: auth.ModeLocal,
+	})
+	_, err := svc.ListCorpora(ctx, &aegisv1.ListCorporaRequest{
+		TenantId: "anything", // wire field should still be ignored
+	})
+	if err != nil {
+		t.Fatalf("ListCorpora: %v", err)
+	}
+	if capturedTenant != "demo" {
+		t.Fatalf("Local mode tenant resolution: got %q, want %q",
+			capturedTenant, "demo")
+	}
+}
+
+// TestCreateMeetingPopulatesSessionTenantFromCloudPrincipal —
+// ADR-0022 end-to-end on the gateway side: a Cloud-mode Principal's
+// tenant flows into session.Config.TenantID, and from there into the
+// SessionStart proto the pipeline sends to the engine, where the
+// engine's Qdrant filter (ADR-0022 §Query path) picks it up.
+func TestCreateMeetingPopulatesSessionTenantFromCloudPrincipal(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		UserID: "cognito-user-abc", TenantID: "tenant-alpha", Mode: auth.ModeCloud,
+	})
+	resp, err := svc.CreateMeeting(ctx, &aegisv1.CreateMeetingRequest{
+		RagId: "some-corpus",
+		Title: "Phase 4e-3 isolation check",
+	})
+	if err != nil {
+		t.Fatalf("CreateMeeting: %v", err)
+	}
+
+	sess, err := svc.registry.Get(resp.GetSessionId())
+	if err != nil {
+		t.Fatalf("registry.Get: %v", err)
+	}
+	if sess.TenantID != "tenant-alpha" {
+		t.Fatalf("session.TenantID: got %q, want %q",
+			sess.TenantID, "tenant-alpha")
+	}
+}
+
+// TestCreateMeetingLocalPrincipalPopulatesDemo — the LAN-demo
+// convention: LOCAL principal's empty TenantID resolves to "demo" in
+// the created session, so the engine queries the `aegis_demo_*`
+// collections the LAN seed script populates.
+func TestCreateMeetingLocalPrincipalPopulatesDemo(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		UserID: "local", TenantID: "", Mode: auth.ModeLocal,
+	})
+	resp, err := svc.CreateMeeting(ctx, &aegisv1.CreateMeetingRequest{
+		RagId: "",
+		Title: "LAN smoke",
+	})
+	if err != nil {
+		t.Fatalf("CreateMeeting: %v", err)
+	}
+
+	sess, err := svc.registry.Get(resp.GetSessionId())
+	if err != nil {
+		t.Fatalf("registry.Get: %v", err)
+	}
+	if sess.TenantID != "demo" {
+		t.Fatalf("Local-mode session.TenantID: got %q, want %q",
+			sess.TenantID, "demo")
+	}
+}
+
+// TestCreateMeetingCrossTenantIsolationStructural — ADR-0022 hard
+// boundary: two back-to-back CreateMeeting calls with different
+// Cloud Principals produce sessions with disjoint TenantIDs, which
+// propagate into the engine's collection namespace
+// `aegis_<tenant_id>_<corpus>`. A retrieval from tenant-alpha
+// cannot accidentally reach tenant-beta's collection because they
+// literally don't share a collection name. This is the STRUCTURAL
+// part of §Query path (the filter-level per-user isolation is 4e-4
+// integration coverage).
+func TestCreateMeetingCrossTenantIsolationStructural(t *testing.T) {
+	svc := newTestService(t, fakeEngineHealth(&aegisv1.HealthResponse{Ready: true}))
+
+	alphaCtx := auth.WithPrincipal(context.Background(), auth.Principal{
+		UserID: "user-1", TenantID: "tenant-alpha", Mode: auth.ModeCloud,
+	})
+	betaCtx := auth.WithPrincipal(context.Background(), auth.Principal{
+		UserID: "user-2", TenantID: "tenant-beta", Mode: auth.ModeCloud,
+	})
+
+	alphaResp, err := svc.CreateMeeting(alphaCtx, &aegisv1.CreateMeetingRequest{
+		RagId: "corpus-x",
+	})
+	if err != nil {
+		t.Fatalf("alpha CreateMeeting: %v", err)
+	}
+	betaResp, err := svc.CreateMeeting(betaCtx, &aegisv1.CreateMeetingRequest{
+		RagId: "corpus-x", // same corpus name — tenant-prefixed separately on engine side
+	})
+	if err != nil {
+		t.Fatalf("beta CreateMeeting: %v", err)
+	}
+
+	alphaSess, err := svc.registry.Get(alphaResp.GetSessionId())
+	if err != nil {
+		t.Fatalf("alpha registry.Get: %v", err)
+	}
+	betaSess, err := svc.registry.Get(betaResp.GetSessionId())
+	if err != nil {
+		t.Fatalf("beta registry.Get: %v", err)
+	}
+
+	if alphaSess.TenantID == betaSess.TenantID {
+		t.Fatalf("cross-tenant leak: alpha and beta share TenantID %q",
+			alphaSess.TenantID)
+	}
+	if alphaSess.TenantID != "tenant-alpha" {
+		t.Errorf("alpha tenant: got %q, want tenant-alpha", alphaSess.TenantID)
+	}
+	if betaSess.TenantID != "tenant-beta" {
+		t.Errorf("beta tenant: got %q, want tenant-beta", betaSess.TenantID)
 	}
 }
 
