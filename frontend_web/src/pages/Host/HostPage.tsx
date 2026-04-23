@@ -53,7 +53,6 @@ import {
   type TranscriptExportFormat,
 } from "@/components/TranscriptExportConsentModal";
 import { gatewayClient } from "@/lib/gateway-client";
-import { auth } from "@/lib/auth";
 import {
   formatTranscriptJson,
   formatTranscriptMarkdown,
@@ -66,7 +65,7 @@ import {
   type CaptureSession,
   WebAudioCaptureProvider,
 } from "@/providers/AudioCaptureProvider";
-import type { AuthPrincipal } from "@/providers/AuthProvider";
+import { type AuthPrincipal, useAegisAuth } from "@/providers/AuthProvider";
 import {
   pickFileSystemProvider,
   type FileSystemProvider,
@@ -460,15 +459,17 @@ export function HostPage(): JSX.Element {
   const [corporaError, setCorporaError] = useState<string | null>(null);
 
   // ──────────────────────────────────────────────────────────────────
-  // Auth subscription. Local mode fires once with the synthetic
-  // principal; Cloud mode fires on sign-in completion.
+  // Auth subscription. Driven by react-oidc-context through
+  // useAegisAuth (Cloud) or the static local-mode default (Local).
+  // While `loading` is true we stay in the "loading-auth" reducer
+  // state and don't dispatch anything — this avoids a flicker
+  // through "signed-out" during Cognito's initial hydration.
   // ──────────────────────────────────────────────────────────────────
+  const { principal, loading, signIn, signOut } = useAegisAuth();
   useEffect(() => {
-    const unsubscribe = auth.onChange((principal) => {
-      dispatch({ type: "AUTH_RESOLVED", principal });
-    });
-    return unsubscribe;
-  }, []);
+    if (loading) return;
+    dispatch({ type: "AUTH_RESOLVED", principal });
+  }, [principal, loading]);
 
   // ──────────────────────────────────────────────────────────────────
   // Fetch RAG corpora once on mount. The gateway proxies this to the
@@ -766,7 +767,7 @@ export function HostPage(): JSX.Element {
         <button
           type="button"
           onClick={() => {
-            void auth.signIn();
+            void signIn();
           }}
         >
           Sign in {DEPLOY_MODE === "cloud" ? "with Cognito" : "(local)"}
@@ -799,7 +800,7 @@ export function HostPage(): JSX.Element {
     const showTranscriptPanel = state.showTranscriptPanel;
     return (
       <main>
-        <Header principal={state.principal} />
+        <Header principal={state.principal} signOut={signOut} />
         <AudioProcessingConsent userId={state.principal.userId} />
         <h3>Start a new meeting</h3>
         <form
@@ -977,7 +978,7 @@ export function HostPage(): JSX.Element {
 
   return (
     <main>
-      <Header principal={state.principal} />
+      <Header principal={state.principal} signOut={signOut} />
       <AudioProcessingConsent userId={state.principal.userId} />
       <h3>Meeting active</h3>
 
@@ -1226,7 +1227,13 @@ function SpeakerLabelPanel({
   );
 }
 
-function Header({ principal }: { principal: AuthPrincipal }): JSX.Element {
+function Header({
+  principal,
+  signOut,
+}: {
+  readonly principal: AuthPrincipal;
+  readonly signOut: () => Promise<void>;
+}): JSX.Element {
   return (
     <header style={{ marginBottom: "1rem", color: "#666", fontSize: "0.9rem" }}>
       Signed in as <code>{principal.userId}</code>
@@ -1249,7 +1256,7 @@ function Header({ principal }: { principal: AuthPrincipal }): JSX.Element {
           textDecoration: "underline",
         }}
         onClick={() => {
-          void auth.signOut();
+          void signOut();
         }}
       >
         sign out

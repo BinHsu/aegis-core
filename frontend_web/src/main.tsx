@@ -9,10 +9,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
+// Load the auth singleton early — its module-side-effect constructs
+// the Cognito UserManager (Cloud mode) and wires the gateway-client
+// token interceptor before any RPC runs.
+import "./lib/auth";
+
 import { App } from "./App";
 import { AuthCallbackPage } from "./pages/AuthCallback/AuthCallbackPage";
 import { HostPage } from "./pages/Host/HostPage";
 import { ViewerPage } from "./pages/Viewer/ViewerPage";
+import { AegisAuthShell } from "./providers/AuthProvider";
 
 const router = createBrowserRouter([
   {
@@ -41,6 +47,8 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <AegisAuthShell>
+      <RouterProvider router={router} />
+    </AegisAuthShell>
   </StrictMode>,
 );

@@ -1,43 +1,28 @@
 // frontend_web/src/providers/AuthProvider/index.ts
 //
-// Public surface of the AuthProvider port. Re-exports the types and
-// concrete implementations, plus a deploy-mode-driven factory that
-// the App-level wiring uses.
+// Public surface of the AuthProvider port, post-4e-2 refactor to
+// `react-oidc-context`. Consumers import two things from here:
 //
-// Design intent: app code imports `pickAuthProvider()` (or the
-// concrete classes for tests); never the implementations directly.
-// That keeps mode-switching a one-line change in the env config.
+//   - <AegisAuthShell>         — mount once in main.tsx around the
+//                                router; branches Cloud vs Local
+//                                deploy mode internally.
+//   - useAegisAuth()           — React hook returning
+//                                { principal, loading, signIn, signOut }
+//                                regardless of deploy mode.
+//
+// The `AuthPrincipal` + `AuthMode` types are also re-exported here
+// since every consumer that needs them also imports one of the
+// above; avoids a second `./types` import line per consumer.
+//
+// The class-based `CognitoAuthProvider` / `LocalAuthProvider` /
+// `pickAuthProvider` trio that used to live here was superseded
+// by the react-oidc-context wrapper — see ADR-0034 §D2 and the
+// 4e-2 refactor commit for the rationale.
 
-import { CognitoAuthProvider } from "./CognitoAuthProvider";
-import { LocalAuthProvider } from "./LocalAuthProvider";
-import type { AuthProvider } from "./types";
-
-export type {
-  AuthChangeListener,
-  AuthMode,
-  AuthPrincipal,
-  AuthProvider,
-} from "./types";
-
-export { CognitoAuthProvider, LocalAuthProvider };
-
-/**
- * Build the `AuthProvider` matching the build-time deploy mode.
- *
- * Reads `VITE_AEGIS_DEPLOY_MODE` ("local" — default — or "cloud").
- * In Cloud mode, also requires the three Cognito env vars listed in
- * CognitoAuthProvider.ts; the constructor throws if they're missing
- * so a misconfigured Cloud build fails loudly at app startup rather
- * than silently falling through to no-auth.
- *
- * Single-shot: production code calls this once at module load time
- * and stores the result. Re-invoking creates a fresh provider, which
- * for the Cognito case creates a fresh UserManager — wasteful but
- * harmless.
- */
-export function pickAuthProvider(): AuthProvider {
-  const mode = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
-    | "local"
-    | "cloud";
-  return mode === "cloud" ? new CognitoAuthProvider() : new LocalAuthProvider();
-}
+export {
+  AegisAuthShell,
+  useAegisAuth,
+  userToPrincipal,
+} from "./AegisAuthShell";
+export type { AegisAuthContextValue } from "./AegisAuthShell";
+export type { AuthMode, AuthPrincipal } from "./types";
