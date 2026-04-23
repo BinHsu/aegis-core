@@ -31,6 +31,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
 )
@@ -206,7 +207,7 @@ func (s *GatewayService) CreateMeeting(
 	}
 
 	sess, err := s.registry.Create(session.Config{
-		TenantID:                "", // Local mode (ADR-0007 L7); A5 wires Cognito.
+		TenantID:                effectiveTenantID(ctx),
 		RAGID:                   req.GetRagId(),
 		Title:                   req.GetTitle(),
 		LanguageHints:           req.GetLanguageHints(),
@@ -557,16 +558,43 @@ func (s *GatewayService) SendOfficerHint(
 
 // Phase 3 demo tenant — the LAN deployment is single-tenant so the
 // gateway overrides whatever `tenant_id` the client sent with this
-// constant. Phase 4 replaces this with a JWT-derived tenant
-// (ADR-0022 §Decision).
+// constant. LOCAL mode stays on this for the LAN-demo convention
+// (collections are `aegis_demo_*`); CLOUD mode derives the tenant
+// from the JWT-issued Principal per ADR-0022 §Decision.
 const phase3DefaultTenant = "demo"
 
+// effectiveTenantID resolves the authenticated Principal on ctx to
+// the tenant_id used for engine-side filtering per ADR-0022 §"Schema
+// shape" + §"Query path". Never trusts client-sent tenant_id on the
+// wire — the gateway is the enforcement point.
+//
+// Rules:
+//   - LOCAL mode: returns "demo" (phase3DefaultTenant). LAN demo is
+//     single-tenant; all seeded collections are `aegis_demo_*`.
+//   - CLOUD mode: returns Principal.TenantID. OIDCProvider enforces
+//     non-empty `custom:tenant_id` upstream, so this is guaranteed
+//     populated by the time the handler runs.
+//   - No Principal on ctx: falls through to LOCAL (phase3DefaultTenant).
+//     The auth interceptor always runs in production so this path is
+//     a defensive fallback for test ergonomics and misconfigured
+//     bootstrap (better to serve the LAN-demo tenant than to 500).
+func effectiveTenantID(ctx context.Context) string {
+	p, ok := auth.FromContext(ctx)
+	if !ok {
+		return phase3DefaultTenant
+	}
+	if p.Mode == auth.ModeCloud && p.TenantID != "" {
+		return p.TenantID
+	}
+	return phase3DefaultTenant
+}
+
 // ListCorpora returns the RAG corpora the caller can bind to a new
-// meeting. The Host UI populates its dropdown from the response. The
-// gateway currently overrides the wire `tenant_id` with the hardcoded
-// Phase 3 value; when Phase 4 wires Cognito, this is where the JWT
-// claim substitution happens (same enforcement point — never trust
-// the client's `tenant_id`).
+// meeting. The Host UI populates its dropdown from the response.
+// Wire `tenant_id` on the request is IGNORED — the gateway always
+// substitutes the Principal's tenant (ADR-0022 §Decision
+// enforcement point). This keeps a malicious client from enumerating
+// other tenants' collections by sending their tenant_id on the wire.
 //
 // Error mapping:
 //   - UNIMPLEMENTED   — Gateway was constructed without an engine
@@ -576,11 +604,11 @@ func (s *GatewayService) ListCorpora(
 	ctx context.Context,
 	req *aegisv1.ListCorporaRequest,
 ) (*aegisv1.ListCorporaResponse, error) {
-	_ = req // Phase 3: wire tenant_id is ignored; see comment above.
+	_ = req // Wire tenant_id intentionally ignored — see doc above.
 	if s.listCorpora == nil {
 		return nil, status.Error(codes.Unimplemented, "ListCorpora not wired")
 	}
-	resp, err := s.listCorpora(ctx, phase3DefaultTenant)
+	resp, err := s.listCorpora(ctx, effectiveTenantID(ctx))
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "engine ListCorpora: %v", err)
 	}
