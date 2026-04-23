@@ -350,6 +350,44 @@ Gated by 3b — prompter display needs real transcript data; corpus selector nee
 - [ ] ~~Grafana dashboards and PagerDuty alerts provisioned by `aegis-aws-landing-zone` repository~~ — **superseded 2026-04-21** by C-Obs-2 above. Original self-hosted kube-prometheus-stack model had the platform authoring dashboards; the Grafana Cloud reversal (ldz ADR-022 + ADR-023) shifts dashboard + alert + contact-point authorship back to each service team via the 5-CRD contract. Platform still owns infrastructure-level dashboards (Karpenter / Kyverno / ArgoCD / node health) and the Grafana stack itself; service teams own service SLOs + routing.
 - [ ] `aegis_host_transient_loss_total`, `aegis_questions_detected_total`, `aegis_hints_emitted_total`, and other domain metrics emitted
 
+### Phase 4e: Cloud-mode Authentication (Cognito JWT consumption)
+
+> *"Close the auth gap between LAN demo and cold-apply cloud loop."*
+
+Gated behind LDZ's `staging/auth/` Terraform apply (ldz ADR-026, cross-repo aegis-core #76 Partially Accepted 2026-04-23). Design recorded in [ADR-0034](docs/adr/0034-cloud-auth-cognito-jwt.md); Phase 2's `StaticJWTProvider` is preserved for integration-test scenarios (`DEPLOY_MODE=cloud-test`).
+
+#### 4e-1 Gateway JWT middleware
+
+- [ ] `gateway_go/internal/auth/oidc_provider.go` — `OIDCProvider` implementing the existing `auth.Provider` port (`gateway_go/internal/auth/auth.go:69-71`)
+- [ ] `github.com/lestrrat-go/jwx/v2` dep added via `go get`; `go.mod` + `MODULE.bazel` + `gateway_go/BUILD.bazel` updated
+- [ ] `cmd/gateway/main.go` factory extended — `DEPLOY_MODE` switch: `local` → `NoOpProvider`, `cloud` → `OIDCProvider`, `cloud-test` → `StaticJWTProvider` (preserves pre-Cognito integration-test scaffold)
+- [ ] Unit tests (`oidc_provider_test.go`) — `httptest` mock JWKS server + synthesised JWTs covering: happy path, expired token, wrong audience, wrong issuer, missing `custom:tenant_id`, signature mismatch, JWKS fetch failure + refresh retry, JWKS key rotation mid-flight
+- [ ] Structured error logging — failure category only (signature / expired / missing claim / JWKS fetch), never the token bytes
+
+#### 4e-2 SPA OAuth scaffold
+
+- [ ] `frontend_web/package.json` — `react-oidc-context` + `oidc-client-ts` deps (Cognito Hosted UI flow, provider-agnostic wrapper so future IdP swap is config-level)
+- [ ] `frontend_web/src/main.tsx` — `<AuthProvider>` wrapper with Vite env-var config (`VITE_COGNITO_AUTHORITY` / `VITE_COGNITO_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` / `VITE_COGNITO_LOGOUT_URI`)
+- [ ] `frontend_web/src/routes/AuthCallback.tsx` — PKCE completion + navigate to post-login landing
+- [ ] `frontend_web/src/lib/gateway-client.ts` — `Authorization: Bearer ${idToken}` injection on every outbound gRPC-Web call
+- [ ] `frontend_web/src/lib/auth.ts` — decide (per ADR-0034 Open Question 1): extend with Cognito ID-token accessor, OR deprecate in favor of `useAuth()` hook + keep session-token storage for viewer-join
+- [ ] Logout button → `user.signoutRedirect()` (Cognito global logout)
+- [ ] Token storage: memory-only (`InMemoryWebStorage`) to mitigate XSS; silent-auth refresh on SPA reload
+- [ ] Vitest for `AuthCallback` route + bearer injection
+
+#### 4e-3 `custom:tenant_id` propagation verification
+
+- [ ] Verify (and extend if needed) `gateway_go/internal/pipeline/` forwards `tenant_id` + `sub` via gRPC metadata to engine (per ADR-0022 §"Query path"); may be LAN-only today — per ADR-0034 Open Question 2
+- [ ] Engine-side: `AuthContext` interceptor reads metadata → populates `session.TenantID` → Qdrant search honours ADR-0022 collection naming (`aegis_<tenant_id>_<corpus>`) + payload filter
+- [ ] Integration test: 2-tenant seed + cross-tenant query must return empty (structural + filter-level isolation both verified)
+- [ ] Explicit failure-mode test: empty `custom:tenant_id` in JWT → gateway rejects with `Unauthenticated` at middleware, never reaches engine
+
+#### 4e-4 Integration + E2E
+
+- [ ] Dev User Pool registration on LDZ staging Cognito (coordinate via aegis-core #76 or open a new cross-repo issue when 4e-1 lands)
+- [ ] Go integration test (gated on `AEGIS_COGNITO_*` env vars): real Cognito `AdminInitiateAuth` → token → `OIDCProvider.Authenticate` → expected `Principal` — nightly CI cadence, not PR-time
+- [ ] (Optional) Playwright nightly spec: SPA → Cognito Hosted UI → CreateMeeting → transcript → hint render on staging (only valuable once cold-apply cloud loop is live)
+
 ---
 
 ## Phase 5: Hardening & Compliance
