@@ -1,19 +1,20 @@
 // frontend_web/src/pages/AuthCallback/AuthCallbackPage.tsx
 //
 // Mounted at `/auth/callback` — the Cognito Hosted UI redirects here
-// after a successful login carrying `?code=…&state=…`. Calls into the
-// AuthProvider singleton's `handleSignInCallback`, which exchanges
-// the code for tokens, then bounces the user to /host.
+// after a successful login carrying `?code=…&state=…`. Calls
+// `handleSignInCallback` from @/lib/auth, which exchanges the code
+// for tokens via the module-level UserManager, then bounces the user
+// to /host.
 //
-// In Local mode this page is reachable but does nothing useful; the
-// LocalAuthProvider's handleSignInCallback is a no-op, then we still
-// navigate to /host. Wiring it through the same code path keeps the
-// router config mode-agnostic.
+// In Local mode this page is reachable but does nothing useful;
+// `handleSignInCallback` is a no-op (no UserManager exists), then we
+// still navigate to /host. Wiring it through the same code path
+// keeps the router config mode-agnostic.
 
 import { useEffect, useState, type JSX } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { auth } from "@/lib/auth";
+import { handleSignInCallback } from "@/lib/auth";
 
 type CallbackState =
   | { kind: "processing" }
@@ -28,7 +29,7 @@ export function AuthCallbackPage(): JSX.Element {
     let cancelled = false;
     void (async () => {
       try {
-        await auth.handleSignInCallback();
+        await handleSignInCallback();
         if (cancelled) return;
         setState({ kind: "done" });
         // Replace history so the back button doesn't re-trigger the
