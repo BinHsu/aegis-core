@@ -1,0 +1,149 @@
+name: Nightly Cognito integration
+
+# Phase 4e-4 per ADR-0034 §D4 + ROADMAP. Drives the live Cognito User
+# Pool (ldz-provisioned per aegis-core#76, available as of 2026-04-24)
+# end-to-end against our gateway-side OIDCProvider:
+#
+#   AdminCreateUser → AdminSetUserPassword → AdminInitiateAuth
+#     → real ID token → OIDCProvider.Authenticate → Principal assertions
+#     → AdminDeleteUser cleanup
+#
+# This is the integration test the ADR-0034 §D4 §D1 unit tests'
+# httptest mock-JWKS path can't honestly cover — JWKS rotation
+# semantics, real Cognito response shapes, and the IRSA → STS →
+# Cognito admin-API path all surface here only when run against the
+# live pool.
+#
+# Scheduling per the same logic as nightly post-deploy E2E (see
+# postdeploy-e2e.yml): regressions land in the morning operator
+# review window, not mid-meeting. workflow_dispatch supports a
+# targeted run after a Cognito pool config change or a deliberate
+# OIDCProvider edit.
+#
+# IAM contract (per ldz #76 §B reply 2026-04-24):
+#
+#   Role: arn:aws:iam::251774439261:role/github-actions-aegis-core-cognito-integration
+#   Trust: repo:BinHsu/aegis-core:ref:refs/heads/main
+#   Allowed actions:
+#     cognito-idp:Admin{CreateUser,SetUserPassword,InitiateAuth,
+#                      DeleteUser,GetUser} on Dev User Pool ARN only
+#     ssm:GetParameter[s] on /aegis/staging/cognito/*
+#     kms:Decrypt on alias/aegis-staging-secrets
+#
+# Refs: ADR-0034 §D4, ldz #76 (2026-04-24 reply with role + outputs),
+# ROADMAP.md Phase 4e-4.
+
+on:
+  schedule:
+    # 03:00 UTC = 11:00 Taipei daylight, before the morning operator
+    # review. Same cadence as postdeploy-e2e.yml so failures cluster
+    # at one time-of-day for easier triage.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-cognito-integration
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC token exchange to AWS STS
+  contents: read # checkout
+
+env:
+  AWS_REGION: eu-central-1
+  COGNITO_INTEGRATION_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-cognito-integration
+
+jobs:
+  cognito-integration:
+    name: Live Cognito OIDC integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # AWS OIDC: STS AssumeRoleWithWebIdentity → temporary creds.
+      # The configure-aws-credentials action exports them as
+      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+      # env vars; bazel test forwards them via env_inherit in
+      # gateway_go/internal/auth/BUILD.bazel.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.COGNITO_INTEGRATION_ROLE_ARN }}
+          role-session-name: aegis-core-cognito-integration-${{ github.run_id }}
+
+      # Read live values from SSM PS rather than hard-coding the
+      # Cognito IDs into the workflow. Two reasons per ldz #76 §A:
+      # (1) survives any baking-into-Secrets drift; (2) the SSM PS
+      # values are the canonical source — the workflow file becomes
+      # the wrong place for them to live if they ever rotate.
+      - name: Read Cognito IDs from SSM Parameter Store
+        id: ssm
+        run: |
+          set -euo pipefail
+          read_param() {
+            aws ssm get-parameter \
+              --name "$1" \
+              --query 'Parameter.Value' \
+              --output text
+          }
+          echo "AEGIS_COGNITO_USER_POOL_ID=$(read_param /aegis/staging/cognito/user-pool-id)" >> "$GITHUB_ENV"
+          echo "AEGIS_COGNITO_APP_CLIENT_ID=$(read_param /aegis/staging/cognito/app-client-id)" >> "$GITHUB_ENV"
+          echo "AEGIS_COGNITO_ISSUER_URL=$(read_param /aegis/staging/cognito/issuer-url)" >> "$GITHUB_ENV"
+          echo "::add-mask::$AEGIS_COGNITO_APP_CLIENT_ID"
+          echo "Cognito IDs loaded into env for bazel test."
+
+      # Bazel test target. env_inherit on auth_test forwards all the
+      # AWS_* + AEGIS_COGNITO_* env vars into the sandboxed test
+      # binary. The unit tests (httptest mock JWKS, claim-mapping,
+      # error paths) still run alongside the integration test —
+      # their cost is sub-second and runs as a free regression check
+      # on the same nightly cadence.
+      - name: Cache Bazel
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ github.workspace }}/.bazel_cache
+            ${{ github.workspace }}/.bazelisk
+          key: bazel-cognito-integration-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
+          restore-keys: |
+            bazel-cognito-integration-${{ runner.os }}-
+
+      - name: Run auth integration test against live Cognito
+        run: |
+          set -euo pipefail
+          ./tools/bazelisk/bazelisk test \
+            //gateway_go/internal/auth:auth_test \
+            --test_output=errors \
+            --test_filter=TestOIDCIntegrationCognito \
+            --nocache_test_results
+
+      # If the test failed, surface a workflow annotation pointing at
+      # the most likely causes — operator triaging the morning
+      # alert shouldn't have to re-derive the failure-mode taxonomy.
+      - name: Failure triage hint
+        if: failure()
+        run: |
+          cat <<'EOF' >&2
+          ::error title=Cognito integration failed::
+          Most likely causes (in declining order of historical
+          frequency on similar nightly integrations):
+
+            1. AWS STS role assumption failed → check ldz IAM role
+               github-actions-aegis-core-cognito-integration trust
+               policy still scopes refs/heads/main + this run's sub.
+
+            2. Cognito User Pool deletion / rotation per Runbook 008
+               → SSM PS values stale. Re-run baseline on ldz side
+               then re-trigger this workflow.
+
+            3. JWKS endpoint unreachable / signature mismatch →
+               Cognito-side regional outage; check AWS health
+               dashboard for eu-central-1 cognito-idp.
+
+            4. Test-user creation throttled → AdminCreateUser has a
+               soft throttle. Re-run; if persistent, raise an ldz
+               cross-repo issue for quota review.
+          EOF
