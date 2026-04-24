@@ -16,11 +16,13 @@ metadata:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/backend-protocol: HTTP
-    # Cross-repo dependency — ACM certificate for the hostname
-    # below is provisioned by ldz (Route53 hosted zone +
-    # DNS-validated ACM cert). If absent, ALB creation stalls.
-    # Track via cross-repo/fyi issue on ldz side.
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-central-1:251774439261:certificate/PLACEHOLDER-REPLACE-WITH-LDZ-ACM
+    # ACM certificate for `aegis-api.staging.binhsu.org`. Materialized
+    # by ldz on 2026-04-24 via baseline workflow run 24894738583
+    # (closes ldz #101 + aegis-core #50). DNS validation ISSUED via
+    # Route53 zone `staging.binhsu.org`. Cert region eu-central-1
+    # (regional ACM for ALB per ldz ADR-019's CloudFront-ACM-us-east-1
+    # vs ALB-ACM-regional split).
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-central-1:251774439261:certificate/208f2377-0326-4823-bbbe-e3dff94678ef
     # Healthcheck path for ALB target group probing.
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
     alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
