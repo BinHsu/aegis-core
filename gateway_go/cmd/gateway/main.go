@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/improbable-eng/grpc-web/go/grpcweb"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -56,6 +57,7 @@ import (
 	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/tracing"
 	aegiswebrtc "github.com/BinHsu/aegis-core/gateway_go/internal/webrtc"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/ws"
 )
@@ -113,6 +115,35 @@ func main() {
 		os.Exit(1)
 	}
 
+	// OpenTelemetry tracer-provider per ADR-0005 R4 + Phase 4d ROADMAP.
+	// Init once early so subsequent grpc.NewServer / NewClient calls
+	// can wire the otelgrpc stats handlers against the global provider.
+	// DEPLOY_MODE picks the exporter — local/cloud-test → stdout,
+	// cloud → OTLP gRPC (the OTEL_EXPORTER_OTLP_ENDPOINT env var
+	// flows naturally into otlptracegrpc.New as the SDK's default).
+	//
+	// Failure to dial the cloud collector at Init time is logged but
+	// non-fatal — span emission falls back to dropping silently per
+	// the SDK's default. SLO-first observability: dropped traces are
+	// degradation, not outage.
+	deployMode := tracing.DeployMode(strings.ToLower(strings.TrimSpace(os.Getenv("DEPLOY_MODE"))))
+	if deployMode == "" {
+		deployMode = tracing.ModeLocal
+	}
+	tracerShutdown, err := tracing.Init(context.Background(), deployMode)
+	if err != nil {
+		logger.Warn("tracing.Init failed — gateway runs without OTLP export",
+			"deploy_mode", string(deployMode), "err", err.Error())
+	} else {
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := tracerShutdown(ctx); err != nil {
+				logger.Warn("tracing.Shutdown", "err", err.Error())
+			}
+		}()
+	}
+
 	listenAddr := defaultListenAddr
 	if env := os.Getenv("AEGIS_GATEWAY_ADDR"); env != "" {
 		listenAddr = env
@@ -166,6 +197,11 @@ func main() {
 			Timeout:             keepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
+		// otelgrpc stats handler — auto-creates client spans for
+		// each engine RPC and injects the W3C `traceparent` header
+		// so a parent span on the gateway side stitches into the
+		// engine-side span tree (whenever the engine adopts OTel).
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 	if err != nil {
 		die("grpc.NewClient", "engine_addr", engineAddr, "err", err)
@@ -313,6 +349,11 @@ func main() {
 			auth.StreamInterceptor(authProvider),
 			metrics.StreamInterceptor(),
 		),
+		// otelgrpc stats handler — auto-creates server spans for
+		// every inbound RPC. Attribute filtering happens in the
+		// tracing exporter via the ADR-0005 R4 allowlist before
+		// any payload-shaped key reaches the OTLP wire.
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    keepaliveTime,
 			Timeout: keepaliveTimeout,

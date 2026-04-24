@@ -190,6 +190,12 @@ use_repo(
     "com_github_lestrrat_go_jwx_v2",
     "com_github_pion_webrtc_v4",
     "com_github_prometheus_client_golang",
+    "io_opentelemetry_go_contrib_instrumentation_google_golang_org_grpc_otelgrpc",
+    "io_opentelemetry_go_otel",
+    "io_opentelemetry_go_otel_exporters_otlp_otlptrace",
+    "io_opentelemetry_go_otel_exporters_otlp_otlptrace_otlptracegrpc",
+    "io_opentelemetry_go_otel_exporters_stdout_stdouttrace",
+    "io_opentelemetry_go_otel_sdk",
     "org_golang_google_grpc",
     "org_golang_google_protobuf",
 )
