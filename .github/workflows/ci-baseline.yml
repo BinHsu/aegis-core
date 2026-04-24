@@ -394,3 +394,109 @@ jobs:
           # Allowlist for GitHub / BuildBuddy settings URLs that 404
           # anonymously by design (see config file header for rationale).
           config-file: .github/workflows/mlc_config.json
+
+  # ---------------------------------------------------------------------------
+  # Phase 4b security scanners. Each is a distinct concern, parallelised:
+  #
+  #   - govulncheck: Go module + stdlib CVE scan (golang.org/x/vuln)
+  #   - gosec:       Go source-level security lint (hardcoded creds,
+  #                  SQL injection patterns, weak crypto primitives)
+  #   - checkov:     K8s manifest misconfig scan (apps/staging/)
+  #   - kube-score:  K8s best-practice scorer (resource limits, probes,
+  #                  image tag immutability, security context)
+  #
+  # All four are advisory on PR-time today (non-blocking `|| true`
+  # guard) to let us see the baseline signal before flipping to hard
+  # gates. Graduation criterion: a clean main-branch run of each
+  # scanner; at that point we remove the guard in a follow-up PR and
+  # the scanners become blocking. ARCHITECTURE.md §10.2 is the anchor.
+  # ---------------------------------------------------------------------------
+  go-vulncheck:
+    name: Go vulnerability scan (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: gateway_go/go.sum
+
+      - name: Run govulncheck
+        working-directory: gateway_go
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Advisory-only on PR time; tighten to hard-gate once main is clean.
+          govulncheck ./... || true
+
+  go-security-scan:
+    name: Go security scan (gosec)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: gateway_go/go.sum
+
+      - name: Run gosec
+        working-directory: gateway_go
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          # Advisory-only on PR time; -exclude-dir suppresses generated
+          # protobuf code (G402 false positives on gRPC insecure creds
+          # are inevitable in LOCAL-mode test setup).
+          gosec -exclude-dir=gen ./... || true
+
+  checkov-k8s:
+    name: Checkov K8s manifest scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: apps/staging
+          framework: kubernetes
+          # Advisory: `soft_fail: true` lets the job pass even when
+          # findings exist, so we can see the baseline before flipping
+          # to hard-gate per ADR-0005 R6 + ARCH §10.2.
+          soft_fail: true
+          output_format: cli
+
+  kube-score:
+    name: kube-score manifest scorer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install kube-score
+        run: |
+          curl -fsSL -o /tmp/kube-score.tar.gz \
+            "https://github.com/zegl/kube-score/releases/download/v1.19.0/kube-score_1.19.0_linux_amd64.tar.gz"
+          tar -xzf /tmp/kube-score.tar.gz -C /tmp kube-score
+          sudo mv /tmp/kube-score /usr/local/bin/kube-score
+          kube-score version
+
+      - name: Score staging manifests
+        run: |
+          # Concatenate + score all staging YAML trees. Advisory on
+          # PR time; `--ignore-tests pod-networkpolicy` suppresses
+          # noise from the Kyverno / LDZ-provided default-deny layer
+          # (we add per-app allow rules; kube-score can't see that
+          # crossing).
+          set +e
+          find apps/staging -name "*.yaml" -type f -print0 \
+            | xargs -0 -r kube-score score \
+                --ignore-test pod-networkpolicy \
+                --output-format ci
+          # Always pass for now — flip to hard-gate when main is clean.
+          exit 0
