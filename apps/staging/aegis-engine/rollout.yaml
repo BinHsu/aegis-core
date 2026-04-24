@@ -83,6 +83,35 @@ spec:
               # which is /usr/local/bin in the image; engine resolves
               # from /models by this env override.
               value: "/models/ggml-tiny.en.bin"
+            # Qdrant Cloud credentials — Secret materialized by ldz's
+            # ExternalSecret `qdrant-credentials` (ldz PR #146, cross-
+            # repo contract in ldz #141). Keys are uppercase to match
+            # the engine's env-var contract at
+            # `engine_cpp/src/vectordb/qdrant_client.cc:132`. The
+            # engine's URL parser scheme-infers TLS — the SSM PS
+            # value already contains the `https://` prefix + `:6334`
+            # (gRPC port), so the Secret is copied verbatim, no
+            # ExternalSecret template rewrite needed (ldz #141
+            # reply 2026-04-24: "option A" confirmed).
+            #
+            # Engine fails SOFT when QDRANT_URL is unset — transcript
+            # still flows, RAG hints disabled with a "QDRANT_URL unset
+            # (RAG hints disabled)" log. That keeps the cold-apply
+            # survivable even if the ExternalSecret lags; the first
+            # successful reconcile flips retrieval on with a pod
+            # restart (secretKeyRef is resolved at container start,
+            # not runtime-watched — the ADR-0032 image-tag deferral
+            # comment applies here too).
+            - name: QDRANT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: qdrant-credentials
+                  key: QDRANT_URL
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qdrant-credentials
+                  key: QDRANT_API_KEY
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
