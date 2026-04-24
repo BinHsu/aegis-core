@@ -1,0 +1,116 @@
+---
+# Kyverno ClusterPolicy — ADR-0005 R6 "no PVC, no hostPath in audio
+# namespace" enforcement point.
+#
+# Why this exists:
+#
+# ADR-0005 is the audio-ephemeral-policy ADR. R3 types raw PCM as
+# `SensitiveBytes` in C++ and `RedactedPCM` in Go; R4 restricts OTLP
+# span attributes to an allowlist that cannot carry PCM; R6 closes
+# the storage-surface side of the same invariant — a pod that cannot
+# *mount* persistent storage literally cannot spool PCM to disk, no
+# matter what the application code does.
+#
+# Trust-boundary scope:
+#
+# ADR-0005 R6 names "aegis-audio" as the canonical namespace for
+# audio-touching workloads. Phase 4c C-1 chose a single `aegis`
+# namespace for both gateway + engine because separating now would
+# have added ops cost without payoff — engine is the only workload
+# that touches raw PCM today. This policy therefore scopes to BOTH:
+#
+#   - `aegis`        — where engine actually runs today
+#   - `aegis-audio`  — forward-compatible for the separate-namespace
+#                      refactor when it lands
+#
+# Gateway is a no-op beneficiary: it never needed a PVC or hostPath
+# (emptyDir + Memory medium per the Rollout template), so the policy
+# doesn't block anything legitimate there. Engine's `models` volume
+# is an `emptyDir` placeholder today (per C-1 bootstrap note); when
+# ADR-0026 CSI / EFS model storage lands, that mount will be either
+# a Secret-backed read-only projection or a CSI driver that predates
+# the "no PVC" rule — neither of which triggers this policy
+# (`persistentVolumeClaim` volume type, not the CSI interface more
+# broadly).
+#
+# Enforcement mode:
+#
+# `validationFailureAction: Audit` matches ldz #96's baseline
+# posture ("4 baseline ClusterPolicies in Audit mode"). Audit writes
+# PolicyReport entries that the operator reviews; it does NOT reject
+# admission. Graduation to `Enforce` happens in a follow-up PR once
+# main-branch CI confirms no legitimate pod produces a violation.
+#
+# The same rhythm we used for AEGIS_DEV_AUDIO_DUMP in ADR-0005 R7 —
+# advisory first, blocking once the signal is clean. Flipping this
+# to Enforce is a single-line edit.
+#
+# Refs: ADR-0005 R6, ROADMAP.md Phase 4c "Audio-namespace Kyverno /
+# Gatekeeper policies", ldz #96 (platform's Kyverno install +
+# baseline-policy convention).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: aegis-audio-no-persistent-storage
+  labels:
+    app.kubernetes.io/name: aegis-audio-no-persistent-storage
+    app.kubernetes.io/part-of: aegis-core
+    app.kubernetes.io/component: policy
+  annotations:
+    policies.kyverno.io/title: Aegis Audio — no persistent storage
+    policies.kyverno.io/category: Data Governance
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod, PersistentVolumeClaim, HostPath
+    policies.kyverno.io/description: >-
+      Enforces ADR-0005 R6 by rejecting Pods in the aegis / aegis-audio
+      namespace that mount a PersistentVolumeClaim or hostPath volume.
+      The intent is to make on-disk audio persistence impossible at the
+      platform layer, not just the application layer.
+spec:
+  validationFailureAction: Audit
+  # background=true also scans existing Pods and reports violations;
+  # useful for auditing pre-existing workloads before flipping to
+  # Enforce. No admission-layer cost either way.
+  background: true
+  rules:
+    - name: deny-pvc-volume
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - aegis
+                - aegis-audio
+      validate:
+        message: >-
+          ADR-0005 R6: pods in the aegis audio trust boundary must not mount
+          PersistentVolumeClaims. Raw PCM and any derived artifact that could
+          reconstruct audio must not land on persistent storage.
+          If the pod legitimately needs scratch space, use `emptyDir:
+          { medium: Memory, sizeLimit: <small> }` — tmpfs-backed, stays in RAM,
+          never reaches a disk.
+        pattern:
+          spec:
+            =(volumes):
+              - X(persistentVolumeClaim): "*"
+
+    - name: deny-hostpath-volume
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - aegis
+                - aegis-audio
+      validate:
+        message: >-
+          ADR-0005 R6: pods in the aegis audio trust boundary must not mount
+          hostPath volumes. A hostPath escape turns any write from the audio
+          process into host-disk persistence; ADR-0005 forbids that class of
+          path regardless of the application layer's intent.
+        pattern:
+          spec:
+            =(volumes):
+              - X(hostPath): "*"
