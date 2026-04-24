@@ -35,6 +35,17 @@ For the full data flow, see `ARCHITECTURE.md` §4. Briefly:
   invite links and receive live transcript in a rolling window.
 - **Durable stores** hold only tenant metadata, auth records, consent
   ledger, and RAG corpora — **never** meeting content.
+- **External SaaS trust surface (staging Cloud deploy, 2026-04
+  onward):** AWS Cognito User Pool + Hosted UI — `custom:tenant_id`
+  claim drives ADR-0022 RAG isolation. Qdrant Cloud free tier — EU
+  region `eu-central-1` for GDPR boundary; TLS gRPC on port 6334 with
+  `api-key` metadata-header auth. Both credentials flow via
+  ldz-managed SSM Parameter Store → External Secrets Operator → K8s
+  Secret; gateway and engine pods consume via standard `secretKeyRef`
+  — no aegis-core code path reads SSM directly. Trust-surface delta
+  from the 2026-04-17 threat model: add two SaaS endpoints to the
+  "durable stores" row; no new attacker profile (A5 supply-chain
+  already covers third-party SaaS compromise).
 
 ## Assets to Protect
 
