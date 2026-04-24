@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: aegis-gateway
   namespace: aegis
@@ -7,6 +7,22 @@ metadata:
     app.kubernetes.io/name: aegis-gateway
     app.kubernetes.io/part-of: aegis-core
     app.kubernetes.io/component: api-gateway
+# Phase 4c-5a initial slice of ADR-0030 Progressive Delivery Controller:
+# Deployment → Rollout CRD conversion. The controller + ALB traffic-
+# router plugin are installed cluster-side (ldz #103 closed 2026-04-23).
+#
+# Scope reduction — these ADR-0030 items are deferred to follow-up
+# slices rather than bundled here:
+#
+#   - ALB trafficRouting (canaryService + stableService + TargetGroup
+#     weight shifts) — C-5a follow-up. Without it, `setWeight` at this
+#     layer means "split ReplicaSet replica counts"; traffic still
+#     follows the Service load-balance across all matching pods, which
+#     at 2 replicas gives a usable 50/50 canary without the
+#     TargetGroupBinding wiring.
+#   - AnalysisTemplate SLO gates — C-5b, explicitly deferred per
+#     ADR-0030 §"Honest phasing" until Phase 4d emits the burn-rate
+#     metrics that drive automatic rollback.
 spec:
   # Two replicas to exercise ADR-0017's N:N assumption in staging.
   # Scaling policy (HPA) deferred until Phase 4d emits metrics.
@@ -16,10 +32,16 @@ spec:
     matchLabels:
       app.kubernetes.io/name: aegis-gateway
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    canary:
+      # 50/50 soak for 2 minutes before the Rollout promotes the canary
+      # ReplicaSet to stable. Deliberately minimal pending the Phase 4d
+      # SLO-gated AnalysisTemplate (C-5b). Time-based pause gives
+      # operators a window to eyeball logs / dashboards before full
+      # promote; auto-rollback lands with the metric pipeline.
+      steps:
+        - setWeight: 50
+        - pause:
+            duration: 2m
   template:
     metadata:
       labels:

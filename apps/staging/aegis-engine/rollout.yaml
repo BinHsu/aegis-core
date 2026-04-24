@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: aegis-engine
   namespace: aegis
@@ -7,6 +7,20 @@ metadata:
     app.kubernetes.io/name: aegis-engine
     app.kubernetes.io/part-of: aegis-core
     app.kubernetes.io/component: inference-engine
+# Phase 4c-5a: ADR-0030 Progressive Delivery Controller — engine
+# half. Deployment → Rollout conversion matches the gateway; engine
+# uses a longer soak (5m vs 2m) because model load at startup takes
+# ~30 seconds and a new canary pod needs enough warm-up time for
+# health-check stability before the operator commits to promote.
+#
+# Engine is cluster-internal (no Ingress / ALB), so the ALB
+# trafficRouting discussion on the gateway side doesn't apply here —
+# canary weight maps cleanly to ReplicaSet replica counts and the
+# Service (headless, ADR-0017) round-robins across both ReplicaSets
+# naturally. ALB plugin is gateway-only.
+#
+# AnalysisTemplate SLO gates deferred per ADR-0030 §"Honest phasing"
+# — lands alongside Phase 4d metric pipeline (C-5b).
 spec:
   # N replicas per ADR-0017 N:N-ready topology. Starting at 2 in
   # staging to exercise the round-robin path end-to-end.
@@ -16,10 +30,15 @@ spec:
     matchLabels:
       app.kubernetes.io/name: aegis-engine
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    canary:
+      # 50/50 for 5 minutes — longer than gateway's 2m because engine
+      # boot cost includes manifest CAS walk + whisper model mmap
+      # + optional bge-m3 load. The pause lets operators confirm the
+      # canary ReplicaSet settled into Ready state before promoting.
+      steps:
+        - setWeight: 50
+        - pause:
+            duration: 5m
   template:
     metadata:
       labels:
