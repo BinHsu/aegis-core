@@ -32,6 +32,7 @@ import (
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/metrics"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
 )
@@ -551,6 +552,7 @@ func (s *GatewayService) SendOfficerHint(
 	// subscribers are visible via sequence gaps on the viewer side
 	// (same posture as transcript broadcast).
 	sess.Broadcast(ev)
+	metrics.HintsEmittedTotal.WithLabelValues("officer").Inc()
 
 	return &aegisv1.SendOfficerHintResponse{HintId: hintID}, nil
 }

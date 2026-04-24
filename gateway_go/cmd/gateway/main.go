@@ -237,6 +237,7 @@ func main() {
 					switch state {
 					case aegiswebrtc.ICEStateDisconnected:
 						_ = p.SendControl(aegisv1.ControlKind_CONTROL_KIND_PAUSE)
+						metrics.HostTransientLossTotal.Inc()
 					case aegiswebrtc.ICEStateConnected:
 						_ = p.SendControl(aegisv1.ControlKind_CONTROL_KIND_RESUME)
 					case aegiswebrtc.ICEStateFailed:

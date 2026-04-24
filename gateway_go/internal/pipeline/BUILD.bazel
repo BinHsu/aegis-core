@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/pipeline",
     visibility = ["//gateway_go:__subpackages__"],
     deps = [
+        "//gateway_go/internal/metrics",
         "//gateway_go/internal/sensitive",
         "//gateway_go/internal/session",
         # Proto Go bindings — per ADR-0013, Bazel is authoritative for
