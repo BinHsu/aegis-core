@@ -54,6 +54,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	aegisv1 "github.com/BinHsu/aegis-core/gateway_go/gen/go/aegis/v1"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/metrics"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/sensitive"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 )
@@ -393,6 +394,7 @@ func (p *Pipeline) runEgress() {
 					Hint: payload.Hint,
 				},
 			})
+			metrics.HintsEmittedTotal.WithLabelValues("retriever").Inc()
 			if delivered == 0 {
 				slog.Warn("pipeline.broadcast.hint_no_subscribers",
 					"session_id", p.sessionID,

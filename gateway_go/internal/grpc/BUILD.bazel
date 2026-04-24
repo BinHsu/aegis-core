@@ -9,6 +9,7 @@ go_library(
         # Bazel-authoritative proto codegen per ADR-0013.
         "//proto/aegis/v1:aegis_go_proto",
         "//gateway_go/internal/auth",
+        "//gateway_go/internal/metrics",
         "//gateway_go/internal/session",
         "//gateway_go/internal/token",
         "@org_golang_google_grpc//codes",
@@ -26,6 +27,7 @@ go_test(
     deps = [
         "//proto/aegis/v1:aegis_go_proto",
         "//gateway_go/internal/auth",
+        "//gateway_go/internal/metrics",
         "//gateway_go/internal/session",
         "//gateway_go/internal/token",
         "@org_golang_google_grpc//:grpc",

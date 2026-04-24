@@ -74,8 +74,76 @@ var RpcDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"method"},
 )
 
+// -----------------------------------------------------------------------------
+// Domain metrics (Phase 4d / ROADMAP).
+//
+// Infrastructure metrics above answer "is the gateway healthy"; these
+// answer "is the product doing the work it's supposed to do". Both
+// feed the same Prometheus scrape, but the domain metrics are what
+// SLOs are defined against (ARCH §10.4) — the burn-rate denominator
+// for the Phase 4c-5b AnalysisTemplate lives here.
+// -----------------------------------------------------------------------------
+
+// HintsEmittedTotal — count of PrompterHint events the gateway has
+// broadcast to viewers, labelled by origin.
+//
+//   source="retriever"  — engine-origin RAG hits flowing from
+//                         `Pipeline.runEgress` on the `EgressMessage_Hint`
+//                         variant (ADR-0019 retriever path)
+//   source="officer"    — staff-authored hints via the
+//                         SendOfficerHint RPC handler (Phase 3c Slice 7)
+//
+// Useful for:
+//   - "is the retriever actually firing?" — alert on the ratio
+//     dropping to zero mid-meeting
+//   - "what fraction of hints are staff overrides?" — signals whether
+//     the retriever is under-performing vs the chief-of-staff's
+//     manual interventions
+var HintsEmittedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "aegis_gateway_hints_emitted_total",
+		Help: "PrompterHint events broadcast to viewers, labelled by " +
+			"origin (retriever = engine RAG hit, officer = staff-authored).",
+	},
+	[]string{"source"},
+)
+
+// HostTransientLossTotal — count of host-side transient connection
+// losses (ICE Disconnected transitions, which PAUSE the engine
+// stream but keep the session alive for reconnect per ADR-0006).
+//
+// ICE Failed transitions are NOT counted here — those terminate
+// the session (END_STREAM) and are covered by the session-ended
+// telemetry. This counter captures the "laptop lid closed briefly"
+// / "WiFi blip" / "moved between APs" class of events where the
+// session is recoverable.
+//
+// Useful for:
+//   - environment-quality signal: a meeting with high transient-loss
+//     count likely has a flaky network and the transcript / RAG
+//     confidence interpretation should weight that
+//   - diagnostic pattern: sudden spike in transient_loss across all
+//     active sessions points at gateway-side ICE stack regression,
+//     not per-session network conditions
+var HostTransientLossTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "aegis_gateway_host_transient_loss_total",
+		Help: "Host-side ICE Disconnected transitions that PAUSE the " +
+			"engine stream but keep the session alive (transient loss " +
+			"per ADR-0006). Terminal ICE Failed transitions are NOT " +
+			"counted here.",
+	},
+)
+
 func init() {
-	registry.MustRegister(Up, ActiveSessions, RpcTotal, RpcDurationSeconds)
+	registry.MustRegister(
+		Up,
+		ActiveSessions,
+		RpcTotal,
+		RpcDurationSeconds,
+		HintsEmittedTotal,
+		HostTransientLossTotal,
+	)
 }
 
 // Handler returns the HTTP handler that serves /metrics. cmd/gateway
