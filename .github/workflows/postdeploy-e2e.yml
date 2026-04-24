@@ -1,0 +1,103 @@
+name: Post-deploy E2E smoke
+
+# Phase 4c post-deploy E2E workflow per ROADMAP. Runs the Playwright
+# spec at `frontend_web/e2e/postdeploy-happy-path.spec.ts` against
+# the deployed staging URL.
+#
+# Trigger model:
+#
+#   - Nightly cron (03:00 UTC) so regressions land in the oncall
+#     window of the next operator review, not in the middle of a
+#     live meeting.
+#   - Manual `workflow_dispatch` for targeted runs after a cold-apply
+#     or a deliberate staging change.
+#
+# Gating:
+#
+# The workflow is committed now (Phase 4c slice) but runs as a no-op
+# when the `AEGIS_POSTDEPLOY_URL` repository secret is unset — that
+# matches the present state where ldz's staging cluster is torn down
+# (see `project_ldz_teardown_state.md` in the operator's notes).
+# When ldz cold-starts and `aegis-app.staging.binhsu.org` comes back
+# online, an operator sets the secret and the cron flips from "skip"
+# to "run" automatically.
+#
+# Why nightly (not per-commit): post-deploy E2E tests the *deployed*
+# surface, not the pre-merge code. Running it per-commit would test
+# the current main against whatever previous version happens to be
+# deployed — not useful. The right cadence is "after every ArgoCD
+# sync, plus a nightly safety net"; the ArgoCD-sync hook is a
+# future slice (needs webhook plumbing on the cluster side).
+#
+# Refs: ROADMAP.md Phase 4c "Post-deploy E2E suite against staging";
+# ADR-0002 Constraint 4 (webkit parity); Incident 09 rationale for
+# live-browser harnesses.
+
+on:
+  schedule:
+    # 03:00 UTC = 11:00 Taipei daylight, 10:00 Taipei standard.
+    # Lands before the typical morning operator review.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: postdeploy-e2e
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    name: Playwright against staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Short-circuit if AEGIS_POSTDEPLOY_URL unset
+        id: gate
+        env:
+          POSTDEPLOY_URL: ${{ secrets.AEGIS_POSTDEPLOY_URL }}
+        run: |
+          if [ -z "${POSTDEPLOY_URL:-}" ]; then
+            echo "AEGIS_POSTDEPLOY_URL secret is unset — skipping."
+            echo "Set it to the staging URL (e.g. https://aegis-app.staging.binhsu.org)"
+            echo "on the repository's Secrets page to enable the real run."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install frontend deps
+        if: steps.gate.outputs.should_run == 'true'
+        run: ./tools/scripts/frontend.sh install
+
+      - name: Install Playwright browsers
+        if: steps.gate.outputs.should_run == 'true'
+        run: ./tools/scripts/frontend.sh e2e:install
+
+      - name: Run post-deploy spec
+        if: steps.gate.outputs.should_run == 'true'
+        env:
+          AEGIS_POSTDEPLOY_URL: ${{ secrets.AEGIS_POSTDEPLOY_URL }}
+          # Forward CI=true so the Playwright config applies its
+          # retry=1 + github-reporter posture.
+          CI: "true"
+        run: |
+          cd frontend_web
+          # -g runs only the `postdeploy-happy-path` spec; the
+          # existing `consent-smoke` spec stays scoped to pre-merge CI
+          # (ci-baseline.yml) because it needs the local Vite server.
+          node node_modules/@playwright/test/cli.js test \
+            --reporter=github \
+            -g "post-deploy happy-path smoke"
+
+      - name: Upload Playwright report on failure
+        if: failure() && steps.gate.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-postdeploy
+          path: frontend_web/playwright-report/
+          retention-days: 7
