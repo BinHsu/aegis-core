@@ -27,10 +27,28 @@ go_test(
     size = "small",
     srcs = [
         "auth_test.go",
+        "oidc_integration_test.go",
         "oidc_provider_test.go",
     ],
     embed = [":auth"],
+    # Forwarded env triggers TestOIDCIntegrationCognito; absent → skip.
+    # See .github/workflows/nightly-cognito-integration.yml for how the
+    # nightly job populates these from STS-assumed creds + ldz Terraform
+    # outputs (or SSM PS at /aegis/staging/cognito/*).
+    env_inherit = [
+        "AEGIS_COGNITO_USER_POOL_ID",
+        "AEGIS_COGNITO_APP_CLIENT_ID",
+        "AEGIS_COGNITO_ISSUER_URL",
+        "AWS_REGION",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ],
     deps = [
+        "@com_github_aws_aws_sdk_go_v2//aws",
+        "@com_github_aws_aws_sdk_go_v2_config//:config",
+        "@com_github_aws_aws_sdk_go_v2_service_cognitoidentityprovider//:cognitoidentityprovider",
+        "@com_github_aws_aws_sdk_go_v2_service_cognitoidentityprovider//types",
         "@com_github_golang_jwt_jwt_v5//:jwt",
         "@com_github_lestrrat_go_jwx_v2//jwa",
         "@com_github_lestrrat_go_jwx_v2//jwk",
