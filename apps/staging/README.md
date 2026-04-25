@@ -28,20 +28,20 @@ ignore this entire `apps/` tree and the demo still works end-to-end.
 Per ADR-0031 §"LOCAL mode posture", mTLS is also bypassed in LOCAL
 mode — plaintext gRPC over localhost, by design.
 
-## Current state — Phase 4c C-1 foundation landed
+## Current state — Phase 4c C-1 + C-5a + C-Obs-1 landed; (b) seed Job in place
 
 | Component | Resource kinds |
 |---|---|
-| Gateway | `Deployment` · `Service` (ClusterIP) · `Ingress` (ALB) · `ServiceAccount` · `NetworkPolicy` |
-| Engine | `Deployment` · `Service` (**headless**, ADR-0017) · `ServiceAccount` (IRSA-annotated) · `NetworkPolicy` |
+| Gateway | `Rollout` (ADR-0030) · `Service` (ClusterIP) · `Ingress` (ALB) · `ServiceAccount` · `NetworkPolicy` · `ServiceMonitor` |
+| Engine | `Rollout` (ADR-0030) · `Service` (**headless**, ADR-0017) · `ServiceAccount` (IRSA-annotated) · `NetworkPolicy` · `ServiceMonitor` · `Job` (RAG corpus seed, ArgoCD `PostSync` hook) |
+| Policies | Kyverno `ClusterPolicy` (audio-ns no-PVC + no-hostPath, ADR-0005 R6, Audit mode) |
 
 **Not here yet** (tracked in ROADMAP Phase 4c):
 
-- `Rollout` CRD replacing `Deployment` — C-5a, ADR-0030
 - cert-manager `Certificate` CRs for mTLS — C-2, ADR-0031
-- `ServiceMonitor` (Prometheus scrape targets) — lands with Phase 4d observability
 - `PodDisruptionBudget` — worth adding once replica counts reflect real load
-- Model `PersistentVolumeClaim` or S3-CSI mount — C-3, ADR-0026
+- Model `PersistentVolumeClaim` or S3-CSI mount — C-3, ADR-0026 (gated on ldz #85 IAM extension)
+- Argo Rollouts `AnalysisTemplate` SLO gates — C-5b, depends on Phase 4d metric pipeline burning realistic baselines
 
 ## Convention
 
@@ -54,13 +54,13 @@ mode — plaintext gRPC over localhost, by design.
 | Namespace | `aegis` (Terraform-managed by ldz — do NOT create here) | ldz #54 |
 | Service topology | Gateway: ClusterIP + ALB Ingress · Engine: **Headless** (gRPC round-robin DNS) | ADR-0017 |
 | mTLS | cert-manager-issued certs in CLOUD (absent in C-1; arrives in C-2) | ADR-0031 |
-| Progressive delivery | Plain `Deployment` in C-1; `Rollout` CRD replacement in C-5a | ADR-0030 |
+| Progressive delivery | `Rollout` (Argo Rollouts CRD) — C-5a landed; `AnalysisTemplate` SLO gates pending C-5b | ADR-0030 |
 
 ## Platform guarantees from ldz #54
 
 - **AWS Load Balancer Controller** pre-installed — `Ingress` translates to ALB automatically
 - **Default-deny NetworkPolicy** already on `aegis` ns — we add explicit allow rules below
-- **Kyverno Audit mode** — our Deployments satisfy all 4 baseline policies (non-privileged, no host-ns, resource limits present, `app.kubernetes.io/name` labelled)
+- **Kyverno Audit mode** — our Rollouts satisfy all 4 baseline ldz ClusterPolicies (non-privileged, no host-ns, resource limits present, `app.kubernetes.io/name` labelled), plus our own audio-ns isolation policy in `aegis-policies/kyverno-audio-isolation.yaml` (ADR-0005 R6)
 - **Karpenter vCPU cap: 4 total** — our requests sum to 1.2 vCPU; fits comfortably
 - **IRSA role pre-provisioned**: `aegis-staging-aegis-engine` with trust scope `system:serviceaccount:aegis:aegis-engine`. Engine SA carries the `eks.amazonaws.com/role-arn` annotation; permission policy on the role is currently empty (skeleton — attaches when engine gains AWS API surface).
 
