@@ -1558,7 +1558,7 @@ The workflow had landed in [PR #88](https://github.com/BinHsu/aegis-core/pull/88
 
 ### Root cause
 
-Three independent latent bugs in the same step, each masking the next:
+Three independent latent bugs in the same step, each masking the next — a "bug onion" in debugging slang, where every fix peels off one layer and exposes the next:
 
 1. **`set -e` does not propagate cleanly out of `$(...)` capture inside an `echo` argument.** The original step pattern was `echo "KEY=$(aws ssm get-parameter ...)" >> "$GITHUB_ENV"`. When the AWS CLI exits non-zero (parameter missing, KMS denied, etc.), the failure is dropped because the surrounding `echo` succeeds with whatever stdout the substitution produced — even an empty string. POSIX `set -e` semantics treat command-substitution failure inside an assignment-or-argument context as not-quite-fatal; modern bash 5.x preserves this gotcha.
 2. **`>> $GITHUB_ENV` does NOT populate the current shell.** GitHub Actions reads the file written via `>> $GITHUB_ENV` between steps, so the var is visible to the **next** step but not to the **current** step. The original code then immediately referenced `$AEGIS_COGNITO_APP_CLIENT_ID` for `::add-mask::` in the same step — under `set -u` (`-o nounset`) this is a hard fail. Layer 2 was therefore guaranteed to fire even on a green AWS path; the workflow had never run cleanly to completion.
