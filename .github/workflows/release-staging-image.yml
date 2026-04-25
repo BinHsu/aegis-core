@@ -206,15 +206,32 @@ jobs:
       # without the model, container crashes immediately. Smoke needs
       # the Phase 4c K8s manifests to mount the model PV. For Slice 4
       # we trust "image builds + pushes" as the deliverable.
-      #
-      # NO SBOM step yet either — Slice 4a-2 added gateway SBOM via
-      # anchore/sbom-action; engine SBOM follows the same pattern but
-      # is intentionally deferred so this slice stays focused on
-      # "engine image lands in ECR". Engine SBOM lands as a follow-up
-      # commit / mini-slice once we confirm the engine image strategy
-      # (especially distroless variant) is stable.
       - name: Build engine OCI image
         run: ./tools/bazelisk/bazelisk build //packaging/engine:image
+
+      # Phase 4b mini-slice — engine SBOM (CycloneDX), mirrors the
+      # gateway Slice 4a-2 pattern. The image must be present in the
+      # local Docker daemon for `anchore/sbom-action`'s `image:` input
+      # to resolve it. Gateway gets that "for free" via the smoke-test
+      # step's `image_load`; engine has no smoke step (see comment
+      # above), so we explicitly load before scanning. SBOM file is
+      # consumed by the Cosign attestation step further down — same
+      # one-workflow-run discipline as the gateway side (Slice 4a-2's
+      # rationale: Cosign attest needs the file on disk in the same
+      # run as the push + sign).
+      - name: Load engine image into Docker for SBOM scan
+        run: ./tools/bazelisk/bazelisk run //packaging/engine:image_load
+
+      - name: Generate engine image SBOM (CycloneDX)
+        # anchore/sbom-action v0.24.0 (released 2026-03-20)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: aegis-engine:dev-local
+          format: cyclonedx-json
+          artifact-name: engine.sbom.cdx.json
+          output-file: engine.sbom.cdx.json
+          upload-artifact: true
+          upload-release-assets: false
 
       - name: Push engine image to ECR (tag engine-staging-<git_sha>)
         id: push-engine
@@ -250,8 +267,8 @@ jobs:
       # signatures are verifiable but not yet enforced at deploy.
       #
       # ADR-0028 documents the Sigstore choice + keyless-vs-keyed
-      # rationale. Engine SBOM attestation deferred (engine SBOM
-      # generation is itself deferred per ROADMAP).
+      # rationale. Engine SBOM attestation now active (mirrors gateway
+      # via the steps above).
       - name: Install Cosign
         # sigstore/cosign-installer v4.1.1 (released 2026-03-26)
         uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003
@@ -306,6 +323,16 @@ jobs:
         run: |
           set -euxo pipefail
           cosign sign --yes "${{ steps.push-engine.outputs.ref }}"
+
+      - name: Attach engine SBOM as Cosign attestation (CycloneDX predicate)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euxo pipefail
+          cosign attest --yes \
+            --predicate engine.sbom.cdx.json \
+            --type cyclonedx \
+            "${{ steps.push-engine.outputs.ref }}"
 
       - name: Trivy CVE scan — engine image (block on CRITICAL)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1

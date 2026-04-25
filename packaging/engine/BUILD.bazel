@@ -99,9 +99,26 @@ pkg_files(
     },
 )
 
+# Starter corpus shipped at FHS `/usr/local/share/corpora/` so the
+# Phase 4c Cloud RAG seed Job (`apps/staging/aegis-engine/seed-job.yaml`)
+# can bring up a non-empty Qdrant collection on first cold-apply
+# without an extra delivery mechanism (S3 mount / ConfigMap / git
+# init-container). Image size impact is sub-10KB. Forks that need a
+# different corpus override the Job's `--corpus` flag to point at
+# whatever volume mount they wire in.
+pkg_files(
+    name = "corpus_files",
+    srcs = ["//docs/rag:taiwan.md"],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "/usr/local/share/corpora",
+)
+
 pkg_tar(
     name = "engine_layer",
-    srcs = [":engine_files"],
+    srcs = [
+        ":corpus_files",
+        ":engine_files",
+    ],
 )
 
 oci_image(

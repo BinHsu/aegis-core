@@ -1,0 +1,150 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aegis-engine-seed
+  namespace: aegis
+  labels:
+    app.kubernetes.io/name: aegis-engine-seed
+    app.kubernetes.io/part-of: aegis-core
+    app.kubernetes.io/component: rag-seed
+  annotations:
+    # ArgoCD hook semantics: run AFTER the Rollout (and its Service /
+    # NetworkPolicy / ServiceAccount) have reconciled, so the Secret
+    # the Job consumes is materialized before it tries to mount.
+    argocd.argoproj.io/hook: PostSync
+    # `BeforeHookCreation` clears any prior failed Job before
+    # creating a new one (useful when iterating on the seed flow).
+    # `HookSucceeded` removes successful Jobs to keep the namespace
+    # tidy. Failed Jobs persist for operator inspection until the
+    # next sync re-creates the hook.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+# Phase 4c (b) — Cloud RAG corpus seed Job per ADR-0023 §Decision B.
+# One-shot Job running `engine seed --target=cloud` to populate the
+# Qdrant Cloud collection consumed by the engine's RAG retriever
+# (`engine_cpp/src/rag/retriever.cc`). Idempotent: `engine seed`
+# uses content-hashed UUID point IDs, so re-running is a no-op once
+# data is in place (Phase 3b Slice 6 design).
+#
+# Why `PostSync` hook (not a regular Job): ArgoCD reconciles regular
+# Jobs on every Sync, but only re-creates them when the manifest
+# diff changes. A `PostSync` hook with the delete policies above
+# gives clean re-run semantics keyed on the Sync event itself,
+# matching the operational mental model "seed runs after a deploy".
+#
+# Corpus delivery: `taiwan.md` ships INSIDE the engine image at
+# `/usr/local/share/corpora/taiwan.md` (see `packaging/engine/BUILD.bazel`
+# §`corpus_files`). Forks override the `--corpus` flag below to
+# point at whatever corpus delivery mechanism they use (S3 mount,
+# ConfigMap, init-container pull from git).
+#
+# Known dependency on model storage layer: `engine seed` loads
+# bge-m3-q4km from the manifest's CAS path (ROADMAP Phase 4c
+# "Engine startup manifest validation + SHA verify"). Until
+# the Phase 4c CI model populator step lands (gated on ldz #85's
+# IAM extension for `s3:HeadObject + s3:PutObject` on the model
+# bucket), `/models` is the same emptyDir placeholder the Rollout
+# carries — the Job will fail at bge-m3 load with `couldn't open
+# file`. That failure is the same documented gap as the Rollout's
+# (`apps/staging/aegis-engine/rollout.yaml` §"MODEL STORAGE —
+# BOOTSTRAP PLACEHOLDER"); both pods recover together when the
+# model storage layer arrives. ArgoCD will surface the Job's
+# failed state until then; the operator notice is "model storage
+# pending", not "seed pipeline broken".
+spec:
+  # 24h TTL on completed Jobs (success or final failure). Enough
+  # time for the operator to inspect on the morning review without
+  # accumulating dead Job records over weeks of syncs.
+  ttlSecondsAfterFinished: 86400
+  # 3 retries on transient failures (Qdrant API hiccup, transient
+  # S3-CSI mount delay). Beyond 3, surface the failure to the
+  # operator rather than retrying forever.
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aegis-engine-seed
+        app.kubernetes.io/part-of: aegis-core
+        app.kubernetes.io/component: rag-seed
+    spec:
+      # Reuse the engine ServiceAccount (IRSA-annotated by ldz with
+      # role `aegis-staging-aegis-engine`) so the Job inherits the
+      # same AWS identity as the Rollout — relevant when the model
+      # storage layer comes online and S3 reads need IRSA creds.
+      serviceAccountName: aegis-engine
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: seed
+          # Pinned to the same image SHA the Rollout currently uses
+          # (ADR-0032 manual tag-update discipline). When the
+          # Rollout image bumps, this Job's image bumps in the
+          # same PR — they ride the same release cycle.
+          image: 251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core:engine-staging-db14d67559d079d48633dc3a536666eba080ac05
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/engine"]
+          args:
+            - seed
+            - --corpus
+            - /usr/local/share/corpora/taiwan.md
+            - --target=cloud
+          env:
+            # Same env block as the Rollout (rollout.yaml §env).
+            # Match exactly so seed and serve see identical model /
+            # vector-DB state.
+            - name: AEGIS_MODEL_PATH
+              value: "/models/ggml-tiny.en.bin"
+            - name: QDRANT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: qdrant-credentials
+                  key: QDRANT_URL
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qdrant-credentials
+                  key: QDRANT_API_KEY
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            # Smaller envelope than the Rollout — the seed flow
+            # loads bge-m3-q4km (~600MB) for embeddings but does
+            # NOT load whisper / diarization. 1Gi/2Gi covers the
+            # embedder + chunker working set.
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # Same MODEL STORAGE BOOTSTRAP PLACEHOLDER caveat as the
+        # Rollout. emptyDir → seed will fail at bge-m3 load until
+        # the Phase 4c CI populator step lands (ROADMAP Phase 4c
+        # "CI step: populate model storage from manifest", gated on
+        # ldz #85). When that lands, the volume swaps to the real
+        # model PV / S3 mount and the Job starts succeeding.
+        - name: models
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
