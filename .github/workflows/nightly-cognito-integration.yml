@@ -83,21 +83,33 @@ jobs:
         id: ssm
         run: |
           set -euo pipefail
+          # The Cognito SSM parameters are stored as `SecureString` (KMS
+          # encrypted under alias/aegis-staging-secrets — see the IAM
+          # contract above). Without `--with-decryption` the CLI returns
+          # the encrypted ciphertext, which then sails through every
+          # downstream check (it is, technically, a non-empty string)
+          # and only fails much later when AWS rejects the ciphertext as
+          # a User Pool ID — surfacing as a misleading
+          # `AccessDeniedException` against a ciphertext-shaped resource
+          # ARN. Decrypt at read time so all downstream callers see
+          # plaintext.
+          #
           # Capture into local vars first so `set -e` actually propagates
           # the AWS CLI exit code (it does NOT propagate cleanly out of
           # `echo "X=$(aws ssm ...)" >> $GITHUB_ENV` — `>> $GITHUB_ENV`
           # also doesn't set the current shell, which is the second half
-          # of the trap). Targeted annotation on ParameterNotFound points
-          # operators at the canonical cross-repo issue rather than
-          # surfacing as an `unbound variable` red herring.
+          # of the trap). Targeted annotation on read failure points
+          # operators at the most likely buckets without prejudging which
+          # one fired.
           read_param() {
             local name=$1
             local value
             if ! value=$(aws ssm get-parameter \
                 --name "$name" \
+                --with-decryption \
                 --query 'Parameter.Value' \
                 --output text 2>&1); then
-              echo "::error title=Cognito SSM PS missing::Parameter ${name} not readable. Most likely cause: SaaS-credential SSM PS wiped by an LDZ workload teardown. Tracked in https://github.com/BinHsu/aegis-aws-landing-zone/issues/153 (Option B persistent-layer relocation). Hold the workflow until that issue's fix lands."
+              echo "::error title=Cognito SSM PS read failed::Parameter ${name} not readable. Likely buckets: (1) parameter destroyed (check ldz teardown logs); (2) KMS Decrypt denied on alias/aegis-staging-secrets (check IAM policy on the integration role); (3) STS role assumption returned creds without ssm:GetParameter[s] on this path. Raw CLI output is in the step log above this annotation."
               echo "aws ssm get-parameter raw output:" >&2
               echo "${value}" >&2
               exit 1
