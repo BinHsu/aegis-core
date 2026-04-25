@@ -108,6 +108,11 @@ repos:
   # discipline: `required: true` iff engine startup actually loads it,
   # and PLACEHOLDER entries cannot be required=true. See
   # tools/scripts/check_manifest_drift.sh.
+  #
+  # SSM decryption guard — every `aws ssm get-parameter` call in a CI
+  # workflow must also pass `--with-decryption`. See Incident 16
+  # (docs/incidents.md, 2026-04-25) — silent SecureString-as-ciphertext
+  # is a 3-hour-tuition class of bug.
   # ---------------------------------------------------------------------------
   - repo: local
     hooks:
@@ -117,6 +122,12 @@ repos:
         language: script
         pass_filenames: false
         files: ^(models/manifest\.json|engine_cpp/cmd/engine/main\.cc|engine_cpp/src/session/session\.cc)$
+
+      - id: ssm-with-decryption-guard
+        name: aws ssm get-parameter must use --with-decryption
+        entry: tools/scripts/check_ssm_decryption.sh
+        language: script
+        files: ^\.github/workflows/.*\.ya?ml$
 
   # ---------------------------------------------------------------------------
   # Conventional commit message lint (optional but encouraged)
