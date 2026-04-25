@@ -83,16 +83,36 @@ jobs:
         id: ssm
         run: |
           set -euo pipefail
+          # Capture into local vars first so `set -e` actually propagates
+          # the AWS CLI exit code (it does NOT propagate cleanly out of
+          # `echo "X=$(aws ssm ...)" >> $GITHUB_ENV` — `>> $GITHUB_ENV`
+          # also doesn't set the current shell, which is the second half
+          # of the trap). Targeted annotation on ParameterNotFound points
+          # operators at the canonical cross-repo issue rather than
+          # surfacing as an `unbound variable` red herring.
           read_param() {
-            aws ssm get-parameter \
-              --name "$1" \
-              --query 'Parameter.Value' \
-              --output text
+            local name=$1
+            local value
+            if ! value=$(aws ssm get-parameter \
+                --name "$name" \
+                --query 'Parameter.Value' \
+                --output text 2>&1); then
+              echo "::error title=Cognito SSM PS missing::Parameter ${name} not readable. Most likely cause: SaaS-credential SSM PS wiped by an LDZ workload teardown. Tracked in https://github.com/BinHsu/aegis-aws-landing-zone/issues/153 (Option B persistent-layer relocation). Hold the workflow until that issue's fix lands."
+              echo "aws ssm get-parameter raw output:" >&2
+              echo "${value}" >&2
+              exit 1
+            fi
+            printf '%s' "$value"
           }
-          echo "AEGIS_COGNITO_USER_POOL_ID=$(read_param /aegis/staging/cognito/user-pool-id)" >> "$GITHUB_ENV"
-          echo "AEGIS_COGNITO_APP_CLIENT_ID=$(read_param /aegis/staging/cognito/app-client-id)" >> "$GITHUB_ENV"
-          echo "AEGIS_COGNITO_ISSUER_URL=$(read_param /aegis/staging/cognito/issuer-url)" >> "$GITHUB_ENV"
-          echo "::add-mask::$AEGIS_COGNITO_APP_CLIENT_ID"
+          POOL_ID=$(read_param /aegis/staging/cognito/user-pool-id)
+          CLIENT_ID=$(read_param /aegis/staging/cognito/app-client-id)
+          ISSUER=$(read_param /aegis/staging/cognito/issuer-url)
+          echo "::add-mask::$CLIENT_ID"
+          {
+            echo "AEGIS_COGNITO_USER_POOL_ID=$POOL_ID"
+            echo "AEGIS_COGNITO_APP_CLIENT_ID=$CLIENT_ID"
+            echo "AEGIS_COGNITO_ISSUER_URL=$ISSUER"
+          } >> "$GITHUB_ENV"
           echo "Cognito IDs loaded into env for bazel test."
 
       # Bazel test target. env_inherit on auth_test forwards all the
