@@ -1540,6 +1540,71 @@ Contributors with a broken local cache (this dev machine) resolve by:
 
 ---
 
+## Incident 16 — `nightly-cognito-integration.yml` three-layer bug onion + cross-repo misdiagnosis
+
+**Date**: 2026-04-25  **Severity**: S5  **Duration**: ~3 hours of dev-time noise (5:00 UTC failure observed at 9:00 Taipei session start; final green run 12:53 UTC)
+**Related commits**: PR #95 (`ceb37f5` — layers 1+2) + PR #97 (`4041c79` — layer 3) + this commit (incident + ROADMAP tick)
+
+### Symptom
+
+The first scheduled run of `nightly-cognito-integration.yml` (Phase 4e-4 against the live Cognito pool `eu-central-1_0gdyxKxOB`) at 03:00 UTC failed at the `Read Cognito IDs from SSM Parameter Store` step:
+
+```
+/home/runner/work/_temp/<hash>.sh: line 11: AEGIS_COGNITO_APP_CLIENT_ID: unbound variable
+##[error]Process completed with exit code 1.
+```
+
+The workflow had landed in [PR #88](https://github.com/BinHsu/aegis-core/pull/88) on 2026-04-24 and this was its first real run — the schedule trigger never fired before merge, and `workflow_dispatch` was not exercised pre-merge either.
+
+### Root cause
+
+Three independent latent bugs in the same step, each masking the next:
+
+1. **`set -e` does not propagate cleanly out of `$(...)` capture inside an `echo` argument.** The original step pattern was `echo "KEY=$(aws ssm get-parameter ...)" >> "$GITHUB_ENV"`. When the AWS CLI exits non-zero (parameter missing, KMS denied, etc.), the failure is dropped because the surrounding `echo` succeeds with whatever stdout the substitution produced — even an empty string. POSIX `set -e` semantics treat command-substitution failure inside an assignment-or-argument context as not-quite-fatal; modern bash 5.x preserves this gotcha.
+2. **`>> $GITHUB_ENV` does NOT populate the current shell.** GitHub Actions reads the file written via `>> $GITHUB_ENV` between steps, so the var is visible to the **next** step but not to the **current** step. The original code then immediately referenced `$AEGIS_COGNITO_APP_CLIENT_ID` for `::add-mask::` in the same step — under `set -u` (`-o nounset`) this is a hard fail. Layer 2 was therefore guaranteed to fire even on a green AWS path; the workflow had never run cleanly to completion.
+3. **`aws ssm get-parameter` without `--with-decryption` returns ciphertext for `SecureString`.** The Cognito SSM parameters are KMS-encrypted under `alias/aegis-staging-secrets` (the IAM contract block above the step grants `kms:Decrypt` on that alias — a tell that should have been read closer at workflow-authoring time). Without the flag the CLI returns the encrypted envelope, which is a non-empty string and therefore looks healthy to every shell-level check. Failure surfaces much later when AWS rejects the ciphertext as a User Pool ID with `AccessDeniedException` against a ciphertext-shaped resource ARN: `arn:aws:cognito-idp:eu-central-1:...:userpool/AQICAHg86Tae...` — the `AQICAHg86...` tail is a KMS envelope, not a real pool ID.
+
+Layers 1+2 fired first because they happen before any AWS API call after the SSM read. Fixing them via PR #95 (capture into local var + check exit code + reference local var, not env) exposed layer 3 on the next manual dispatch.
+
+A separate process failure also took ~30 min of dev-time noise: the morning's diagnosis pre-attributed layers 1+2's symptom to a teardown-wipe narrative ("ldz teardown destroyed `/aegis/staging/cognito/*` SSM PS") without checking AWS state. This produced three cross-repo comments on [ldz#153](https://github.com/BinHsu/aegis-aws-landing-zone/issues/153) (originally about Qdrant SSM PS wiped by Incident 33) asking ldz to extend their persistent-layer relocation scope to include Cognito. ldz's reply at 12:40 UTC contained `aws ssm describe-parameters` evidence showing all 5 Cognito SSM parameters had been intact the entire time, and that `staging/auth/` is baseline-tier (teardown-immune) since their PR #140. The misdiagnosis cost ldz one round of evidence-collection plus the issue reopen-and-re-close cycle.
+
+### Detection
+
+The failure surfaced as `unbound variable` rather than as the actual SSM-read or KMS-decrypt failure, because layer 2 fires before layer 3 has a chance to. This is what made the morning's misdiagnosis plausible: an unbound-variable error after three SSM reads strongly *looks* like one of the SSM reads failed silently and the variable was never set. The hypothesis fit the symptom.
+
+What it didn't fit was the exit code path. Layer 1's bash gotcha means failure was always silent rather than loud, and the step ran for the same 5-second AWS-call duration whether or not the parameter existed. The morning's first triage tool was checking ldz's open cross-repo issues — finding [ldz#153](https://github.com/BinHsu/aegis-aws-landing-zone/issues/153) about SSM PS teardown-wipe (real, but Qdrant-scoped) and pattern-matching it onto the Cognito symptom. The faster path would have been `aws ssm describe-parameters --filters Key=Name,Option=BeginsWith,Values=/aegis/staging/cognito/` from the dev box (or asking ldz for that one query before drafting a scope-expansion request).
+
+The actual correct diagnosis came in two beats:
+
+1. PR #95 fixing layers 1+2 made the next manual run reach the bazel test step. The test then failed with `AccessDeniedException` against a ciphertext-shaped resource ARN — visibly KMS envelope, not a real `eu-central-1_<id>` shape.
+2. The IAM contract comment at the top of the workflow grants `kms:Decrypt`. Reading that with the new symptom in mind — "why would we need KMS decrypt for plain `String` parameters?" — pointed at `--with-decryption` as the missing flag.
+
+### Resolution
+
+Two PRs landed sequentially:
+
+- **PR #95** (`ceb37f5`) — fixed layers 1+2. Captured each `aws ssm get-parameter` result into a local variable, explicitly checked the CLI exit code, then `>> "$GITHUB_ENV"` AFTER the local references (`::add-mask::$CLIENT_ID`) had been resolved. Added a fail-loud annotation on read failure. Original annotation copy pre-attributed the failure to ldz teardown — that copy was rewritten in PR #97 to enumerate three neutral buckets (parameter destroyed / KMS denied / role scope gap) without prejudging.
+- **PR #97** (`4041c79`) — added `--with-decryption` to the `aws ssm get-parameter` invocation. Single-flag change, ~5 lines including comment.
+
+Verification: manual `gh workflow run nightly-cognito-integration.yml` after PR #97 merge → run [24931347407](https://github.com/BinHsu/aegis-core/actions/runs/24931347407) green; `TestOIDCIntegrationCognito` passed against the live pool end-to-end.
+
+### Prevention
+
+- **The fail-loud refactor in PR #95 stands.** Even though the original framing of the annotation was wrong, the structural shape (local var capture + explicit exit-code check + targeted annotation) is correct defense-in-depth for any future SSM-read regression — destroyed parameter, KMS-denied, role-scope mismatch, or any other ParameterNotFound-shaped surface. The annotation copy in PR #97 enumerates buckets without picking one.
+- **Workflow-dispatch a new schedule-only workflow at least once before relying on the cron.** This was the load-bearing process gap. PR #88 introduced the workflow with a `schedule:` trigger; the first real run was the cron at 03:00 UTC the next day, by which time three latent bugs had compounded undetected. Adding a `workflow_dispatch:` block (already present here) is necessary but not sufficient — the discipline is to invoke it post-merge as part of the rollout, before any human depends on the cron's output.
+- **`SecureString` parameters need `--with-decryption` at every read site.** The IAM contract comment that mentions `kms:Decrypt` is the leading indicator. A repo-level grep guard (`grep -r 'aws ssm get-parameter' .github/ | grep -v -- '--with-decryption'`) added to pre-commit would catch future regressions; deferred as a separate slice but logged here as the natural next step.
+- **Verify before propagating cross-repo hypotheses.** When pattern-matching a local symptom onto a known cross-repo issue, run the cheapest direct-evidence query first (`aws ssm describe-parameters` in this case, ~5 seconds) before drafting an issue comment. The morning's three ldz comments would not have been written had the dev-side query been the first move.
+
+### Lessons
+
+1. **Onion bugs hide each other; the surface symptom is rarely the deepest cause.** Layer 2's `unbound variable` was a real bug, fixable on its own merits — but the underlying SSM read had never worked because of layer 1, and even if layers 1+2 were absent, layer 3 (decryption) would have produced its own `AccessDeniedException` later. Each fix exposes the next layer; treating the surface symptom as the only bug is the class error here.
+2. **Pattern-matching a symptom onto an open cross-repo issue feels like efficiency but is actually a verification shortcut.** ldz#153 was about real teardown-wipe, just for a different parameter family. The morning's narrative connected the dots without checking whether the dots were actually connected. The cheapest direct-evidence query (`aws ssm describe-parameters`) is sub-second and bypasses the whole misdiagnosis chain. CLAUDE.md Rule 1 ("Self-Awareness & Honesty: Do NOT guess") and the `feedback_root_cause_first.md` memory both name this antipattern; this incident is the canonical example of how it surfaces under cross-repo coordination pressure.
+3. **A new scheduled workflow is not "tested" until you `workflow_dispatch` it post-merge.** The schedule trigger is the production workload of a CI workflow; relying on it as the first-real-run path means latent bugs surface in the morning operator window with full coordination overhead. The discipline matches Rule 2's "load-bearing test must fail on broken code, pass on fixed" — for CI workflows specifically, that means at least one manual dispatch on `main` after merge.
+4. **`SecureString` SSM PS are silent ciphertext leakers without `--with-decryption`.** The CLI's default behavior here is technically POLA-respecting (don't decrypt unless asked) but practically a foot-gun: ciphertext sails through every string-shape check and only fails far downstream. Anywhere `kms:Decrypt` appears in an IAM policy is a leading indicator that a SecureString read is in play; the corresponding code site should have `--with-decryption` and the lack of it is a static-checkable defect.
+5. **Cross-repo coordination noise has a real cost on the other side.** ldz spent one round of evidence-gathering (`aws ssm describe-parameters` + IAM trust verification + ADR-028 §Out of scope reread) to refute a hypothesis we could have ruled out ourselves in 5 seconds. The "send the comment first, verify later" reflex is wrong even when both repos share a maintainer — the maintainer-cost of context-switching between repos to reply is real, and the politeness cost of asking for verification work that the asker could have done is real too. Future cross-repo asks should include "I've verified X locally" or "I cannot verify X locally because Y" as a leading line.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a
