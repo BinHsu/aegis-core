@@ -385,8 +385,8 @@ Gated behind LDZ's `staging/auth/` Terraform apply (ldz ADR-026, cross-repo aegi
 
 #### 4e-4 Integration + E2E
 
-- [ ] Dev User Pool registration on LDZ staging Cognito (coordinate via aegis-core #76 or open a new cross-repo issue when 4e-1 lands)
-- [ ] Go integration test (gated on `AEGIS_COGNITO_*` env vars): real Cognito `AdminInitiateAuth` → token → `OIDCProvider.Authenticate` → expected `Principal` — nightly CI cadence, not PR-time
+- [x] Dev User Pool registration on LDZ staging Cognito — pool `eu-central-1_0gdyxKxOB` live since ldz PR #140 (2026-04-24); SSM PS contract documented on aegis-core #76 §B reply.
+- [x] Go integration test (gated on `AEGIS_COGNITO_*` env vars): real Cognito `AdminInitiateAuth` → token → `OIDCProvider.Authenticate` → expected `Principal` — `TestOIDCIntegrationCognito` shipped in PR #88; nightly cron + workflow_dispatch verified green against live pool 2026-04-25 (run 24931347407, after PR #95 + PR #97 unblocked the workflow's three-layer bug onion documented in Incident 16).
 - [ ] (Optional) Playwright nightly spec: SPA → Cognito Hosted UI → CreateMeeting → transcript → hint render on staging (only valuable once cold-apply cloud loop is live)
 
 ---
