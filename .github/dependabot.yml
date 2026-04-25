@@ -43,6 +43,17 @@ updates:
       otel:
         patterns:
           - "go.opentelemetry.io/*"
+    # `google.golang.org/grpc` is pinned to 1.74.2 (PR #89, OTLP slice)
+    # for `otelgrpc` v0.59 compatibility. Patch bumps (1.74.x) stay
+    # automated; minor / major bumps need a coordinated upgrade with
+    # `otelgrpc` to a version that explicitly supports the new grpc.
+    # Re-evaluate when `otelgrpc` ships v0.60+ — at that point this
+    # ignore rule and the corresponding pin both lift in the same PR.
+    ignore:
+      - dependency-name: "google.golang.org/grpc"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
 
   # ---------------------------------------------------------------------------
   # NPM (frontend_web/). Vite and React moved fast; don't auto-open PRs
