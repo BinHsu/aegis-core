@@ -404,8 +404,11 @@ jobs:
   #   - checkov:     K8s manifest misconfig scan (apps/staging/)
   #   - kube-score:  K8s best-practice scorer (resource limits, probes,
   #                  image tag immutability, security context)
+  #   - semgrep:     Polyglot SAST (Go + TS + bash + YAML); curated p/ci
+  #                  ruleset covers CWE Top 25 + framework-specific
+  #                  patterns ARCHITECTURE.md §10.2 calls for.
   #
-  # All four are advisory on PR-time today (non-blocking `|| true`
+  # All five are advisory on PR-time today (non-blocking `|| true`
   # guard) to let us see the baseline signal before flipping to hard
   # gates. Graduation criterion: a clean main-branch run of each
   # scanner; at that point we remove the guard in a follow-up PR and
@@ -500,3 +503,33 @@ jobs:
                 --output-format ci
           # Always pass for now — flip to hard-gate when main is clean.
           exit 0
+
+  semgrep:
+    name: Semgrep SAST scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Run Semgrep
+        run: |
+          # `semgrep` Python package — pinning the major minor leaves
+          # patch-level fixes auto-pulled while preventing surprise
+          # major bumps that break the ruleset shape. Update line in
+          # the same PR as a deliberate ruleset graduation.
+          pip install --quiet 'semgrep~=1.95'
+          # `--config p/ci` is Semgrep's curated CI-suitable ruleset
+          # covering CWE Top 25 + framework-specific patterns across
+          # Go / TS / Python / bash. Multi-language pass in one run.
+          # `--metrics off` skips Semgrep Cloud telemetry per the
+          # Phase 0 governance posture (don't phone home unless we
+          # made an explicit choice).
+          # `--error` makes findings exit non-zero; `|| true` keeps
+          # the job advisory on PR-time per the Phase 4b graduation
+          # discipline noted in the comment block above.
+          semgrep scan --config p/ci --error --metrics off || true
