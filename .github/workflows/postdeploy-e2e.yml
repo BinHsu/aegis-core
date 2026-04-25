@@ -14,13 +14,13 @@ name: Post-deploy E2E smoke
 #
 # Gating:
 #
-# The workflow is committed now (Phase 4c slice) but runs as a no-op
-# when the `AEGIS_POSTDEPLOY_URL` repository secret is unset — that
-# matches the present state where ldz's staging cluster is torn down
-# (see `project_ldz_teardown_state.md` in the operator's notes).
-# When ldz cold-starts and `aegis-app.staging.binhsu.org` comes back
-# online, an operator sets the secret and the cron flips from "skip"
-# to "run" automatically.
+# Driven by the existing `vars.FRONTEND_DOMAIN` repository variable
+# (provisioned in Phase 4a, documented in
+# `docs/runbooks/fork-and-self-deploy.md`). The frontend is served by
+# S3 + CloudFront per ADR-0027 — independent of the EKS workload-tier
+# lifecycle, so this nightly runs even while ldz's cluster is torn
+# down. Forks that haven't populated FRONTEND_DOMAIN see the job
+# skip cleanly with operator guidance pointing back at the runbook.
 #
 # Why nightly (not per-commit): post-deploy E2E tests the *deployed*
 # surface, not the pre-merge code. Running it per-commit would test
@@ -56,18 +56,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Short-circuit if AEGIS_POSTDEPLOY_URL unset
+      - name: Short-circuit if FRONTEND_DOMAIN unset
         id: gate
         env:
-          POSTDEPLOY_URL: ${{ secrets.AEGIS_POSTDEPLOY_URL }}
+          FRONTEND_DOMAIN: ${{ vars.FRONTEND_DOMAIN }}
         run: |
-          if [ -z "${POSTDEPLOY_URL:-}" ]; then
-            echo "AEGIS_POSTDEPLOY_URL secret is unset — skipping."
-            echo "Set it to the staging URL (e.g. https://aegis-app.staging.binhsu.org)"
-            echo "on the repository's Secrets page to enable the real run."
+          if [ -z "${FRONTEND_DOMAIN:-}" ]; then
+            echo "vars.FRONTEND_DOMAIN unset — skipping (fork-friendly default)."
+            echo "Set repository variable FRONTEND_DOMAIN to your staging frontend"
+            echo "host (e.g. aegis-app.staging.example.com) per"
+            echo "docs/runbooks/fork-and-self-deploy.md to enable the real run."
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "url=https://${FRONTEND_DOMAIN}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install frontend deps
@@ -81,7 +83,7 @@ jobs:
       - name: Run post-deploy spec
         if: steps.gate.outputs.should_run == 'true'
         env:
-          AEGIS_POSTDEPLOY_URL: ${{ secrets.AEGIS_POSTDEPLOY_URL }}
+          AEGIS_POSTDEPLOY_URL: ${{ steps.gate.outputs.url }}
           # Forward CI=true so the Playwright config applies its
           # retry=1 + github-reporter posture.
           CI: "true"
