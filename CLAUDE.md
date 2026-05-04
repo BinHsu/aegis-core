@@ -12,6 +12,7 @@
 
 2. **Testing Integrity**
    * Code must have legitimate tests. Do NOT write stub tests that just `return true` or `assert(1 == 1)` to get a green light. Real inputs must produce verifiable real outputs.
+   * **Test-first, and tests MUST follow Boundary Value Analysis (BVA) — non-negotiable.** Every test suite for an input domain with a meaningful boundary `B` MUST cover `B-1`, `B`, and `B+1` — the classic three-point BVA pattern. Equivalence-class-only tests (one happy-path value per class) are insufficient: the off-by-one bugs that hurt most are exactly at the boundary, and a single in-class value will not catch them. Boundaries include: numeric thresholds (timeouts, payload sizes, retry counts, rate limits), index/length limits (off-by-one in slices, loops, ring buffers), state transitions (session count == max, queue full/empty, capacity exhausted), and temporal cliffs (token expiry, deadline, debounce window). When a boundary is genuinely untestable at the UT layer (e.g., real wall-clock expiry, kernel-level cliff), name it explicitly per the escape-hatch clause below — silence is not a pass. PRs that ship only interior-of-class assertions WILL be bounced.
    * **Test-first commit discipline.** For any bug that a unit or integration test *could have caught*, write the regression test **in the same commit / PR as the fix**, and verify the test is actually load-bearing (it fails on the pre-fix code, passes on the post-fix code). Do NOT commit the fix alone on the promise of a follow-up test — follow-ups decay, and the next regression of the same shape lands unnoticed. Incident 14 (2026-04-20 LAN transcript three-layer bug) is the canonical case: the `WebSocketTranscriptStreamProvider` dropping binary frames was a 10-line Vitest away from being caught in Phase 1; not having it cost hours.
    * **Testing escape hatches must be named explicitly.** Some bugs are genuinely beyond UT scope — cross-process protocol timing (gRPC keepalive policy, HTTP/2 GOAWAY cadence), OS-level behaviors, hardware-dependent code paths. When declining to write a UT for a specific bug, the PR body MUST say so AND explain what layer *could* catch it (e.g., "long-running staging canary"). Silent omission is how Rule 2 rots over time.
    * **Local `bazel test` MUST be green before `git commit`.** Pre-commit hooks cover lint and format; they do NOT run full test suites. The author is responsible for `./tools/bazelisk/bazelisk test //...` (or the relevant scoped subset) passing locally before the commit, not merely before the PR merge. "CI will catch it" is a valid safety net, not a valid substitute for the discipline.
@@ -26,7 +27,7 @@
      grep -rIln "session-close-review:" . --include='*.md'
      ```
 
-     For each hit, re-read the declared axis and confirm the doc still reflects reality after this session's commits. Common axes today: `README.md` Status table + narrative, `docs/interview-notes.md` recruiter-facing narrative, `docs/threat-model.md` trust-surface list, `docs/incidents.md` postmortem entries per Rule 7. The list grows by adding markers to new docs — CLAUDE.md does NOT enumerate the filenames, so there is no hardcoded list to drift out of date.
+     For each hit, re-read the declared axis and confirm the doc still reflects reality after this session's commits. Common axes today: `README.md` Status table + narrative, `docs/threat-model.md` trust-surface list, `docs/incidents.md` postmortem entries per Rule 7. The list grows by adding markers to new docs — CLAUDE.md does NOT enumerate the filenames, so there is no hardcoded list to drift out of date.
    * Also run a cheap placeholder-drift check before closing:
 
      ```bash
@@ -67,7 +68,7 @@
    * Be honest about **red herrings and failed attempts**. "We first tried X which didn't work because Y" is load-bearing for the lesson; omitting it turns the postmortem into marketing.
    * Link the resolving commit hash; keep nitty-gritty details (full error text, full diff) in the commit message, keep the **narrative layer** in the postmortem.
    * Trivial bugs (typo in a BUILD file fixed in 60 seconds, clang-format whitespace) do NOT warrant a postmortem — don't pollute the file.
-   * This rule is a portfolio-grade **learning-culture signal**. Treat it with the same seriousness as Rule 2 Testing Integrity.
+   * This rule is a **learning-culture signal**. Treat it with the same seriousness as Rule 2 Testing Integrity.
 
 8. **Root-Cause Fixes Over Workarounds**
    * When something fails (CI, build, test, merge), **investigate the actual root cause and fix it**. Do NOT bypass with flags like `--admin`, `--no-verify`, or skip logic.
