@@ -50,7 +50,7 @@ flowchart LR
         Cognito["AWS Cognito<br/>(host JWT)"]
         VectorDB[("Vector DB<br/>Qdrant / Milvus / OpenSearch<br/>per-tenant KMS CMK")]
         DDB[("DynamoDB<br/>tenant metadata<br/>consent ledger<br/>per-tenant KMS CMK")]
-        OTLP["OpenTelemetry<br/>→ X-Ray / Tempo<br/>(attribute allowlist)"]
+        OTLP["OpenTelemetry<br/>→ Tempo<br/>(attribute allowlist)"]
     end
 
     Staff -.->|"host auth"| Cognito
@@ -187,7 +187,7 @@ To pass strict compliance and enterprise security audits, this application enfor
     - Because Aegis V2 must still run strictly offline on a portable SSD (`DeployMode=LOCAL`), **all enterprise components above MUST be abstracted behind Interfaces.**
     - *Auth Fallback*: When `DeployMode=LOCAL`, the Cognito JWT middleware is bypassed or replaced with a dummy local token authenticator.
     - *Secrets Fallback*: The External Secrets Operator logic gracefully falls back to reading a local `.env` file within the Bazel sandbox.
-    - *Telemetry Fallback*: OpenTelemetry spans are exported to `stdout` (Console) instead of an AWS X-Ray/Tempo collector.
+    - *Telemetry Fallback*: OpenTelemetry spans are exported to `stdout` (Console) instead of a Tempo collector.
 
 ### 9. Data Governance & Privacy
 
@@ -362,7 +362,7 @@ Per CLAUDE.md Rule 2, all tests must have legitimate inputs producing verifiable
 
 - **Tracing**: OpenTelemetry spans propagate from WebRTC ingress through Go Gateway and C++ Engine (per §8). Span attributes follow the ADR-0005 R4 allowlist; transcript and audio never appear as span attributes.
 - **Metrics**: RED (Rate / Errors / Duration) metrics on every gRPC method; USE (Utilization / Saturation / Errors) metrics on every pod; domain metrics include `aegis_host_transient_loss_total`, `aegis_questions_detected_total`, `aegis_hints_emitted_total`, `aegis_engine_budget_bytes_used`, `aegis_engine_sessions_active`, and others.
-- **Logging**: structured JSON logs with compile-time PII redaction (ADR-0005 R3). In Cloud mode, logs route to CloudWatch via FluentBit; in Local mode, logs go to stdout.
+- **Logging**: structured JSON logs with compile-time PII redaction (ADR-0005 R3). In Cloud mode, logs ship via the platform-provided Grafana Alloy DaemonSet to Grafana Cloud Loki (per ldz ADR-022 + aegis-core#111); in Local mode, logs go to stdout.
 - **Dashboards and alerts**: `aegis-aws-landing-zone` repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
 
 #### 10.7 Secrets and Credentials
