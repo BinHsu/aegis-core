@@ -88,6 +88,20 @@ spec:
               value: "aegis-engine.aegis.svc.cluster.local:50051"
             - name: AEGIS_LOG_LEVEL
               value: "info"
+            # Downward API → trace-aware slog handler (Phase 4d
+            # log<->trace correlation). The gateway injects these as
+            # static `pod` / `node` fields on every structured log
+            # record alongside trace_id / span_id, so an operator can
+            # pivot from a Tempo trace to the exact pod's Loki logs.
+            # Unset in Local mode → the handler omits the fields.
+            - name: AEGIS_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: AEGIS_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           securityContext:
             # ADR-0025 distroless nonroot + defense-in-depth hardening.
             runAsNonRoot: true
