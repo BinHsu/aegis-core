@@ -115,9 +115,16 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 3
+          # Drain-aware readiness probe (ADR-0006 §Graceful Shutdown).
+          # /readyz answers 503 before listeners bind and during the
+          # SIGTERM drain, so the controller marks the pod NotReady and
+          # stops routing NEW traffic while in-flight WebRTC sessions
+          # finish server-side. Distinct from /healthz (liveness):
+          # readiness failure removes the pod from Service endpoints
+          # WITHOUT a restart.
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
