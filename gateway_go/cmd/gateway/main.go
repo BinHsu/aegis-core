@@ -55,6 +55,7 @@ import (
 	"github.com/BinHsu/aegis-core/gateway_go/internal/logging"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/metrics"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/profiling"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/tracing"
@@ -140,6 +141,32 @@ func main() {
 			defer cancel()
 			if err := tracerShutdown(ctx); err != nil {
 				logger.Warn("tracing.Shutdown", "err", err.Error())
+			}
+		}()
+	}
+
+	// Continuous profiling — the 4th observability signal (ADR-0035).
+	// Wired AFTER tracing.Init so profiles and traces share the same
+	// service identity, and BEFORE the listeners come up so the
+	// flame-graph captures the full process lifetime.
+	//
+	// Fail-soft, mirroring the tracing posture above: an empty
+	// AEGIS_PYROSCOPE_ENDPOINT degrades profiling to a no-op, and a
+	// non-empty-but-unreachable endpoint surfaces as a warning here —
+	// never fatal. aegis-core ships this before the landing-zone has
+	// provisioned Grafana Cloud Pyroscope ingest, so a missing backend
+	// must be a degradation, not a startup blocker.
+	profiler, err := profiling.Start(profiling.Config{
+		ApplicationName: tracing.ServiceName,
+		Endpoint:        strings.TrimSpace(os.Getenv("AEGIS_PYROSCOPE_ENDPOINT")),
+	})
+	if err != nil {
+		logger.Warn("profiling.Start failed — gateway runs without continuous profiling",
+			"err", err.Error())
+	} else {
+		defer func() {
+			if err := profiler.Stop(); err != nil {
+				logger.Warn("profiling.Stop", "err", err.Error())
 			}
 		}()
 	}

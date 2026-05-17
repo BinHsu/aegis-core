@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "profiling",
+    srcs = ["profiling.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/profiling",
+    visibility = ["//gateway_go:__subpackages__"],
+    deps = ["@com_github_grafana_pyroscope_go//:pyroscope-go"],
+)
+
+go_test(
+    name = "profiling_test",
+    size = "small",
+    srcs = ["profiling_test.go"],
+    embed = [":profiling"],
+)

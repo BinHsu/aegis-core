@@ -21,6 +21,8 @@ Landing-zone reversed the observability backend from self-hosted kube-prometheus
 
 **What's new downstream of this ADR**: aegis-core also ships four additional CRDs per the widened ldz #46 contract — `PrometheusRule`, `GrafanaDashboard`, `GrafanaContactPoint`, `GrafanaNotificationPolicyRoute`. These are tracked as Phase 4d **C-Obs-2** in ROADMAP.md, not folded into this ADR (C-Obs-1 is scoped to the pull endpoint; C-Obs-2 is the 5-CRD ship).
 
+> **Signal-set note (2026-05-17, ADR-0035).** This ADR established Prometheus metrics as the gateway's instrumentation. The gateway's observability now spans four signals: **metrics** (this ADR), **traces** (the OTLP exporter slice, `gateway_go/internal/tracing/`), **structured logs** (`gateway_go/internal/logging/`), and **continuous profiling** (ADR-0035, `gateway_go/internal/profiling/`, fail-soft Pyroscope). When this ADR's narrative says "Prometheus instrumentation" it means the metrics signal specifically — it is no longer the whole observability story.
+
 **Alt-B re-open trigger update**: "Deferred to Phase 4d consideration... Re-open when ldz ships an OpenTelemetry Collector" — Alloy supports OTLP receive natively, so the trigger is arguably already active. Decision to stay pull-scoped for C-Obs-1 still holds (it's the path of least resistance + matches the ServiceMonitor contract), but a future ADR-003X may evaluate OTLP-push from aegis-core → Alloy when there's a concrete benefit (multi-backend fan-out, or push-only environments).
 
 Narrative passages below that reference "kube-prometheus-stack" are left as-written for git-blame archaeology; read them as "the scrape-first posture that Alloy now implements," not as current infra.
