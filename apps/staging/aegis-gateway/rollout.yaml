@@ -64,10 +64,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gateway
-          # === IMAGE TAG — bootstrap value ===
-          # C-1 ships with the last known-good staging SHA. Automated
-          # tag-update loop (Argo Image Updater vs CI-commits-tag) is
-          # deferred to C-1.5 per deploy/README.md §"Known gap".
+          # === IMAGE TAG — CI-managed ===
+          # This line is rewritten by the `bump-image-tag` job in
+          # release-staging-image.yml after each release build
+          # (ADR-0032, re-decided 2026-05-17). Edit it by hand only
+          # when bootstrapping; normal releases bump it automatically.
           # Registry host comes from ldz #11 platform contract.
           image: 251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core:staging-db14d67559d079d48633dc3a536666eba080ac05
           imagePullPolicy: IfNotPresent
