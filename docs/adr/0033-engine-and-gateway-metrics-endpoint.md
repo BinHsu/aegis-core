@@ -25,6 +25,14 @@ Landing-zone reversed the observability backend from self-hosted kube-prometheus
 
 Narrative passages below that reference "kube-prometheus-stack" are left as-written for git-blame archaeology; read them as "the scrape-first posture that Alloy now implements," not as current infra.
 
+## Revision 2026-05-17 — log↔trace correlation companion (gateway)
+
+This ADR's `:8081/metrics` endpoint and ADR-0005 R4's OTLP traces are two of the three observability pillars; logs were the third and, until this slice, the disconnected one — a gateway log line carried no identifier joinable to its trace in Tempo.
+
+`gateway_go/internal/logging/trace_handler.go` closes that gap with a `TraceContextHandler` that wraps the env-configured slog handler (`AEGIS_LOG_FORMAT` / `AEGIS_LOG_LEVEL`). On every record it injects `trace_id` / `span_id` extracted from the OTel span on the request context (`trace.SpanFromContext`), plus static `pod` / `node` identifiers sourced once at startup from the Kubernetes Downward API env vars `AEGIS_POD_NAME` / `AEGIS_NODE_NAME` (added to `apps/staging/aegis-gateway/rollout.yaml`). Design constraints, all preserved: records with no valid span context omit the trace fields entirely (no all-zero IDs polluting the Loki index), and pod/node are omitted when their env var is empty (the correct Local-mode posture). `cmd/gateway/main.go` installs the trace-aware logger immediately after `tracing.Init` so spans already exist on contexts; a bootstrap logger covers any pre-tracing startup error.
+
+No new ADR is warranted — this is the logging-side wiring of the same observability contract this ADR and ADR-0005 R4 already established, not a new systemic decision. Engine-side log↔trace correlation rides on the deferred opentelemetry-cpp slice (same gate as the engine OTLP exporter).
+
 ## Context
 
 Until this slice, neither service exposed metrics. Two shapes of "add Prometheus" were on the table:

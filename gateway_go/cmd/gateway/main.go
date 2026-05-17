@@ -135,6 +135,15 @@ func main() {
 		logger.Warn("tracing.Init failed — gateway runs without OTLP export",
 			"deploy_mode", string(deployMode), "err", err.Error())
 	} else {
+		// Spans now exist on request contexts: swap the bootstrap
+		// logger for a trace-aware one so every record carries
+		// trace_id / span_id (joinable to its trace in Tempo) plus
+		// the pod / node identifiers from the K8s Downward API
+		// (AEGIS_POD_NAME / AEGIS_NODE_NAME — empty in Local mode,
+		// in which case the fields are simply omitted).
+		logger = logging.SetTraceAwareDefault(
+			os.Getenv("AEGIS_POD_NAME"), os.Getenv("AEGIS_NODE_NAME"),
+		).With("pkg", "gateway")
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
