@@ -64,13 +64,13 @@ mode — plaintext gRPC over localhost, by design.
 - **Karpenter vCPU cap: 4 total** — our requests sum to 1.2 vCPU; fits comfortably
 - **IRSA role pre-provisioned**: `aegis-staging-aegis-engine` with trust scope `system:serviceaccount:aegis:aegis-engine`. Engine SA carries the `eks.amazonaws.com/role-arn` annotation; permission policy on the role is currently empty (skeleton — attaches when engine gains AWS API surface).
 
-## Image tag updates — manual, by design (ADR-0032)
+## Image tag updates — automated (ADR-0032, re-decided 2026-05-17)
 
-Manifests reference a **specific image SHA** as a literal. Each release cycle, the SHA is updated either inside whatever Phase 4c / 4d slice PR is already touching `apps/staging/` (the common case during active development) or via a small dedicated bump commit when no slice PR is pending.
+Manifests reference a **specific image SHA** as a literal. The SHA is kept current by CI: the `bump-image-tag` job in [`release-staging-image.yml`](../../.github/workflows/release-staging-image.yml) runs after each release build, rewrites the `image:` refs in `aegis-gateway/rollout.yaml`, `aegis-engine/rollout.yaml`, and `aegis-engine/seed-job.yaml` with `yq`, and opens an **auto-merge PR**. Once that PR's CI passes it merges to `main` and ArgoCD reconciles the new tags — no manual step.
 
-Automation for this (Argo CD Image Updater or CI-commits-tag) was deliberately rejected in [ADR-0032](../../docs/adr/0032-image-tag-update-automation-deferred.md): at current release cadence (~3/week) and branch-protection shape (signed + reviewed commits), automation pays back in over a decade. Triggers to revisit are documented in the ADR.
+The automation uses only the workflow's built-in `GITHUB_TOKEN` (no PAT, no cluster-side controller) because these manifests live in the **same repo** as the workflow. The `main` ruleset's `required_signatures` rule is satisfied by creating the bump commit through GitHub's `createCommitOnBranch` API (server-side signed).
 
-**Until a trigger fires, this is not a gap — it is the chosen release workflow.**
+This reverses the original 2026-04-20 deferral. See [ADR-0032](../../docs/adr/0032-image-tag-update-automation-deferred.md) for the full rationale, the branch-protection handling, and the **one-time ops prerequisite** (adding `github-actions[bot]` to the `main` ruleset's `bypass_actors` with `bypass_mode: pull_request`).
 
 ## Known gap — engine will crashloop on first sync
 

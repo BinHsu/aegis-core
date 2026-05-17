@@ -27,9 +27,11 @@ on:
       - ".github/PULL_REQUEST_TEMPLATE.md"
       # Phase 4c: manifest-only changes don't alter image bits,
       # so skip the expensive rebuild+push+sign+attest loop.
-      # C-1.5's tag-update automation will, when it lands,
-      # produce commits that touch `apps/**/*.yaml` only —
-      # those must remain no-op for this workflow.
+      # CRITICAL: C-1.5's tag-update automation (the `bump-image-tag`
+      # job below, ADR-0032) produces squash-merge commits that touch
+      # `apps/**/*.yaml` ONLY. This ignore keeps those bump merges a
+      # no-op for this workflow — without it, every tag bump would
+      # retrigger a full build+push+bump cycle, an infinite loop.
       - "apps/**"
 
 # Least privilege: only this workflow gets id-token write. ci-baseline.yml
@@ -40,9 +42,22 @@ on:
 # attestations to the GitHub-side attestation store. Same OIDC trust
 # scope (refs/heads/main + job_workflow_ref) gates issuance, so the
 # blast-radius widening is bounded.
+#
+# contents: write + pull-requests: write — required by the
+# `bump-image-tag` job (ADR-0032, re-decided 2026-05-17). That job
+# creates a branch + a tag-bump commit + an auto-merge PR using only
+# the built-in GITHUB_TOKEN. No fine-grained PAT, no second standing
+# credential — aegis-core's manifests live IN THIS SAME REPO
+# (`apps/staging/`), so a same-repo write needs nothing more than the
+# workflow token. The tag-bump commit is created via the GitHub
+# GraphQL `createCommitOnBranch` API, which GitHub signs server-side
+# with its own key, satisfying the `main` ruleset's
+# `required_signatures` rule. See ADR-0032 for the full rationale and
+# the one-time ruleset bypass-actor change this approach needs.
 permissions:
   id-token: write
-  contents: read
+  contents: write
+  pull-requests: write
   attestations: write
 
 env:
@@ -349,3 +364,161 @@ jobs:
           subject-name: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           subject-digest: ${{ steps.push-engine.outputs.digest }}
           push-to-registry: true
+
+  # ---------------------------------------------------------------------------
+  # Phase 4c C-1.5 — image tag bump (ADR-0032, re-decided 2026-05-17)
+  # ---------------------------------------------------------------------------
+  # After the gateway + engine images are built, pushed, signed, attested
+  # and CVE-scanned, this job rewrites the literal image references in
+  # `apps/staging/**` to the just-pushed `staging-<sha>` / `engine-staging-<sha>`
+  # tags, then opens an auto-merge PR. Once that PR's required status checks
+  # pass it merges to `main` with no human click, and ArgoCD (polling
+  # `apps/staging/`) reconciles the new tags onto the cluster.
+  #
+  # Why a PR and not a direct push to `main`:
+  #   The `main` ruleset enforces `required_signatures` + a `pull_request`
+  #   rule (1 approval, code-owner review). A direct `git push` from a runner
+  #   produces an UNSIGNED commit and is rejected outright. This job instead
+  #   creates the commit through the GitHub GraphQL `createCommitOnBranch`
+  #   mutation, which GitHub signs server-side with its own key — the commit
+  #   lands `Verified`. The change still flows through a PR, so the full CI
+  #   gate still runs on the bump.
+  #
+  # One-time ops prerequisite (documented in ADR-0032 §"Branch-protection
+  # handling"): `github-actions[bot]` must be added to the `main` ruleset's
+  # `bypass_actors` with `bypass_mode: pull_request`. That lets the bot's
+  # auto-merge PR satisfy the code-owner-review requirement WITHOUT a human
+  # click, while still requiring the PR + passing CI. It does NOT grant
+  # direct-push bypass. Until that change is applied, this job's PR will
+  # open correctly but wait for a manual approval (graceful degradation —
+  # the automation is still strictly better than the old manual edit).
+  bump-image-tag:
+    name: Bump staging image tags in apps/staging (auto-merge PR)
+    runs-on: ubuntu-latest
+    needs: push-staging-image
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Rewrite image tags in apps/staging manifests
+        id: rewrite
+        env:
+          # ECR registry host + repo name come from GitHub Repository
+          # Variables (ADR-0027), same source the push steps use.
+          ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+          ECR_REPOSITORY: ${{ vars.ECR_REPO_NAME }}
+        run: |
+          set -euxo pipefail
+          # Tag conventions mirror the push steps above:
+          #   gateway -> staging-<sha>      engine -> engine-staging-<sha>
+          GATEWAY_REF="${ECR_REGISTRY}/${ECR_REPOSITORY}:staging-${GITHUB_SHA}"
+          ENGINE_REF="${ECR_REGISTRY}/${ECR_REPOSITORY}:engine-staging-${GITHUB_SHA}"
+
+          # yq is preinstalled on ubuntu-latest runners. The `image:` field
+          # is a plain string on the first (only) container of each workload.
+          yq -i \
+            ".spec.template.spec.containers[0].image = \"${GATEWAY_REF}\"" \
+            apps/staging/aegis-gateway/rollout.yaml
+          yq -i \
+            ".spec.template.spec.containers[0].image = \"${ENGINE_REF}\"" \
+            apps/staging/aegis-engine/rollout.yaml
+          # seed-job.yaml rides the same engine image SHA as the engine
+          # Rollout (ADR-0032 manual discipline previously kept these in
+          # lockstep by hand; now the workflow keeps them in lockstep).
+          yq -i \
+            ".spec.template.spec.containers[0].image = \"${ENGINE_REF}\"" \
+            apps/staging/aegis-engine/seed-job.yaml
+
+          if git diff --quiet -- apps/staging; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Image tags::Manifests already reference ${GITHUB_SHA}; nothing to bump."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open auto-merge PR with signed tag-bump commit
+        if: steps.rewrite.outputs.changed == 'true'
+        env:
+          # Built-in workflow token — NO PAT. contents:write + pull-requests:write
+          # above are the only grants this needs.
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euxo pipefail
+          SHORT_SHA="${RUN_SHA:0:12}"
+          BRANCH="ci/bump-staging-image-${SHORT_SHA}"
+
+          # Create the topic branch at the current `main` tip. The branch
+          # tip itself need not be signed — the ruleset's required_signatures
+          # rule gates commits landing on the protected `main`, and the
+          # tag-bump commit added below IS GitHub-signed.
+          git push origin "HEAD:refs/heads/${BRANCH}"
+          HEAD_OID="$(git rev-parse HEAD)"
+
+          # Build the createCommitOnBranch `input` (an object-typed GraphQL
+          # variable). Commits made via this mutation are signed server-side
+          # by GitHub, so the eventual squash-merge onto `main` carries a
+          # Verified signature and satisfies required_signatures.
+          #
+          # `gh api graphql --input <file>` is used (not `-f input=...`)
+          # because -f stringifies the value; the GraphQL variable must be a
+          # real JSON object to deserialize into CreateCommitOnBranchInput!.
+          ADDITIONS="$(
+            for f in \
+              apps/staging/aegis-gateway/rollout.yaml \
+              apps/staging/aegis-engine/rollout.yaml \
+              apps/staging/aegis-engine/seed-job.yaml ; do
+              jq -nc --arg path "$f" --arg contents "$(base64 -w0 "$f")" \
+                '{path: $path, contents: $contents}'
+            done | jq -sc '.'
+          )"
+
+          jq -nc \
+            --arg repo "${REPO}" \
+            --arg branch "${BRANCH}" \
+            --arg oid "${HEAD_OID}" \
+            --arg sha "${SHORT_SHA}" \
+            --argjson additions "${ADDITIONS}" \
+            '{
+               query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+               variables: {
+                 input: {
+                   branch: { repositoryNameWithOwner: $repo, branchName: $branch },
+                   expectedHeadOid: $oid,
+                   message: {
+                     headline: ("ci(deploy): bump staging image tags to " + $sha),
+                     body: ("Automated staging image tag bump for release " + $sha + ".\n\nReconciled by ArgoCD from apps/staging/. See ADR-0032.")
+                   },
+                   fileChanges: { additions: $additions }
+                 }
+               }
+             }' > /tmp/bump-commit.json
+
+          gh api graphql --input /tmp/bump-commit.json
+
+          # Build the PR body in a file (printf, so the markdown stays
+          # un-indented without breaking the surrounding YAML block scalar).
+          {
+            printf '%s\n\n' 'Automated by `release-staging-image.yml` (ADR-0032, re-decided 2026-05-17).'
+            printf '%s\n\n' "Rewrites the \`apps/staging/**\` image references to the images built and pushed from commit \`${RUN_SHA}\`:"
+            printf -- '- `aegis-gateway/rollout.yaml` -> `staging-%s`\n' "${RUN_SHA}"
+            printf -- '- `aegis-engine/rollout.yaml` -> `engine-staging-%s`\n' "${RUN_SHA}"
+            printf -- '- `aegis-engine/seed-job.yaml` -> `engine-staging-%s`\n\n' "${RUN_SHA}"
+            printf '%s\n' 'The commit is GitHub-signed (created via `createCommitOnBranch`), so it satisfies the `main` ruleset'"'"'s `required_signatures` rule. Auto-merge is enabled; the PR merges once required status checks pass.'
+          } > /tmp/bump-pr-body.md
+
+          PR_URL="$(gh pr create \
+            --base main \
+            --head "${BRANCH}" \
+            --title "ci(deploy): bump staging image tags to ${SHORT_SHA}" \
+            --body-file /tmp/bump-pr-body.md)"
+
+          # Enable auto-merge: the PR squash-merges itself once required
+          # status checks pass — no human click on the merge button.
+          gh pr merge "${PR_URL}" --squash --auto
+          echo "::notice title=Tag-bump PR::${PR_URL} (auto-merge enabled)"
