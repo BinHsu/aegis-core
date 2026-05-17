@@ -65,7 +65,7 @@ spec:
           # CI-managed tag — rewritten by the `bump-image-tag` job in
           # release-staging-image.yml after each release build
           # (ADR-0032, re-decided 2026-05-17).
-          image: 251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core:engine-staging-db14d67559d079d48633dc3a536666eba080ac05
+          image: 251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core:engine-staging-72094745eeebe10110d7e174111417bef3c385c0
           imagePullPolicy: IfNotPresent
           ports:
             - name: grpc
