@@ -39,7 +39,7 @@ public:
   void Release(std::size_t bytes) noexcept;
 
   // Observability — exported as Prometheus metric
-  // `aegis_engine_session_bytes_used` per ADR-0010 §Revision.
+  // `aegis_core_engine_session_bytes_used` per ADR-0010 §Revision.
   std::size_t BytesUsed() const noexcept;
   std::size_t BytesAvailable() const noexcept;
   std::size_t TotalBytes() const noexcept { return total_bytes_; }

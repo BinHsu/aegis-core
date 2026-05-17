@@ -65,7 +65,7 @@ oci_image(
     ],
     labels = {
         "org.opencontainers.image.source": "https://github.com/BinHsu/aegis-core",
-        "org.opencontainers.image.title": "aegis-gateway",
+        "org.opencontainers.image.title": "aegis-core-gateway",
         "org.opencontainers.image.description": "Aegis Gateway — gRPC + gRPC-Web + WebRTC entry point.",
         "org.opencontainers.image.licenses": "Apache-2.0",
     },
@@ -80,7 +80,7 @@ oci_image(
 oci_load(
     name = "image_load",
     image = ":image",
-    repo_tags = ["aegis-gateway:dev-local"],
+    repo_tags = ["aegis-core-gateway:dev-local"],
 )
 
 # ECR push target — Phase 4a Slice 3.

@@ -1,15 +1,15 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: aegis-engine
+  name: aegis-core-engine
   namespace: aegis
   labels:
-    app.kubernetes.io/name: aegis-engine
+    app.kubernetes.io/name: aegis-core-engine
     app.kubernetes.io/part-of: aegis-core
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: aegis-engine
+      app.kubernetes.io/name: aegis-core-engine
   namespaceSelector:
     matchNames: [aegis]
   endpoints:

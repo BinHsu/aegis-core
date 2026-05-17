@@ -35,8 +35,8 @@ Service mesh's design payoff scales roughly with `O(service-count × interaction
 1. **PKI root** — cert-manager `ClusterIssuer` using a private CA rooted in AWS Private CA (Phase 4c+ ldz-provisioned) OR a cert-manager-managed self-signed intermediate for Phase 4c staging. The Phase 4c-tier decision is intentionally the lightweight self-signed intermediate; migrating to AWS Private CA is a Certificate-CR backend swap, no application change.
 
 2. **Per-workload identity** — each Deployment's pods mount a `Certificate` CR output Secret:
-    - `aegis-gateway.aegis.svc.cluster.local` + `aegis-gateway.aegis.svc` + `aegis-gateway.aegis`
-    - `aegis-engine.aegis.svc.cluster.local` + `aegis-engine.aegis.svc` + `aegis-engine.aegis`
+    - `aegis-core-gateway.aegis.svc.cluster.local` + `aegis-core-gateway.aegis.svc` + `aegis-core-gateway.aegis`
+    - `aegis-core-engine.aegis.svc.cluster.local` + `aegis-core-engine.aegis.svc` + `aegis-core-engine.aegis`
     - Kubernetes DNS names in SANs; K8s `ServiceAccount` name carried in the CN for audit correlation
 
 3. **Rotation** — cert-manager renews certs automatically at 2/3 of their lifetime (default 90d cert → renew at 60d). The underlying `Secret` updates in place. Workloads read from mounted files via:
@@ -216,7 +216,7 @@ None of these are in the Phase 4c / 4d ROADMAP today.
 
 - [ ] Install cert-manager to `cert-manager` namespace on ldz EKS (likely already planned by ldz for ACM/ingress — coordinate via cross-repo issue)
 - [ ] Create `ClusterIssuer` — self-signed intermediate for Phase 4c staging
-- [ ] Write `deploy/staging/aegis-gateway/certificate.yaml` + `deploy/staging/aegis-engine/certificate.yaml`
+- [ ] Write `apps/staging/aegis-core-gateway/certificate.yaml` + `apps/staging/aegis-core-engine/certificate.yaml`
 - [ ] Go gateway: TLS loader with fsnotify-based reload (`gateway_go/internal/tlsreload/`)
 - [ ] C++ engine: `FileWatcherCertificateProvider` wiring (`engine_cpp/src/grpc/`)
 - [ ] Gateway dial config updated to require TLS + verify engine cert SAN

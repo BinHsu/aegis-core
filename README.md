@@ -176,7 +176,7 @@ citing phase progress in prose elsewhere — it drifts.
 | **Phase 3a** | Platform foundations (hermetic Node via `aspect_rules_js`, Opus-on-engine, gateway N:N topology, RAG corpus pipeline, engine-owned inference) | ✅ Done |
 | **Phase 3b** | Engine RAG inference: shared ggml runtime, GGMLEmbedder (bge-m3), Qdrant C++ client, `engine seed` subcommand, **engine-side retriever wired into `Session::Run`** (2026-04-21), cloud-cache strategy (ADR-0014 β/δ) | ✅ Done — Slices 1–7 + Slice 8 retriever landed; Slice 7 validation PASS (mean cos-sim 0.9659 vs FP reference, threshold 0.95); Slice 8 emits `PrompterHint` alongside each `TranscriptSegment` when `SessionStart.rag_id` is bound |
 | **Phase 3c** | Pure-web host + viewer UIs (React + Vite): provider scaffolding, RAG opt-in, consent flows (ADR-0024), curated speaker labels (ARCH §9.2), transcript export (MD + JSON), Playwright cross-WebView smoke, **hint broadcast + staff-authored override** (2026-04-21) | ✅ Done — Slices 1-6 + Slice 7 landed; 8-job CI matrix (adds chromium + webkit live-browser gate); Slice 7 adds `SendOfficerHint` RPC, urgency-differentiated hint render on both host + viewer |
-| **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability, cloud auth | 🚧 **4a/4b/4c/4d/4e substantially complete on aegis-core side**. **4a**: OCI + ECR + frontend S3/CloudFront (ADR-0025/0027) + engine image SBOM + Cosign attestation. **4b**: Cosign + SLSA L3 + Trivy + govulncheck + gosec + Checkov + kube-score + Semgrep (CodeQL / clang-tidy queued; kube-bench deferred — control-plane scanner, wrong scope for PR-time). **4c**: Argo Rollouts CRD (ADR-0030), Kyverno R6 audio-ns isolation, post-deploy Playwright nightly **active against live SPA**, Cloud RAG corpus seed Job (PostSync hook, ADR-0023 §B), live ACM ARN + Qdrant/Cognito env wiring into engine Rollout. **4d**: `/metrics` Prometheus (:8081, ADR-0033) + OpenTelemetry OTLP tracer with ADR-0005 R4 attribute allowlist + `aegis_gateway_hints_emitted_total` / `aegis_gateway_host_transient_loss_total` domain metrics + continuous profiling (4th signal, ADR-0035 — fail-soft Pyroscope client, no-op until ldz provisions ingest). Engine OTLP + C-Obs-2 Grafana Cloud 5-CRD still queued. **4e**: `auth.OIDCProvider` (Cognito JWKS) + SPA `react-oidc-context` + tenant_id propagation + **nightly integration test validated green 2026-04-25** against live ldz pool (ADR-0034; Incident 16 captures the three-layer workflow bug onion that gated the first run). Cold-apply awaiting ldz workload-workflow trigger (target before 2026-05-07 Grafana Cloud trial downgrade). |
+| **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability, cloud auth | 🚧 **4a/4b/4c/4d/4e substantially complete on aegis-core side**. **4a**: OCI + ECR + frontend S3/CloudFront (ADR-0025/0027) + engine image SBOM + Cosign attestation. **4b**: Cosign + SLSA L3 + Trivy + govulncheck + gosec + Checkov + kube-score + Semgrep (CodeQL / clang-tidy queued; kube-bench deferred — control-plane scanner, wrong scope for PR-time). **4c**: Argo Rollouts CRD (ADR-0030), Kyverno R6 audio-ns isolation, post-deploy Playwright nightly **active against live SPA**, Cloud RAG corpus seed Job (PostSync hook, ADR-0023 §B), live ACM ARN + Qdrant/Cognito env wiring into engine Rollout. **4d**: `/metrics` Prometheus (:8081, ADR-0033) + OpenTelemetry OTLP tracer with ADR-0005 R4 attribute allowlist + `aegis_core_gateway_hints_emitted_total` / `aegis_core_gateway_host_transient_loss_total` domain metrics + continuous profiling (4th signal, ADR-0035 — fail-soft Pyroscope client, no-op until ldz provisions ingest). Engine OTLP + C-Obs-2 Grafana Cloud 5-CRD still queued. **4e**: `auth.OIDCProvider` (Cognito JWKS) + SPA `react-oidc-context` + tenant_id propagation + **nightly integration test validated green 2026-04-25** against live ldz pool (ADR-0034; Incident 16 captures the three-layer workflow bug onion that gated the first run). Cold-apply awaiting ldz workload-workflow trigger (target before 2026-05-07 Grafana Cloud trial downgrade). |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
 
 See [ROADMAP.md](ROADMAP.md) for the full phase-by-phase checklist.
@@ -288,7 +288,7 @@ cd aegis-core
 # Run everything — engine + gateway, one command
 ./tools/bazelisk/bazelisk run //:app_local
 # [launcher] starting engine: .../engine_cpp/cmd/engine/engine
-# [engine] aegis-engine: listening on 0.0.0.0:50051
+# [engine] aegis-core-engine: listening on 0.0.0.0:50051
 # [engine]   model_path=/path/to/aegis-core/models/ggml-tiny.en.bin
 # [launcher] engine ready at localhost:50051 (model=ggml-tiny.en.bin)
 # [launcher] starting gateway: .../gateway_go/cmd/gateway/gateway_/gateway
@@ -326,7 +326,7 @@ curl -s http://localhost:8080/healthz
 ```bash
 # Engine only
 ./tools/bazelisk/bazelisk run //engine_cpp/cmd/engine:engine
-# aegis-engine: listening on 0.0.0.0:50051
+# aegis-core-engine: listening on 0.0.0.0:50051
 
 # Gateway only (needs an engine reachable at AEGIS_ENGINE_ADDR, default localhost:50051)
 ./tools/bazelisk/bazelisk run //gateway_go/cmd/gateway:gateway

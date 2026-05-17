@@ -2,7 +2,7 @@
 // Go gateway per ADR-0005 R4 and Phase 4d ROADMAP §"OTLP exporter".
 //
 // What this gives the operator that infrastructure metrics
-// (aegis_gateway_rpc_*) cannot:
+// (aegis_core_gateway_rpc_*) cannot:
 //
 //   - Per-request span trees: a single CreateMeeting → Engine.Health
 //     → Session.Create → JWT.Issue chain shows up as parent-child
@@ -68,7 +68,7 @@ const (
 // ServiceName is the value used for the `service.name` resource
 // attribute that distinguishes gateway spans from engine spans
 // (whenever the engine side adopts OTLP).
-const ServiceName = "aegis-gateway"
+const ServiceName = "aegis-core-gateway"
 
 // Init builds and registers a global TracerProvider for the gateway.
 //
@@ -158,7 +158,7 @@ func buildExporter(ctx context.Context, mode DeployMode) (sdktrace.SpanExporter,
 		// OTEL_EXPORTER_OTLP_ENDPOINT (and TLS / headers / etc.) are
 		// read from env per OTel convention; the SDK looks them up
 		// inside otlptracegrpc.New. The gateway Deployment env
-		// (apps/staging/aegis-gateway/rollout.yaml) sets the
+		// (apps/staging/aegis-core-gateway/rollout.yaml) sets the
 		// endpoint to whatever LDZ provisions — Phase 4d C-Obs-2
 		// follow-up — until then this falls through to localhost,
 		// which simply errors on every export attempt (logged).

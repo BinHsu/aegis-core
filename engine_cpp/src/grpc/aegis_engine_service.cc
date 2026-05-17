@@ -20,8 +20,8 @@ namespace aegis::grpc_service {
 namespace {
 
 // RAII helper — on construction captures start time; on destruction
-// increments `aegis_engine_rpc_total{method, status}` and observes
-// `aegis_engine_rpc_duration_seconds{method}`. The destructor runs
+// increments `aegis_core_engine_rpc_total{method, status}` and observes
+// `aegis_core_engine_rpc_duration_seconds{method}`. The destructor runs
 // after the handler returns, so `final_status` must be set by the
 // handler before the scope exits.
 class RpcInstrument {

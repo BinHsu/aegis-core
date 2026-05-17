@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
   // -------------------------------------------------------------------
   auto manifest_or = aegis::models::LoadManifest(manifest_path);
   if (!manifest_or.ok()) {
-    std::cerr << "aegis-engine: FATAL — cannot load manifest from `"
+    std::cerr << "aegis-core-engine: FATAL — cannot load manifest from `"
               << manifest_path << "`: " << manifest_or.status() << std::endl;
     return EXIT_FAILURE;
   }
@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
 
   if (absl::Status s = aegis::models::VerifyAllRequired(model_root, manifest);
       !s.ok()) {
-    std::cerr << "aegis-engine: FATAL — CAS preflight failed.\n"
+    std::cerr << "aegis-core-engine: FATAL — CAS preflight failed.\n"
               << s.message() << std::endl;
     return EXIT_FAILURE;
   }
@@ -125,7 +125,7 @@ int main(int argc, char **argv) {
   for (const auto &e : manifest.models) {
     if (e.required && e.type == "transcription") {
       if (whisper_entry != nullptr) {
-        std::cerr << "aegis-engine: FATAL — multiple required=true "
+        std::cerr << "aegis-core-engine: FATAL — multiple required=true "
                      "transcription entries in manifest (`"
                   << whisper_entry->id << "`, `" << e.id
                   << "`); pick one per manifest honesty discipline."
@@ -136,10 +136,11 @@ int main(int argc, char **argv) {
     }
   }
   if (whisper_entry == nullptr) {
-    std::cerr << "aegis-engine: FATAL — no required=true manifest entry of "
-                 "type=\"transcription\"; cannot pick a model for "
-                 "WhisperEngine."
-              << std::endl;
+    std::cerr
+        << "aegis-core-engine: FATAL — no required=true manifest entry of "
+           "type=\"transcription\"; cannot pick a model for "
+           "WhisperEngine."
+        << std::endl;
     return EXIT_FAILURE;
   }
   const std::string model_path =
@@ -155,7 +156,7 @@ int main(int argc, char **argv) {
   // Step 2: Verify models fit, then size the session pool.
   const std::size_t model_total = aegis::session::ModelBudget::TotalUsedBytes();
   if (model_total >= pod_limit) {
-    std::cerr << "aegis-engine: FATAL — models (" << model_total
+    std::cerr << "aegis-core-engine: FATAL — models (" << model_total
               << " bytes) exceed pod memory limit (" << pod_limit
               << " bytes). Cannot start." << std::endl;
     return EXIT_FAILURE;
@@ -258,7 +259,7 @@ int main(int argc, char **argv) {
 
   g_server = builder.BuildAndStart();
   if (!g_server) {
-    std::cerr << "aegis-engine: failed to start gRPC server on " << address
+    std::cerr << "aegis-core-engine: failed to start gRPC server on " << address
               << std::endl;
     return EXIT_FAILURE;
   }
@@ -287,7 +288,7 @@ int main(int argc, char **argv) {
     exposer->RegisterCollectable(aegis::metrics::GlobalRegistry());
   }
 
-  std::cout << "aegis-engine: listening on " << address << std::endl;
+  std::cout << "aegis-core-engine: listening on " << address << std::endl;
   if (exposer) {
     std::cout << "  metrics on " << metrics_address << "/metrics" << std::endl;
   } else {
@@ -302,7 +303,7 @@ int main(int argc, char **argv) {
   std::cout << "  whisper: " << aegis::inference::WhisperSystemInfo()
             << std::endl;
 
-  // Log model breakdown + publish per-model `aegis_engine_model_loaded`
+  // Log model breakdown + publish per-model `aegis_core_engine_model_loaded`
   // gauges for Prometheus scrape.
   for (const auto &[name, bytes] : aegis::session::ModelBudget::Breakdown()) {
     std::cout << "  model: " << name << " = " << bytes << " bytes" << std::endl;
@@ -318,7 +319,7 @@ int main(int argc, char **argv) {
   // ADR-0005 R7: this banner is intentional — it is the audit signal
   // that a dev-only build reached a human. Production images MUST NOT
   // contain this symbol (CI grep check enforces this per ROADMAP 4b).
-  std::cerr << "aegis-engine: ⚠️  AEGIS_DEV_AUDIO_DUMP is enabled — "
+  std::cerr << "aegis-core-engine: ⚠️  AEGIS_DEV_AUDIO_DUMP is enabled — "
                "this is a DEBUG build. Do not use in production."
             << std::endl;
 #endif

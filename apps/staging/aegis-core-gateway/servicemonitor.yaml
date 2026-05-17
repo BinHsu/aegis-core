@@ -1,10 +1,10 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: aegis-gateway
+  name: aegis-core-gateway
   namespace: aegis
   labels:
-    app.kubernetes.io/name: aegis-gateway
+    app.kubernetes.io/name: aegis-core-gateway
     app.kubernetes.io/part-of: aegis-core
     # ldz #54 / landing-zone ADR-015 discovery contract —
     # Prometheus Operator picks up any ServiceMonitor regardless
@@ -13,7 +13,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: aegis-gateway
+      app.kubernetes.io/name: aegis-core-gateway
   namespaceSelector:
     matchNames: [aegis]
   endpoints:

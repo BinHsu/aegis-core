@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
-  name: aegis-engine
+  name: aegis-core-engine
   namespace: aegis
   labels:
-    app.kubernetes.io/name: aegis-engine
+    app.kubernetes.io/name: aegis-core-engine
     app.kubernetes.io/part-of: aegis-core
     app.kubernetes.io/component: inference-engine
 # Phase 4c-5a: ADR-0030 Progressive Delivery Controller — engine
@@ -28,7 +28,7 @@ spec:
   revisionHistoryLimit: 3
   selector:
     matchLabels:
-      app.kubernetes.io/name: aegis-engine
+      app.kubernetes.io/name: aegis-core-engine
   strategy:
     canary:
       # 50/50 for 5 minutes — longer than gateway's 2m because engine
@@ -42,11 +42,11 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: aegis-engine
+        app.kubernetes.io/name: aegis-core-engine
         app.kubernetes.io/part-of: aegis-core
         app.kubernetes.io/component: inference-engine
     spec:
-      serviceAccountName: aegis-engine
+      serviceAccountName: aegis-core-engine
       # ADR-0006 Graceful Shutdown — 60s for engine because inference
       # workloads may be mid-flight (whisper chunks processing when
       # SIGTERM arrives). Longer than gateway's 30s because server-
@@ -175,4 +175,4 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: aegis-engine
+              app.kubernetes.io/name: aegis-core-engine

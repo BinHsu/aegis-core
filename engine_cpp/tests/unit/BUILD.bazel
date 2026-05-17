@@ -105,6 +105,20 @@ cc_test(
     ],
 )
 
+# CLAUDE.md Rule 11 — pins the engine's Prometheus metric family names
+# to the full `aegis_core_engine_` repo prefix. Load-bearing: fails the
+# build on a regression back to the bare `aegis_engine_` prefix.
+cc_test(
+    name = "metrics_test",
+    srcs = ["metrics_test.cc"],
+    size = "small",
+    deps = [
+        "//engine_cpp/src/metrics:metrics",
+        "@com_google_googletest//:gtest_main",
+        "@prometheus-cpp//core:core",
+    ],
+)
+
 # ADR-0005 R7 — release binaries MUST NOT ship the AEGIS_DEV_AUDIO_DUMP
 # debug banner. Default `bazel test` builds engine in fastbuild → no
 # define → string absent → pass. Fails if a -DAEGIS_DEV_AUDIO_DUMP

@@ -17,7 +17,7 @@ std::shared_ptr<prometheus::Registry> GlobalRegistry() {
 
 prometheus::Family<prometheus::Gauge> &Up() {
   static auto &family = prometheus::BuildGauge()
-                            .Name("aegis_engine_up")
+                            .Name("aegis_core_engine_up")
                             .Help("1 when the engine process is up and the "
                                   "gRPC server has started listening.")
                             .Register(*GlobalRegistry());
@@ -26,7 +26,7 @@ prometheus::Family<prometheus::Gauge> &Up() {
 
 prometheus::Family<prometheus::Gauge> &ModelLoaded() {
   static auto &family = prometheus::BuildGauge()
-                            .Name("aegis_engine_model_loaded")
+                            .Name("aegis_core_engine_model_loaded")
                             .Help("1 when the named model is registered with "
                                   "the ModelBudget (i.e. available for "
                                   "session use), 0 otherwise.")
@@ -36,7 +36,7 @@ prometheus::Family<prometheus::Gauge> &ModelLoaded() {
 
 prometheus::Family<prometheus::Counter> &RpcTotal() {
   static auto &family = prometheus::BuildCounter()
-                            .Name("aegis_engine_rpc_total")
+                            .Name("aegis_core_engine_rpc_total")
                             .Help("Total RPCs received by the engine, "
                                   "labelled by method and terminal status.")
                             .Register(*GlobalRegistry());
@@ -46,7 +46,7 @@ prometheus::Family<prometheus::Counter> &RpcTotal() {
 prometheus::Family<prometheus::Histogram> &RpcDurationSeconds() {
   static auto &family =
       prometheus::BuildHistogram()
-          .Name("aegis_engine_rpc_duration_seconds")
+          .Name("aegis_core_engine_rpc_duration_seconds")
           .Help("Handler duration in seconds, labelled by method. "
                 "Buckets span unary (Health, ~ms) + streaming "
                 "(StreamTranscribe, minutes) in one metric.")
