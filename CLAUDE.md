@@ -97,3 +97,9 @@
       - Human is watching and wants to see each step.
     * **Signal you mis-delegated:** subagent returns a summary but you have to re-read the files anyway to make the edit. Next time: inline.
     * **Signal you mis-inlined:** main thread hit ~30% context on tool output before you even started the real work. Next time: delegate.
+
+11. **Naming Convention — Full Repo Name, Never a Bare `aegis-` Prefix**
+    * When you name anything owned by *one specific repository* — a container image, an IAM role, a Kubernetes object, a metric namespace, a CI workflow id, an OIDC subject claim — the prefix MUST be the **full repository name**: `aegis-core-…`, `aegis-aws-landing-zone-…`. Do NOT shorten it to a bare `aegis-` prefix.
+    * The bare `aegis-` prefix is reserved for resources genuinely shared by the **entire environment** — an AWS account, an org-wide DNS zone, a shared VPC. If a name does not span every repo, it does not earn the bare prefix.
+    * Rationale: `aegis-gateway` reads as "the gateway of the whole Aegis world", but it is really "aegis-core's gateway". The bare prefix hides the owning repo and collides the instant a second repo ships a similarly-named component; it also makes IAM policies, Grafana dashboards, and cross-repo issues ambiguous about who owns what. `aegis-core-gateway` is unambiguous.
+    * This is a **forward discipline** — name every new resource correctly from creation. Existing bare-prefixed names (e.g. the `aegis-gateway` / `aegis-engine` images, the `aegis_gateway_*` / `aegis_engine_*` metric families) are a coordinated rename, not a silent edit: propose the migration with its cross-repo blast radius, do not flip it mid-task.
