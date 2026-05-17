@@ -292,7 +292,7 @@ cd aegis-core
 # [engine]   model_path=/path/to/aegis-core/models/ggml-tiny.en.bin
 # [launcher] engine ready at localhost:50051 (model=ggml-tiny.en.bin)
 # [launcher] starting gateway: .../gateway_go/cmd/gateway/gateway_/gateway
-# [launcher] gateway up; HTTP :8080 (/healthz, /ws/viewer) and gRPC :9090
+# [launcher] gateway up; HTTP :8080 (/healthz, /readyz, /ws/viewer) and gRPC :9090
 # [launcher] press Ctrl-C to stop
 
 # Verify both are wired (in another terminal)
