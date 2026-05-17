@@ -1655,6 +1655,53 @@ Added `github.com/klauspost/compress v1.18.6 // indirect` as an explicit `requir
 
 ---
 
+## Incident 18 — release tag-bump job: a false "graceful degradation" claim over an unverified ruleset-bypass instruction
+
+**Date**: 2026-05-17  **Severity**: S4  **Duration**: ~30 min (spread across spotting the red release run, reproducing the 422, and tracing it down two further layers)
+**Related commit**: *this commit* (`ci(release): make bump-image-tag fail-soft + correct ADR-0032`)
+
+### Symptom
+
+The first `Release staging image to ECR` run on `main` after the ADR-0032 CI image-tag automation merged (PR #124) finished **red**. The image build + ECR push job succeeded; the new `bump-image-tag` job failed:
+
+```
+pull request create failed: GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)
+##[error]Process completed with exit code 1
+```
+
+The signed tag-bump commit had already been created (`createCommitOnBranch` returned an oid) and its branch pushed — only `gh pr create` failed, and it took the whole release run down with it.
+
+### Root cause
+
+Three layers; only the top one is visible in the error.
+
+1. **Surface** — `gh pr create` (built-in `GITHUB_TOKEN`) is rejected unless *Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"* is enabled. It was off.
+2. **Below that** — the `bump-image-tag` step was not actually fail-soft. `set -euo pipefail` plus `PR_URL="$(gh pr create ...)"` means a `gh pr create` failure aborts the step with `exit 1`. ADR-0032 claimed the automation "degrades gracefully — the PR simply waits for a manual approval click"; with the PR never created there was nothing to wait on, so the claim was false as shipped.
+3. **Below that** — ADR-0032's documented remedy (add `github-actions[bot]` as a `bypass_mode: pull_request` ruleset bypass actor, `actor_id 15368 Integration`) does not work on this repo at all. `aegis-core` is a public repo under a personal account, not an organization; GitHub rejects the bypass actor with `422 — Actor GitHub Actions integration must be part of the ruleset source or owner organization`. The instruction had been written into the ADR unverified.
+
+### Detection
+
+A PR-run-failed notification on the release commit surfaced the red run. `gh run view --log` on the failed job showed `createCommitOnBranch` succeeding (commit oid returned) immediately followed by `gh pr create` failing — the asymmetry (commit made, PR not) localized it to the PR-creation step, not the commit path. The layer-3 fact emerged only by actually running ADR-0032's `gh api` bypass snippet and getting the 422 back.
+
+### Resolution
+
+1. **Made the step genuinely fail-soft** — wrapped `gh pr create` in `if ...; then ... else ...; fi`: a failure now emits a `::warning::` naming the required repo setting and the step exits 0. The signed commit + branch are already pushed, so a human can open the PR. The auto-merge call is guarded the same way.
+2. **Corrected ADR-0032** — replaced the unverified bypass-actor instruction with the verified reality: the bot cannot be a ruleset bypass actor on a personal repo (422); the accepted end state is *degraded mode* (bot opens the PR, repo admin merges it); the owner declined to lower the required-review count. The `gh pr create` repo setting is recorded as the one genuinely actionable knob.
+
+### Prevention
+
+- **A "this needs a one-time ops step" claim in an ADR must be verified against the live API before it ships, or marked explicitly as unverified.** ADR-0032's bypass snippet read as authoritative and was wrong; the cost was a red pipeline and this postmortem.
+- **A CI step whose failure is meant to be non-fatal must be written non-fatal** — `if cmd; then`, an explicit `|| true`, or a trailing `exit 0`. A "graceful degradation" sentence in a doc does not make `set -e` degrade gracefully.
+- The deeper structural fix — moving deploy manifests out of the branch-protected repo so the tag bump never needs a bypass — is tracked as cross-repo RFC `aegis-aws-landing-zone#214`.
+
+### Lessons
+
+1. **An unverified remedy in an ADR is worse than no remedy** — it reads as completed research, so the next person (and the CI) trusts it. If a step cannot be verified at authoring time, say "unverified" out loud.
+2. **`set -e` does not read English.** "Degrades gracefully" in prose and `exit 1` in the script are not reconciled by good intentions; the shell does exactly what the control flow says.
+3. **A personal repo is not an org repo for rulesets.** Bypass actors, Integration actors, and several ruleset features assume an owning organization. A pattern lifted from an org-repo example can 422 on a personal repo with no warning until you run it.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a

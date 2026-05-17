@@ -512,13 +512,29 @@ jobs:
             printf '%s\n' 'The commit is GitHub-signed (created via `createCommitOnBranch`), so it satisfies the `main` ruleset'"'"'s `required_signatures` rule. Auto-merge is enabled; the PR merges once required status checks pass.'
           } > /tmp/bump-pr-body.md
 
-          PR_URL="$(gh pr create \
+          # Fail-soft: opening the PR requires the repo setting
+          # Settings -> Actions -> General -> "Allow GitHub Actions to
+          # create and approve pull requests". If it is OFF, `gh pr create`
+          # fails with "GitHub Actions is not permitted to create or approve
+          # pull requests". The signed tag-bump commit and its branch are
+          # ALREADY pushed above, so a failure here must NOT fail the release
+          # run — degrade to a warning and let a human open/merge the PR.
+          # See ADR-0032 "Branch-protection handling".
+          if PR_URL="$(gh pr create \
             --base main \
             --head "${BRANCH}" \
             --title "ci(deploy): bump staging image tags to ${SHORT_SHA}" \
-            --body-file /tmp/bump-pr-body.md)"
-
-          # Enable auto-merge: the PR squash-merges itself once required
-          # status checks pass — no human click on the merge button.
-          gh pr merge "${PR_URL}" --squash --auto
-          echo "::notice title=Tag-bump PR::${PR_URL} (auto-merge enabled)"
+            --body-file /tmp/bump-pr-body.md 2>/tmp/pr-create.err)"; then
+            # Enable auto-merge: the PR squash-merges once required status
+            # checks pass. On this personal repo github-actions[bot] cannot
+            # be a ruleset bypass actor (GitHub returns 422 — see ADR-0032),
+            # so the review gate still applies and the PR waits for a
+            # repo-admin merge; --auto is harmless and merges unattended if
+            # a bypass ever becomes available.
+            if ! gh pr merge "${PR_URL}" --squash --auto; then
+              echo "::warning title=Tag-bump auto-merge::could not enable auto-merge on ${PR_URL} — merge it manually"
+            fi
+            echo "::notice title=Tag-bump PR::${PR_URL}"
+          else
+            echo "::warning title=Tag-bump PR not created::gh pr create failed; the signed commit is pushed to branch '${BRANCH}' — open the PR manually. To automate, enable Settings -> Actions -> General -> 'Allow GitHub Actions to create and approve pull requests'. gh said: $(cat /tmp/pr-create.err 2>/dev/null || true)"
+          fi
