@@ -110,34 +110,42 @@ is a deliberate, documented configuration decision, not a silent bypass:
   to `ref:refs/heads/main` + this exact `job_workflow_ref`. A buggy *other*
   workflow producing a commit still surfaces as an un-auto-merged PR.
 
-**REQUIRED ONE-TIME OPS STEP — cannot be done from code in this PR.** Ruleset
-membership is repo configuration, not a file in the tree. Before the
-`bump-image-tag` job's PR can auto-merge unattended, the repo admin must run:
+**REQUIRED REPO SETTING — `gh pr create` permission.** The `bump-image-tag`
+job opens its PR with the built-in `GITHUB_TOKEN`. GitHub rejects that unless
+**Settings → Actions → General → "Allow GitHub Actions to create and approve
+pull requests"** is enabled. With it off, `gh pr create` fails with *"GitHub
+Actions is not permitted to create or approve pull requests."* The job is
+fail-soft (see the correction below), so a release run is not blocked — but the
+tag-bump PR is not opened until this setting is on.
 
-```bash
-REPO=BinHsu/aegis-core
-RULESET_ID=$(gh api repos/$REPO/rulesets --jq '.[] | select(.name=="main") | .id')
+**CORRECTION (2026-05-17) — the ruleset bypass actor does NOT work on this
+repo.** An earlier draft of this ADR claimed the repo admin could add
+`github-actions[bot]` (`actor_id 15368`, `actor_type Integration`) to the
+branch ruleset's `bypass_actors` with `bypass_mode: pull_request`, letting the
+PR auto-merge unattended. That instruction was written **unverified and is
+wrong for this repo**. `aegis-core` is a **public repository under a personal
+account, not an organization**; GitHub rejects the change with `422 — Actor
+GitHub Actions integration must be part of the ruleset source or owner
+organization`. The bot **cannot** be a ruleset bypass actor here. (For the
+record, the ruleset is named `main-protection`, id `15905591` — not `main`.)
 
-# Fetch the current ruleset, append github-actions[bot] as a
-# pull_request-scoped bypass actor, PUT it back (gh PUT replaces the
-# whole ruleset — see docs/github-setup.md §1).
-#
-# github-actions[bot] is an *Integration* actor; its actor_id is the
-# GitHub Actions app id (15368 — the integration_id already used by the
-# required_status_checks contexts in docs/github-setup.md §1).
-#
-#   {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "pull_request"}
-#
-# Add that object to the existing "bypass_actors" array (keep actor_id 5,
-# the Repository admin role) and PUT the full ruleset payload back.
-```
+**ACCEPTED END STATE (owner decision, 2026-05-17) — degraded mode.** Because
+the bot cannot bypass the review gate, the automation is semi-automatic: the
+`bump-image-tag` job builds the correct, CI-validated, GitHub-signed tag-bump
+commit and opens the PR; the **repo admin merges it** (one click, or
+`gh pr merge --admin`). The review gate is deliberately kept, not lowered to
+zero required reviews. Even degraded this is strictly better than the old
+fully-manual edit — the human action shrinks from "find the SHA, edit three
+files, sign the commit" to "click merge". A fully-unattended merge would
+require moving the deploy manifests out of this branch-protected repo into a
+GitOps source repo — tracked as cross-repo RFC `aegis-aws-landing-zone#214`.
 
-Until that change is applied, the automation **degrades gracefully**: the
-`bump-image-tag` job still opens the PR and enables auto-merge; the PR simply
-waits for a manual approval click before merging. Even degraded, this is
-strictly better than the old fully-manual edit — the SHA is already correct in
-the PR diff, CI has already validated it, and the human action shrinks from
-"find the SHA, edit three files, sign the commit" to "click approve".
+**Earlier defect (fixed 2026-05-17).** As first shipped, the `bump-image-tag`
+step was not fail-soft: a failing `gh pr create` made the step `exit 1` and
+turned the whole release run red — contradicting the "degrades gracefully"
+claim above. The step now catches a `gh pr create` failure, emits a workflow
+warning, and exits 0 (the signed commit and its branch are already pushed, so
+a human can open the PR). See `docs/incidents.md`.
 
 ### Alternative considered for the review wall — rejected
 
