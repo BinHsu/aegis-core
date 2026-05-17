@@ -2,9 +2,9 @@
 //
 // As of Phase 2 A4, this binary runs three concurrent servers:
 //
-//   - HTTP on :8080 — /healthz probe (HTTP/1.1, no TLS) and the
-//     /ws/viewer Local-mode WebSocket transport for viewer events
-//     (ADR-0007).
+//   - HTTP on :8080 — /healthz liveness probe + /readyz drain-aware
+//     readiness probe (HTTP/1.1, no TLS) and the /ws/viewer Local-mode
+//     WebSocket transport for viewer events (ADR-0007).
 //   - gRPC on :9090 — aegis.v1.Gateway service for Cloud-mode
 //     viewers (gRPC-Web in front of this) plus the host's
 //     CreateMeeting / EndMeeting / NegotiateWebRTC RPCs.
@@ -52,6 +52,7 @@ import (
 	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
 	corspolicy "github.com/BinHsu/aegis-core/gateway_go/internal/cors"
 	gatewaygrpc "github.com/BinHsu/aegis-core/gateway_go/internal/grpc"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/health"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/logging"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/metrics"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
@@ -381,8 +382,18 @@ func main() {
 		logger.Info("CORS policy: strict allowlist (Cloud mode)", "env", corspolicy.EnvVar)
 	}
 
+	// Drain-aware readiness gate (ADR-0006 §Graceful Shutdown). Created
+	// NOT ready so /readyz answers 503 in the window between mux wiring
+	// and listener bind. Flipped true once all three listeners are
+	// confirmed up (see metrics.Up.Set below), and false as the first
+	// action of shutdown so the orchestrator stops routing NEW traffic
+	// while in-flight requests/streams drain. /healthz stays the
+	// unconditional liveness probe; /readyz is the readiness probe.
+	readiness := health.NewReadiness()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", makeHealthHandler(engine, engineAddr, registry))
+	mux.Handle("/readyz", readiness)
 	mux.HandleFunc("/lan-ip", corsAllowed(originPolicy, makeLANIPHandler()))
 	mux.HandleFunc("/ws/viewer", ws.Handler(ws.Config{
 		Registry: registry,
@@ -449,13 +460,15 @@ func main() {
 	// Signal handling is rooted at processCtx (declared above). Pipelines
 	// observe processCtx cancellation through their pipeCtx parent; this
 	// goroutine still waits on <-processCtx.Done() for the shutdown dance.
-	// ADR-0006's terminationGracePeriodSeconds=14400 drain hook plugs
-	// in here in a later phase once we have live sessions to drain.
+	// ADR-0006's drain path opens with the readiness.SetReady(false) flip
+	// at the top of the shutdown block below; the
+	// terminationGracePeriodSeconds=14400 budget bounds the drain via
+	// AEGIS_GATEWAY_DRAIN_TIMEOUT.
 
 	go func() {
 		logger.Info("HTTP server listening",
 			"addr", listenAddr,
-			"endpoints", "/healthz,/ws/viewer,grpc-web",
+			"endpoints", "/healthz,/readyz,/ws/viewer,grpc-web",
 			"engine_addr", engineAddr,
 			"version", version,
 		)
@@ -487,6 +500,10 @@ func main() {
 	// because the metrics server stops alongside everything else.
 	metrics.Up.Set(1.0)
 
+	// All three listeners are confirmed up — open the /readyz gate so
+	// the orchestrator starts routing traffic to this pod.
+	readiness.SetReady(true)
+
 	// Publish registry.Len() into the active_sessions gauge on a
 	// short poll. The registry has no change-notification channel,
 	// so polling is the honest minimum wiring. Frequency is bounded
@@ -509,6 +526,13 @@ func main() {
 
 	<-processCtx.Done()
 	logger.Info("shutdown signal received; draining")
+
+	// First action of shutdown: close the /readyz gate so it answers
+	// 503. This opens the drain window BEFORE the servers stop
+	// accepting — the orchestrator marks the pod NotReady and routes
+	// new traffic to other replicas while in-flight requests/streams
+	// below finish (ADR-0006 §Graceful Shutdown).
+	readiness.SetReady(false)
 
 	drainTimeout := defaultDrainTimeout
 	if env := os.Getenv("AEGIS_GATEWAY_DRAIN_TIMEOUT"); env != "" {
