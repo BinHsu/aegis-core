@@ -46,6 +46,20 @@ For the full data flow, see `ARCHITECTURE.md` §4. Briefly:
   from the 2026-04-17 threat model: add two SaaS endpoints to the
   "durable stores" row; no new attacker profile (A5 supply-chain
   already covers third-party SaaS compromise).
+- **Continuous-profiling egress (ADR-0035, 2026-05-17):** the gateway
+  gains an optional outbound connection to a Grafana Cloud Pyroscope
+  ingest endpoint, configured via `AEGIS_PYROSCOPE_ENDPOINT`. The data
+  on this channel is operational telemetry only — CPU / allocation /
+  goroutine stack samples (function names + line numbers from
+  aegis-core's own Go code), asset class 9 ("operational logs and
+  metrics; should contain no content"). No PCM, transcript, or token
+  material crosses it. Trust-surface delta: one more egress SaaS
+  endpoint of the same class as the OTLP-trace exporter; A5
+  supply-chain already covers the `pyroscope-go` client dependency and
+  the SaaS endpoint. The channel is fail-soft and disabled by default
+  (empty endpoint = no-op), so it is absent from the trust surface
+  entirely until the landing-zone provisions ingest and the env var is
+  set.
 
 ## Assets to Protect
 

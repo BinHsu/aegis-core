@@ -36,6 +36,7 @@ go_binary(
         "//gateway_go/internal/logging",
         "//gateway_go/internal/metrics",
         "//gateway_go/internal/pipeline",
+        "//gateway_go/internal/profiling",
         "//gateway_go/internal/session",
         "//gateway_go/internal/token",
         "//gateway_go/internal/tracing",

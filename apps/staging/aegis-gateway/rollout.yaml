@@ -102,6 +102,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            # Continuous profiling — 4th observability signal (ADR-0035).
+            # Empty until the landing-zone provisions Grafana Cloud
+            # Pyroscope ingest (tracked as a separate cross-repo issue);
+            # the profiling package is fail-soft, so an empty value
+            # degrades profiling to a no-op without blocking startup.
+            - name: AEGIS_PYROSCOPE_ENDPOINT
+              value: ""
           securityContext:
             # ADR-0025 distroless nonroot + defense-in-depth hardening.
             runAsNonRoot: true
