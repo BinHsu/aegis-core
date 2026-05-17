@@ -86,7 +86,7 @@ spec:
           # The `bump-image-tag` job in release-staging-image.yml
           # rewrites this line and the Rollout's in lockstep after
           # each release build (ADR-0032, re-decided 2026-05-17).
-          image: 251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core:engine-staging-db14d67559d079d48633dc3a536666eba080ac05
+          image: 251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core:engine-staging-37d110647b79f08a7d4ca4768f21e1922f01ce25
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/engine"]
           args:
