@@ -31,7 +31,7 @@ import "testing"
 // endpoint must yield a no-op Profiler and a nil error. This is the
 // path the gateway takes today (AEGIS_PYROSCOPE_ENDPOINT unset).
 func TestStart_EmptyEndpoint_BoundaryB(t *testing.T) {
-	p, err := Start(Config{ApplicationName: "aegis-gateway", Endpoint: ""})
+	p, err := Start(Config{ApplicationName: "aegis-core-gateway", Endpoint: ""})
 	if err != nil {
 		t.Fatalf("Start with empty endpoint: want nil error, got %v", err)
 	}
@@ -55,7 +55,7 @@ func TestStart_EmptyEndpoint_BoundaryB(t *testing.T) {
 // an error or a handle; either is acceptable. What this test pins is
 // that Start does not panic and the resulting handle's Stop stays safe.
 func TestStart_SingleCharEndpoint_BoundaryBMinus1(t *testing.T) {
-	p, err := Start(Config{ApplicationName: "aegis-gateway", Endpoint: "x"})
+	p, err := Start(Config{ApplicationName: "aegis-core-gateway", Endpoint: "x"})
 	if err != nil {
 		// Live-start path was taken and the upstream client rejected
 		// the bogus endpoint — correct fail-soft behaviour. The caller
@@ -77,7 +77,7 @@ func TestStart_SingleCharEndpoint_BoundaryBMinus1(t *testing.T) {
 // (inner set, or an error), never the no-op path.
 func TestStart_NormalEndpoint_BoundaryBPlus1(t *testing.T) {
 	p, err := Start(Config{
-		ApplicationName: "aegis-gateway",
+		ApplicationName: "aegis-core-gateway",
 		Endpoint:        "http://127.0.0.1:4040",
 	})
 	if err != nil {

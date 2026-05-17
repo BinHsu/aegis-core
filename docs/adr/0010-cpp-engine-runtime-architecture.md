@@ -285,7 +285,7 @@ Usage contract:
   (per Sub-decision 1), so reservation/release is naturally paired.
 - `ResourceBudget` is **thread-safe** via `std::atomic`.
 - `ResourceBudget` is **observable** — a Prometheus metric
-  `aegis_engine_budget_bytes_used` is exported and scraped per ARCH
+  `aegis_core_engine_budget_bytes_used` is exported and scraped per ARCH
   §10.6.
 
 #### Hard Rules
@@ -468,9 +468,9 @@ rediscover them:
   `terminationGracePeriodSeconds` (matched to ADR-0006's 14400 s
   for Go Gateway, aligning with `session_max_lifetime`).
 - **Metrics naming**: align
-  `aegis_engine_budget_bytes_used`,
-  `aegis_engine_sessions_active`,
-  `aegis_engine_sessions_rejected_total{reason="budget"}`
+  `aegis_core_engine_budget_bytes_used`,
+  `aegis_core_engine_sessions_active`,
+  `aegis_core_engine_sessions_rejected_total{reason="budget"}`
   with the overall domain metric naming convention from ARCH §10.6.
 - **Per-model `estimated_bytes` source of truth**: hardcoded
   constant for Phase 1; move to the `manifest.json` in `/models/`
@@ -512,7 +512,7 @@ Three specific pressures from ADR-0020:
 2. **Model weights are shared across all sessions**, not reserved
    per-session. Charging per-session for memory that exists
    regardless of session count double-counts the budget.
-3. **Observability clarity.** `aegis_engine_budget_bytes_used` as a
+3. **Observability clarity.** `aegis_core_engine_budget_bytes_used` as a
    single number hides whether pressure is coming from model bloat
    (fix: change quantization / swap model) or session pressure
    (fix: scale out). Splitting the metric tells the on-call engineer
@@ -530,8 +530,8 @@ startup, then consumed session-by-session via the existing
 `Reserve`/`Release` contract.
 
 Both are observable via separate Prometheus metrics
-(`aegis_engine_model_bytes_used{model="whisper"|"bge-m3"|"llm"}`,
-`aegis_engine_session_bytes_used`).
+(`aegis_core_engine_model_bytes_used{model="whisper"|"bge-m3"|"llm"}`,
+`aegis_core_engine_session_bytes_used`).
 
 ### API shape
 
@@ -635,16 +635,16 @@ the Phase 5+ / full-model scenario, not Phase 3b.
 Original single metric:
 
 ```
-aegis_engine_budget_bytes_used  {gauge}
+aegis_core_engine_budget_bytes_used  {gauge}
 ```
 
 Revised into two metrics:
 
 ```
-aegis_engine_model_bytes_used    {gauge, label: model="whisper"|"bge-m3"|"llm"}
-aegis_engine_session_bytes_used  {gauge}
-aegis_engine_sessions_active     {gauge}    # unchanged
-aegis_engine_sessions_rejected_total{reason="session_budget"}  # was "budget"
+aegis_core_engine_model_bytes_used    {gauge, label: model="whisper"|"bge-m3"|"llm"}
+aegis_core_engine_session_bytes_used  {gauge}
+aegis_core_engine_sessions_active     {gauge}    # unchanged
+aegis_core_engine_sessions_rejected_total{reason="session_budget"}  # was "budget"
 ```
 
 The rejection label specificity matters: a future
@@ -683,7 +683,7 @@ rejection.
   to be swapped requires engine restart.
 - **Engine refuses to boot if ModelBudget ≥ pod_limit.** Better a
   clear startup error than an engine that accepts zero sessions.
-- **`aegis_engine_sessions_rejected_total{reason="session_budget"}`
+- **`aegis_core_engine_sessions_rejected_total{reason="session_budget"}`
   replaces the old `reason="budget"`** — callers that dashboarded
   the old label need to update.
 

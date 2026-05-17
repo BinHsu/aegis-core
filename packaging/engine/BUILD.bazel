@@ -20,7 +20,7 @@
 #    What happens if a Mac dev violates Camp B and runs
 #    `bazel build //packaging/engine:image` anyway? The engine cc_binary
 #    builds Mach-O arm64; pkg_tar packs it; image builds successfully;
-#    `docker run aegis-engine:dev-local` exits with "exec format error".
+#    `docker run aegis-core-engine:dev-local` exits with "exec format error".
 #    That failure is honest and loud — Camp B says don't do this; if
 #    you did it, you see why. Hermetic clang doesn't ship a Linux
 #    sysroot for cross-compile, so the right answer is "build on the
@@ -100,7 +100,7 @@ pkg_files(
 )
 
 # Starter corpus shipped at FHS `/usr/local/share/corpora/` so the
-# Phase 4c Cloud RAG seed Job (`apps/staging/aegis-engine/seed-job.yaml`)
+# Phase 4c Cloud RAG seed Job (`apps/staging/aegis-core-engine/seed-job.yaml`)
 # can bring up a non-empty Qdrant collection on first cold-apply
 # without an extra delivery mechanism (S3 mount / ConfigMap / git
 # init-container). Image size impact is sub-10KB. Forks that need a
@@ -131,7 +131,7 @@ oci_image(
     exposed_ports = ["50051/tcp"],
     labels = {
         "org.opencontainers.image.source": "https://github.com/BinHsu/aegis-core",
-        "org.opencontainers.image.title": "aegis-engine",
+        "org.opencontainers.image.title": "aegis-core-engine",
         "org.opencontainers.image.description": "Aegis Engine — C++ inference engine (whisper.cpp + ggml + llama.cpp).",
         "org.opencontainers.image.licenses": "Apache-2.0",
     },
@@ -145,7 +145,7 @@ oci_image(
 oci_load(
     name = "image_load",
     image = ":image",
-    repo_tags = ["aegis-engine:dev-local"],
+    repo_tags = ["aegis-core-engine:dev-local"],
 )
 
 # ECR push target — consumed by .github/workflows/release-staging-image.yml.

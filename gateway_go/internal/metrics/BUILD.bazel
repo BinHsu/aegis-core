@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "metrics",
@@ -9,5 +9,17 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/promhttp",
         "@org_golang_google_grpc//:grpc",
+    ],
+)
+
+# CLAUDE.md Rule 11 — pins the gateway's Prometheus metric family names
+# to the full `aegis_core_gateway_` repo prefix. Load-bearing: fails
+# the build on a regression back to the bare `aegis_gateway_` prefix.
+go_test(
+    name = "metrics_test",
+    srcs = ["metrics_test.go"],
+    embed = [":metrics"],
+    deps = [
+        "@com_github_prometheus_client_golang//prometheus",
     ],
 )

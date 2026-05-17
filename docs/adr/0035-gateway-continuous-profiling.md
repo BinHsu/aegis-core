@@ -48,9 +48,9 @@ This mirrors `tracing.Init` exactly: profiling never blocks process startup and 
 
 ### D4. Configuration — `AEGIS_PYROSCOPE_ENDPOINT`
 
-The Pyroscope ingest server address is read from `AEGIS_PYROSCOPE_ENDPOINT` (repo `AEGIS_*` env convention). Empty / unset = profiling disabled (no-op). The Pyroscope application name is `tracing.ServiceName` (`aegis-gateway`) so profiles, traces, and metrics all join on one service identity in Grafana.
+The Pyroscope ingest server address is read from `AEGIS_PYROSCOPE_ENDPOINT` (repo `AEGIS_*` env convention). Empty / unset = profiling disabled (no-op). The Pyroscope application name is `tracing.ServiceName` (`aegis-core-gateway`) so profiles, traces, and metrics all join on one service identity in Grafana.
 
-`apps/staging/aegis-gateway/rollout.yaml` declares `AEGIS_PYROSCOPE_ENDPOINT` with an empty value — a placeholder that the fail-soft path handles cleanly and that becomes a one-line edit when the landing-zone provisions ingest.
+`apps/staging/aegis-core-gateway/rollout.yaml` declares `AEGIS_PYROSCOPE_ENDPOINT` with an empty value — a placeholder that the fail-soft path handles cleanly and that becomes a one-line edit when the landing-zone provisions ingest.
 
 ### D5. Wire point
 
@@ -88,7 +88,7 @@ The live profiling path needs a Grafana Cloud Pyroscope ingest endpoint, which t
 
 - The 4th observability signal lands; the gateway's debugging story is complete (metrics → traces → logs → profiles).
 - Fail-soft means zero startup-risk and zero request-path cost when disabled — the current state in every deploy mode until ingest is provisioned.
-- Profiles join traces and metrics on `service.name = aegis-gateway` — one Grafana correlation surface.
+- Profiles join traces and metrics on `service.name = aegis-core-gateway` — one Grafana correlation surface.
 - The fail-soft switch is a clean unit-test boundary (empty vs non-empty endpoint), so the shipped-disabled code is still load-bearing-tested.
 
 ### Negative

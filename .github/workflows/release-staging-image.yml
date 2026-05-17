@@ -127,7 +127,7 @@ jobs:
             --read-only \
             --user 65532:65532 \
             -p 18080:8080 \
-            aegis-gateway:dev-local
+            aegis-core-gateway:dev-local
           for i in 1 2 3 4 5 6 7 8 9 10; do
             if curl -sf http://localhost:18080/healthz > /tmp/healthz.json; then
               echo "healthz returned 200 after ${i}s"
@@ -173,7 +173,7 @@ jobs:
         # anchore/sbom-action v0.24.0 (released 2026-03-20)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
-          image: aegis-gateway:dev-local
+          image: aegis-core-gateway:dev-local
           format: cyclonedx-json
           artifact-name: gateway.sbom.cdx.json
           output-file: gateway.sbom.cdx.json
@@ -241,7 +241,7 @@ jobs:
         # anchore/sbom-action v0.24.0 (released 2026-03-20)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
-          image: aegis-engine:dev-local
+          image: aegis-core-engine:dev-local
           format: cyclonedx-json
           artifact-name: engine.sbom.cdx.json
           output-file: engine.sbom.cdx.json
@@ -422,16 +422,16 @@ jobs:
           # is a plain string on the first (only) container of each workload.
           yq -i \
             ".spec.template.spec.containers[0].image = \"${GATEWAY_REF}\"" \
-            apps/staging/aegis-gateway/rollout.yaml
+            apps/staging/aegis-core-gateway/rollout.yaml
           yq -i \
             ".spec.template.spec.containers[0].image = \"${ENGINE_REF}\"" \
-            apps/staging/aegis-engine/rollout.yaml
+            apps/staging/aegis-core-engine/rollout.yaml
           # seed-job.yaml rides the same engine image SHA as the engine
           # Rollout (ADR-0032 manual discipline previously kept these in
           # lockstep by hand; now the workflow keeps them in lockstep).
           yq -i \
             ".spec.template.spec.containers[0].image = \"${ENGINE_REF}\"" \
-            apps/staging/aegis-engine/seed-job.yaml
+            apps/staging/aegis-core-engine/seed-job.yaml
 
           if git diff --quiet -- apps/staging; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -470,9 +470,9 @@ jobs:
           # real JSON object to deserialize into CreateCommitOnBranchInput!.
           ADDITIONS="$(
             for f in \
-              apps/staging/aegis-gateway/rollout.yaml \
-              apps/staging/aegis-engine/rollout.yaml \
-              apps/staging/aegis-engine/seed-job.yaml ; do
+              apps/staging/aegis-core-gateway/rollout.yaml \
+              apps/staging/aegis-core-engine/rollout.yaml \
+              apps/staging/aegis-core-engine/seed-job.yaml ; do
               jq -nc --arg path "$f" --arg contents "$(base64 -w0 "$f")" \
                 '{path: $path, contents: $contents}'
             done | jq -sc '.'
@@ -506,9 +506,9 @@ jobs:
           {
             printf '%s\n\n' 'Automated by `release-staging-image.yml` (ADR-0032, re-decided 2026-05-17).'
             printf '%s\n\n' "Rewrites the \`apps/staging/**\` image references to the images built and pushed from commit \`${RUN_SHA}\`:"
-            printf -- '- `aegis-gateway/rollout.yaml` -> `staging-%s`\n' "${RUN_SHA}"
-            printf -- '- `aegis-engine/rollout.yaml` -> `engine-staging-%s`\n' "${RUN_SHA}"
-            printf -- '- `aegis-engine/seed-job.yaml` -> `engine-staging-%s`\n\n' "${RUN_SHA}"
+            printf -- '- `aegis-core-gateway/rollout.yaml` -> `staging-%s`\n' "${RUN_SHA}"
+            printf -- '- `aegis-core-engine/rollout.yaml` -> `engine-staging-%s`\n' "${RUN_SHA}"
+            printf -- '- `aegis-core-engine/seed-job.yaml` -> `engine-staging-%s`\n\n' "${RUN_SHA}"
             printf '%s\n' 'The commit is GitHub-signed (created via `createCommitOnBranch`), so it satisfies the `main` ruleset'"'"'s `required_signatures` rule. Auto-merge is enabled; the PR merges once required status checks pass.'
           } > /tmp/bump-pr-body.md
 

@@ -214,7 +214,7 @@ jobs:
         run: |
           set -euxo pipefail
           # The image_load target's repo_tags are defined in
-          # packaging/gateway/BUILD.bazel as "aegis-gateway:dev-local";
+          # packaging/gateway/BUILD.bazel as "aegis-core-gateway:dev-local";
           # `bazel run` does NOT accept a tag override as a positional
           # argument (oci_load reads repo_tags from the BUILD attribute,
           # not from argv). Aligning the docker tag below.
@@ -223,7 +223,7 @@ jobs:
             --read-only \
             --user 65532:65532 \
             -p 18080:8080 \
-            aegis-gateway:dev-local
+            aegis-core-gateway:dev-local
           # Wait up to 10s for /healthz to return 200; the gateway tries
           # to dial the C++ engine on startup, which fails (engine isn't
           # in this CI step), but per main.go:440-443 /healthz still
@@ -250,7 +250,7 @@ jobs:
       # ADR-0025 §"Sequencing across slices" and ARCHITECTURE.md §10.1
       # ("every release artifact ... produces a CycloneDX or SPDX SBOM
       # via Syft"). Generated against the docker image that the smoke
-      # step just verified — `aegis-gateway:dev-local` is still loaded
+      # step just verified — `aegis-core-gateway:dev-local` is still loaded
       # in the runner's docker daemon (only the container was removed,
       # the image stays). Pin by commit SHA, not @v0, for reproducibility
       # — bumping syft is a 1-line PR with the new SHA.
@@ -264,7 +264,7 @@ jobs:
         # anchore/sbom-action v0.24.0 (released 2026-03-20)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
-          image: aegis-gateway:dev-local
+          image: aegis-core-gateway:dev-local
           format: cyclonedx-json
           artifact-name: gateway.sbom.cdx.json
           output-file: gateway.sbom.cdx.json

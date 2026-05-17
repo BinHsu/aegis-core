@@ -352,7 +352,7 @@ sit in "Terminating" state until those sessions complete.
            periodSeconds: 600  # at most 1 pod per 10 min
    ```
 3. **Custom metric guard**: HPA uses
-   `aegis_engine_sessions_active` as a scale-down signal. Pods
+   `aegis_core_engine_sessions_active` as a scale-down signal. Pods
    with active sessions receive lower scale-down priority (handled
    by the K8s scheduler's pod selection algorithm, which
    preferentially terminates pods with fewer connections when PDB

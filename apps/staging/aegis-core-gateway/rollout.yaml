@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
-  name: aegis-gateway
+  name: aegis-core-gateway
   namespace: aegis
   labels:
-    app.kubernetes.io/name: aegis-gateway
+    app.kubernetes.io/name: aegis-core-gateway
     app.kubernetes.io/part-of: aegis-core
     app.kubernetes.io/component: api-gateway
 # Phase 4c-5a initial slice of ADR-0030 Progressive Delivery Controller:
@@ -30,7 +30,7 @@ spec:
   revisionHistoryLimit: 3
   selector:
     matchLabels:
-      app.kubernetes.io/name: aegis-gateway
+      app.kubernetes.io/name: aegis-core-gateway
   strategy:
     canary:
       # 50/50 soak for 2 minutes before the Rollout promotes the canary
@@ -45,11 +45,11 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: aegis-gateway
+        app.kubernetes.io/name: aegis-core-gateway
         app.kubernetes.io/part-of: aegis-core
         app.kubernetes.io/component: api-gateway
     spec:
-      serviceAccountName: aegis-gateway
+      serviceAccountName: aegis-core-gateway
       # ADR-0006 Graceful Shutdown — 30s matches Go gateway's drain
       # timeout; long enough for in-flight WebRTC sessions to finish
       # server-side cleanup, short enough to not pin rolling updates.
@@ -86,7 +86,7 @@ spec:
             - name: AEGIS_ENGINE_ADDR
               # Headless Service DNS — gRPC client-side round_robin
               # resolver walks all backing pod IPs (ADR-0017).
-              value: "aegis-engine.aegis.svc.cluster.local:50051"
+              value: "aegis-core-engine.aegis.svc.cluster.local:50051"
             - name: AEGIS_LOG_LEVEL
               value: "info"
             # Downward API → trace-aware slog handler (Phase 4d
@@ -169,4 +169,4 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: aegis-gateway
+              app.kubernetes.io/name: aegis-core-gateway

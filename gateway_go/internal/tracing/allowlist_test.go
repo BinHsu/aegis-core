@@ -182,7 +182,7 @@ func TestMixedSpan(t *testing.T) {
 		attribute.String("rpc.service", "aegis.v1.Gateway"),
 		attribute.String("rpc.method", "CreateMeeting"),
 		attribute.Int("rpc.grpc.status_code", 0),
-		attribute.String("service.name", "aegis-gateway"),
+		attribute.String("service.name", "aegis-core-gateway"),
 		attribute.String("aegis.tenant_id", "tenant-alpha"),
 		// Should be dropped — accidental payload + identity leak.
 		attribute.String("transcript_text", "we discussed Q4"),

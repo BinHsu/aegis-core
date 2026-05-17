@@ -127,8 +127,8 @@ None of these are on Phase 4c's ROADMAP; re-opening remains a speculative future
 
 - [ ] Install Argo Rollouts controller to `argo-rollouts` namespace on ldz EKS (ldz-side Helm / manifest — open cross-repo issue)
 - [ ] Install ALB traffic-router plugin: `argoproj-labs/rollouts-plugin-trafficrouter-alb`
-- [ ] Convert `deploy/staging/aegis-gateway/deployment.yaml` → `rollout.yaml` (C-5a)
-- [ ] Convert `deploy/staging/aegis-engine/deployment.yaml` → `rollout.yaml` (C-5a)
+- [ ] Convert `apps/staging/aegis-core-gateway/deployment.yaml` → `rollout.yaml` (C-5a)
+- [ ] Convert `apps/staging/aegis-core-engine/deployment.yaml` → `rollout.yaml` (C-5a)
 - [ ] Define step-based canary strategy (10 → 30 → 60 → 100, 5 min each) — no `AnalysisTemplate` yet
 - [ ] Wire `AnalysisTemplate` referencing Phase 4d metric source once it emits (C-5b)
 - [ ] Playbook entry for `kubectl argo rollouts abort` manual override

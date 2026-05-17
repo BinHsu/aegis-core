@@ -1,10 +1,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: aegis-engine-seed
+  name: aegis-core-engine-seed
   namespace: aegis
   labels:
-    app.kubernetes.io/name: aegis-engine-seed
+    app.kubernetes.io/name: aegis-core-engine-seed
     app.kubernetes.io/part-of: aegis-core
     app.kubernetes.io/component: rag-seed
   annotations:
@@ -45,7 +45,7 @@ metadata:
 # bucket), `/models` is the same emptyDir placeholder the Rollout
 # carries — the Job will fail at bge-m3 load with `couldn't open
 # file`. That failure is the same documented gap as the Rollout's
-# (`apps/staging/aegis-engine/rollout.yaml` §"MODEL STORAGE —
+# (`apps/staging/aegis-core-engine/rollout.yaml` §"MODEL STORAGE —
 # BOOTSTRAP PLACEHOLDER"); both pods recover together when the
 # model storage layer arrives. ArgoCD will surface the Job's
 # failed state until then; the operator notice is "model storage
@@ -62,7 +62,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: aegis-engine-seed
+        app.kubernetes.io/name: aegis-core-engine-seed
         app.kubernetes.io/part-of: aegis-core
         app.kubernetes.io/component: rag-seed
     spec:
@@ -70,7 +70,7 @@ spec:
       # role `aegis-staging-aegis-engine`) so the Job inherits the
       # same AWS identity as the Rollout — relevant when the model
       # storage layer comes online and S3 reads need IRSA creds.
-      serviceAccountName: aegis-engine
+      serviceAccountName: aegis-core-engine
       restartPolicy: OnFailure
       automountServiceAccountToken: false
       securityContext:

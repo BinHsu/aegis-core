@@ -31,7 +31,7 @@ Narrative passages below that reference "kube-prometheus-stack" are left as-writ
 
 This ADR's `:8081/metrics` endpoint and ADR-0005 R4's OTLP traces are two of the three observability pillars; logs were the third and, until this slice, the disconnected one — a gateway log line carried no identifier joinable to its trace in Tempo.
 
-`gateway_go/internal/logging/trace_handler.go` closes that gap with a `TraceContextHandler` that wraps the env-configured slog handler (`AEGIS_LOG_FORMAT` / `AEGIS_LOG_LEVEL`). On every record it injects `trace_id` / `span_id` extracted from the OTel span on the request context (`trace.SpanFromContext`), plus static `pod` / `node` identifiers sourced once at startup from the Kubernetes Downward API env vars `AEGIS_POD_NAME` / `AEGIS_NODE_NAME` (added to `apps/staging/aegis-gateway/rollout.yaml`). Design constraints, all preserved: records with no valid span context omit the trace fields entirely (no all-zero IDs polluting the Loki index), and pod/node are omitted when their env var is empty (the correct Local-mode posture). `cmd/gateway/main.go` installs the trace-aware logger immediately after `tracing.Init` so spans already exist on contexts; a bootstrap logger covers any pre-tracing startup error.
+`gateway_go/internal/logging/trace_handler.go` closes that gap with a `TraceContextHandler` that wraps the env-configured slog handler (`AEGIS_LOG_FORMAT` / `AEGIS_LOG_LEVEL`). On every record it injects `trace_id` / `span_id` extracted from the OTel span on the request context (`trace.SpanFromContext`), plus static `pod` / `node` identifiers sourced once at startup from the Kubernetes Downward API env vars `AEGIS_POD_NAME` / `AEGIS_NODE_NAME` (added to `apps/staging/aegis-core-gateway/rollout.yaml`). Design constraints, all preserved: records with no valid span context omit the trace fields entirely (no all-zero IDs polluting the Loki index), and pod/node are omitted when their env var is empty (the correct Local-mode posture). `cmd/gateway/main.go` installs the trace-aware logger immediately after `tracing.Init` so spans already exist on contexts; a bootstrap logger covers any pre-tracing startup error.
 
 No new ADR is warranted — this is the logging-side wiring of the same observability contract this ADR and ADR-0005 R4 already established, not a new systemic decision. Engine-side log↔trace correlation rides on the deferred opentelemetry-cpp slice (same gate as the engine OTLP exporter).
 
@@ -62,17 +62,17 @@ ServiceMonitor references the port **by name** (`port: metrics`) so a port-numbe
 
 **Engine** (C++, `engine_cpp/src/metrics/`):
 
-- `aegis_engine_up` (Gauge) — 1 after gRPC listener binds
-- `aegis_engine_model_loaded{model}` (Gauge) — 1 per registered model
-- `aegis_engine_rpc_total{method, status}` (Counter)
-- `aegis_engine_rpc_duration_seconds{method}` (Histogram)
+- `aegis_core_engine_up` (Gauge) — 1 after gRPC listener binds
+- `aegis_core_engine_model_loaded{model}` (Gauge) — 1 per registered model
+- `aegis_core_engine_rpc_total{method, status}` (Counter)
+- `aegis_core_engine_rpc_duration_seconds{method}` (Histogram)
 
 **Gateway** (Go, `gateway_go/internal/metrics/`):
 
-- `aegis_gateway_up` (Gauge) — 1 after all three listeners bind (HTTP :8080, gRPC :9090, metrics :8081)
-- `aegis_gateway_active_sessions` (Gauge) — point-in-time polled from `session.Registry.Len()` every 5s
-- `aegis_gateway_rpc_total{method, status}` (Counter)
-- `aegis_gateway_rpc_duration_seconds{method}` (Histogram)
+- `aegis_core_gateway_up` (Gauge) — 1 after all three listeners bind (HTTP :8080, gRPC :9090, metrics :8081)
+- `aegis_core_gateway_active_sessions` (Gauge) — point-in-time polled from `session.Registry.Len()` every 5s
+- `aegis_core_gateway_rpc_total{method, status}` (Counter)
+- `aegis_core_gateway_rpc_duration_seconds{method}` (Histogram)
 
 **Cardinality bounds**: `method` is a closed enum (RPC method names from the `.proto`); `status` is coarse `"ok" | "error"` — fine-grained gRPC status codes (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, etc.) are one-line additions if operators ask. `model` is bounded by ADR-0026's manifest (single-digit entries). Upper-bound time-series count per service: ~40, well below Prometheus cost thresholds.
 

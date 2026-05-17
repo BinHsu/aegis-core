@@ -1,17 +1,17 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: aegis-engine
+  name: aegis-core-engine
   namespace: aegis
   labels:
-    app.kubernetes.io/name: aegis-engine
+    app.kubernetes.io/name: aegis-core-engine
     app.kubernetes.io/part-of: aegis-core
   annotations:
     aegis.binhsu.org/policy-rationale: ldz-54-default-deny-allowlist
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: aegis-engine
+      app.kubernetes.io/name: aegis-core-engine
   policyTypes: [Ingress, Egress]
   ingress:
     # Engine accepts gRPC (port 50051) only from the gateway.
@@ -21,7 +21,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: aegis-gateway
+              app.kubernetes.io/name: aegis-core-gateway
       ports:
         - port: 50051
           protocol: TCP

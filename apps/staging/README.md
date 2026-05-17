@@ -62,11 +62,11 @@ mode — plaintext gRPC over localhost, by design.
 - **Default-deny NetworkPolicy** already on `aegis` ns — we add explicit allow rules below
 - **Kyverno Audit mode** — our Rollouts satisfy all 4 baseline ldz ClusterPolicies (non-privileged, no host-ns, resource limits present, `app.kubernetes.io/name` labelled), plus our own audio-ns isolation policy in `aegis-policies/kyverno-audio-isolation.yaml` (ADR-0005 R6)
 - **Karpenter vCPU cap: 4 total** — our requests sum to 1.2 vCPU; fits comfortably
-- **IRSA role pre-provisioned**: `aegis-staging-aegis-engine` with trust scope `system:serviceaccount:aegis:aegis-engine`. Engine SA carries the `eks.amazonaws.com/role-arn` annotation; permission policy on the role is currently empty (skeleton — attaches when engine gains AWS API surface).
+- **IRSA role pre-provisioned**: `aegis-staging-aegis-engine` (ldz-owned role name) — its trust policy must scope to `system:serviceaccount:aegis:aegis-core-engine` after the CLAUDE.md Rule 11 rename of the engine ServiceAccount (`aegis-engine` → `aegis-core-engine`). The trust-policy rebind is tracked in the cross-repo rename issue on the ldz side. Engine SA carries the `eks.amazonaws.com/role-arn` annotation; permission policy on the role is currently empty (skeleton — attaches when engine gains AWS API surface).
 
 ## Image tag updates — automated (ADR-0032, re-decided 2026-05-17)
 
-Manifests reference a **specific image SHA** as a literal. The SHA is kept current by CI: the `bump-image-tag` job in [`release-staging-image.yml`](../../.github/workflows/release-staging-image.yml) runs after each release build, rewrites the `image:` refs in `aegis-gateway/rollout.yaml`, `aegis-engine/rollout.yaml`, and `aegis-engine/seed-job.yaml` with `yq`, and opens an **auto-merge PR**. Once that PR's CI passes it merges to `main` and ArgoCD reconciles the new tags — no manual step.
+Manifests reference a **specific image SHA** as a literal. The SHA is kept current by CI: the `bump-image-tag` job in [`release-staging-image.yml`](../../.github/workflows/release-staging-image.yml) runs after each release build, rewrites the `image:` refs in `aegis-core-gateway/rollout.yaml`, `aegis-core-engine/rollout.yaml`, and `aegis-core-engine/seed-job.yaml` with `yq`, and opens an **auto-merge PR**. Once that PR's CI passes it merges to `main` and ArgoCD reconciles the new tags — no manual step.
 
 The automation uses only the workflow's built-in `GITHUB_TOKEN` (no PAT, no cluster-side controller) because these manifests live in the **same repo** as the workflow. The `main` ruleset's `required_signatures` rule is satisfied by creating the bump commit through GitHub's `createCommitOnBranch` API (server-side signed).
 

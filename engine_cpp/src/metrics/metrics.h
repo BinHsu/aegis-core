@@ -1,12 +1,12 @@
 // engine_cpp/src/metrics/metrics.h
 //
-// Prometheus metrics registry for the aegis-engine process — ldz #46
+// Prometheus metrics registry for the aegis-core-engine process — ldz #46
 // observability contract, C-Obs-1 slice. Exposes:
 //
-//   aegis_engine_up                 (Gauge)     1 when the process is up
-//   aegis_engine_model_loaded       (Gauge)     per-model 0/1 load state
-//   aegis_engine_rpc_total          (Counter)   RPC count by {method, status}
-//   aegis_engine_rpc_duration_secs  (Histogram) handler duration by {method}
+//   aegis_core_engine_up — Gauge, 1 when the process is up
+//   aegis_core_engine_model_loaded — Gauge, per-model 0/1 load state
+//   aegis_core_engine_rpc_total — Counter, RPC count by {method, status}
+//   aegis_core_engine_rpc_duration_seconds — Histogram, duration by {method}
 //
 // The pull exposer in `engine_cpp/cmd/engine/main.cc` binds the
 // registry returned by `GlobalRegistry()` to the HTTP server on

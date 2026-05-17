@@ -31,8 +31,8 @@ naming because it is exactly the kind of premise that decays silently:
   cross-repo backlog" row assumed). In that world, a write-back genuinely needs
   a credential that crosses the repo boundary.
 - But **aegis-core's Kubernetes manifests live IN THIS SAME REPO** —
-  `apps/staging/aegis-gateway/rollout.yaml`, `apps/staging/aegis-engine/rollout.yaml`,
-  `apps/staging/aegis-engine/seed-job.yaml`. ArgoCD (in the landing-zone
+  `apps/staging/aegis-core-gateway/rollout.yaml`, `apps/staging/aegis-core-engine/rollout.yaml`,
+  `apps/staging/aegis-core-engine/seed-job.yaml`. ArgoCD (in the landing-zone
   cluster) *polls* this path; it does not host the manifests.
 - A same-repo tag bump therefore needs **only the workflow's built-in
   `GITHUB_TOKEN`** (`permissions: contents: write` + `pull-requests: write`).

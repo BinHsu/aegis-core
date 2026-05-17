@@ -3,8 +3,8 @@
 // Wiring shape (symmetric with engine_cpp/src/metrics/):
 //
 //   - 4 baseline metrics matching the ldz #46 observability contract:
-//     aegis_gateway_up, aegis_gateway_active_sessions,
-//     aegis_gateway_rpc_total, aegis_gateway_rpc_duration_seconds.
+//     aegis_core_gateway_up, aegis_core_gateway_active_sessions,
+//     aegis_core_gateway_rpc_total, aegis_core_gateway_rpc_duration_seconds.
 //   - UnaryInterceptor + StreamInterceptor for grpc-go that populate
 //     rpc_total + rpc_duration_seconds around every RPC handler.
 //   - Handler() returns the http.Handler that cmd/gateway/main.go
@@ -39,7 +39,7 @@ var registry = prometheus.NewRegistry()
 // Up — 1 when the gateway process is up and all servers have begun
 // listening. Set exactly once at startup.
 var Up = prometheus.NewGauge(prometheus.GaugeOpts{
-	Name: "aegis_gateway_up",
+	Name: "aegis_core_gateway_up",
 	Help: "1 when the gateway process is up and all listeners are bound.",
 })
 
@@ -48,7 +48,7 @@ var Up = prometheus.NewGauge(prometheus.GaugeOpts{
 // Updated on a short poll from main.go rather than on every session
 // event because the registry has no change-notification channel.
 var ActiveSessions = prometheus.NewGauge(prometheus.GaugeOpts{
-	Name: "aegis_gateway_active_sessions",
+	Name: "aegis_core_gateway_active_sessions",
 	Help: "Number of active sessions currently held by the registry.",
 })
 
@@ -56,7 +56,7 @@ var ActiveSessions = prometheus.NewGauge(prometheus.GaugeOpts{
 // Unary + Stream interceptors.
 var RpcTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "aegis_gateway_rpc_total",
+		Name: "aegis_core_gateway_rpc_total",
 		Help: "Total gRPC RPCs handled by the gateway, labelled by method and terminal status.",
 	},
 	[]string{"method", "status"},
@@ -67,7 +67,7 @@ var RpcTotal = prometheus.NewCounterVec(
 // services without bucket-realignment surprises.
 var RpcDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "aegis_gateway_rpc_duration_seconds",
+		Name:    "aegis_core_gateway_rpc_duration_seconds",
 		Help:    "Handler duration in seconds, labelled by method.",
 		Buckets: []float64{0.001, 0.01, 0.1, 1.0, 5.0, 30.0, 120.0, 600.0},
 	},
@@ -101,7 +101,7 @@ var RpcDurationSeconds = prometheus.NewHistogramVec(
 //     manual interventions
 var HintsEmittedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "aegis_gateway_hints_emitted_total",
+		Name: "aegis_core_gateway_hints_emitted_total",
 		Help: "PrompterHint events broadcast to viewers, labelled by " +
 			"origin (retriever = engine RAG hit, officer = staff-authored).",
 	},
@@ -127,7 +127,7 @@ var HintsEmittedTotal = prometheus.NewCounterVec(
 //     not per-session network conditions
 var HostTransientLossTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "aegis_gateway_host_transient_loss_total",
+		Name: "aegis_core_gateway_host_transient_loss_total",
 		Help: "Host-side ICE Disconnected transitions that PAUSE the " +
 			"engine stream but keep the session alive (transient loss " +
 			"per ADR-0006). Terminal ICE Failed transitions are NOT " +
