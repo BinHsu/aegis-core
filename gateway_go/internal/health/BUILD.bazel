@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "health",
+    srcs = ["health.go"],
+    importpath = "github.com/BinHsu/aegis-core/gateway_go/internal/health",
+    visibility = ["//gateway_go:__subpackages__"],
+)
+
+go_test(
+    name = "health_test",
+    srcs = ["health_test.go"],
+    deps = [":health"],
+)

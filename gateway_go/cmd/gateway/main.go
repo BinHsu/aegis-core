@@ -2,9 +2,9 @@
 //
 // As of Phase 2 A4, this binary runs three concurrent servers:
 //
-//   - HTTP on :8080 — /healthz probe (HTTP/1.1, no TLS) and the
-//     /ws/viewer Local-mode WebSocket transport for viewer events
-//     (ADR-0007).
+//   - HTTP on :8080 — /healthz liveness probe + /readyz drain-aware
+//     readiness probe (HTTP/1.1, no TLS) and the /ws/viewer Local-mode
+//     WebSocket transport for viewer events (ADR-0007).
 //   - gRPC on :9090 — aegis.v1.Gateway service for Cloud-mode
 //     viewers (gRPC-Web in front of this) plus the host's
 //     CreateMeeting / EndMeeting / NegotiateWebRTC RPCs.
@@ -52,9 +52,11 @@ import (
 	"github.com/BinHsu/aegis-core/gateway_go/internal/auth"
 	corspolicy "github.com/BinHsu/aegis-core/gateway_go/internal/cors"
 	gatewaygrpc "github.com/BinHsu/aegis-core/gateway_go/internal/grpc"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/health"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/logging"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/metrics"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/pipeline"
+	"github.com/BinHsu/aegis-core/gateway_go/internal/profiling"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/session"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/token"
 	"github.com/BinHsu/aegis-core/gateway_go/internal/tracing"
@@ -135,11 +137,46 @@ func main() {
 		logger.Warn("tracing.Init failed — gateway runs without OTLP export",
 			"deploy_mode", string(deployMode), "err", err.Error())
 	} else {
+		// Spans now exist on request contexts: swap the bootstrap
+		// logger for a trace-aware one so every record carries
+		// trace_id / span_id (joinable to its trace in Tempo) plus
+		// the pod / node identifiers from the K8s Downward API
+		// (AEGIS_POD_NAME / AEGIS_NODE_NAME — empty in Local mode,
+		// in which case the fields are simply omitted).
+		logger = logging.SetTraceAwareDefault(
+			os.Getenv("AEGIS_POD_NAME"), os.Getenv("AEGIS_NODE_NAME"),
+		).With("pkg", "gateway")
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := tracerShutdown(ctx); err != nil {
 				logger.Warn("tracing.Shutdown", "err", err.Error())
+			}
+		}()
+	}
+
+	// Continuous profiling — the 4th observability signal (ADR-0035).
+	// Wired AFTER tracing.Init so profiles and traces share the same
+	// service identity, and BEFORE the listeners come up so the
+	// flame-graph captures the full process lifetime.
+	//
+	// Fail-soft, mirroring the tracing posture above: an empty
+	// AEGIS_PYROSCOPE_ENDPOINT degrades profiling to a no-op, and a
+	// non-empty-but-unreachable endpoint surfaces as a warning here —
+	// never fatal. aegis-core ships this before the landing-zone has
+	// provisioned Grafana Cloud Pyroscope ingest, so a missing backend
+	// must be a degradation, not a startup blocker.
+	profiler, err := profiling.Start(profiling.Config{
+		ApplicationName: tracing.ServiceName,
+		Endpoint:        strings.TrimSpace(os.Getenv("AEGIS_PYROSCOPE_ENDPOINT")),
+	})
+	if err != nil {
+		logger.Warn("profiling.Start failed — gateway runs without continuous profiling",
+			"err", err.Error())
+	} else {
+		defer func() {
+			if err := profiler.Stop(); err != nil {
+				logger.Warn("profiling.Stop", "err", err.Error())
 			}
 		}()
 	}
@@ -381,8 +418,18 @@ func main() {
 		logger.Info("CORS policy: strict allowlist (Cloud mode)", "env", corspolicy.EnvVar)
 	}
 
+	// Drain-aware readiness gate (ADR-0006 §Graceful Shutdown). Created
+	// NOT ready so /readyz answers 503 in the window between mux wiring
+	// and listener bind. Flipped true once all three listeners are
+	// confirmed up (see metrics.Up.Set below), and false as the first
+	// action of shutdown so the orchestrator stops routing NEW traffic
+	// while in-flight requests/streams drain. /healthz stays the
+	// unconditional liveness probe; /readyz is the readiness probe.
+	readiness := health.NewReadiness()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", makeHealthHandler(engine, engineAddr, registry))
+	mux.Handle("/readyz", readiness)
 	mux.HandleFunc("/lan-ip", corsAllowed(originPolicy, makeLANIPHandler()))
 	mux.HandleFunc("/ws/viewer", ws.Handler(ws.Config{
 		Registry: registry,
@@ -449,13 +496,15 @@ func main() {
 	// Signal handling is rooted at processCtx (declared above). Pipelines
 	// observe processCtx cancellation through their pipeCtx parent; this
 	// goroutine still waits on <-processCtx.Done() for the shutdown dance.
-	// ADR-0006's terminationGracePeriodSeconds=14400 drain hook plugs
-	// in here in a later phase once we have live sessions to drain.
+	// ADR-0006's drain path opens with the readiness.SetReady(false) flip
+	// at the top of the shutdown block below; the
+	// terminationGracePeriodSeconds=14400 budget bounds the drain via
+	// AEGIS_GATEWAY_DRAIN_TIMEOUT.
 
 	go func() {
 		logger.Info("HTTP server listening",
 			"addr", listenAddr,
-			"endpoints", "/healthz,/ws/viewer,grpc-web",
+			"endpoints", "/healthz,/readyz,/ws/viewer,grpc-web",
 			"engine_addr", engineAddr,
 			"version", version,
 		)
@@ -487,6 +536,10 @@ func main() {
 	// because the metrics server stops alongside everything else.
 	metrics.Up.Set(1.0)
 
+	// All three listeners are confirmed up — open the /readyz gate so
+	// the orchestrator starts routing traffic to this pod.
+	readiness.SetReady(true)
+
 	// Publish registry.Len() into the active_sessions gauge on a
 	// short poll. The registry has no change-notification channel,
 	// so polling is the honest minimum wiring. Frequency is bounded
@@ -509,6 +562,13 @@ func main() {
 
 	<-processCtx.Done()
 	logger.Info("shutdown signal received; draining")
+
+	// First action of shutdown: close the /readyz gate so it answers
+	// 503. This opens the drain window BEFORE the servers stop
+	// accepting — the orchestrator marks the pod NotReady and routes
+	// new traffic to other replicas while in-flight requests/streams
+	// below finish (ADR-0006 §Graceful Shutdown).
+	readiness.SetReady(false)
 
 	drainTimeout := defaultDrainTimeout
 	if env := os.Getenv("AEGIS_GATEWAY_DRAIN_TIMEOUT"); env != "" {

@@ -1605,6 +1605,56 @@ Verification: manual `gh workflow run nightly-cognito-integration.yml` after PR 
 
 ---
 
+## Incident 17 — gazelle `go_deps` cannot resolve a new dep's transitive module unless it is an explicit `require` in the root `go.mod`
+
+**Date**: 2026-05-17  **Severity**: S3  **Duration**: ~25 min (two failed Bazel attempts before the root cause was clear)
+**Related commit**: *this commit* (`feat(gateway): add Pyroscope continuous profiling`)
+
+### Symptom
+
+Adding `github.com/grafana/pyroscope-go` to `gateway_go/go.mod` + `go.sum` and running `./tools/bazelisk/bazelisk test //gateway_go/...` failed during Bazel **analysis** (not at Go compile time):
+
+```
+ERROR: no such package '@@[unknown repo 'com_github_klauspost_compress' requested from
+  @@gazelle~~go_deps~com_github_grafana_pyroscope_go_godeltaprof]//gzip': The repository
+  '@@[unknown repo 'com_github_klauspost_compress' ...]' could not be resolved: No
+  repository visible as '@com_github_klauspost_compress' from repository
+  '@@gazelle~~go_deps~com_github_grafana_pyroscope_go_godeltaprof'
+```
+
+`pyroscope-go`'s `godeltaprof` submodule depends on `github.com/klauspost/compress`. The repo's `go.sum` already carried `klauspost/compress v1.18.0` (a transitive of some other dep), so the dep "looked present" — yet Bazel could not resolve a repo for it from inside the `godeltaprof`-generated repo.
+
+### Root cause
+
+gazelle's `go_deps` extension (`go_deps.from_file(go_mod = "//gateway_go:go.mod")`) builds its Bazel-repo set from the root `go.mod`'s **`require` graph**, not from the union of every module reachable through `go.sum`. `klauspost/compress` was present in `go.sum` (checksums) but was **not** an explicit `require` line in `gateway_go/go.mod` — before this change nothing in the *direct* require graph pulled it, so go_deps never minted a `com_github_klauspost_compress` repo. When `godeltaprof`'s generated `BUILD.bazel` referenced `@com_github_klauspost_compress//gzip`, that repo simply did not exist in the module extension's output.
+
+Two red herrings cost the two failed attempts:
+
+1. **First attempt** — assumed adding the `h1:`/`go.mod` checksum lines to `go.sum` was sufficient (it is, for `go build`; it is **not** for gazelle `go_deps`, which needs the module in the require graph to create the repo).
+2. **Second attempt** — ran `./tools/bazelisk/bazelisk mod tidy`, expecting it to add `com_github_klauspost_compress` to the `use_repo(...)` list in `MODULE.bazel`. It did not: `mod tidy` only syncs `use_repo` for repos *directly depended on by the project's own BUILD files*; a dep needed only transitively (by another generated repo) is not a `use_repo` entry. The real fix was one layer below `use_repo`.
+
+### Detection
+
+The error string `unknown repo 'com_github_klauspost_compress' requested from ...godeltaprof` is the precise tell: the requesting repo (`godeltaprof`) exists, the requested repo does not. That asymmetry — child repo present, its dependency absent — is the signature of "the dependency is not in the root `go.mod` require graph." `bazel mod tidy`'s `use_repo` diff being empty for that name confirmed it was not a `use_repo` problem.
+
+### Resolution
+
+Added `github.com/klauspost/compress v1.18.6 // indirect` as an explicit `require` line in `gateway_go/go.mod` — exactly what `go mod tidy` would have written, since `godeltaprof v0.1.10` requires `compress v1.18.6` and MVS selects it. With the module in the require graph, go_deps minted the `com_github_klauspost_compress` repo and analysis passed. `go.sum` was updated with the v1.18.6 `h1:`/`go.mod` checksums (fetched from `sum.golang.org`, since the hermetic Go toolchain forbids a bare `go mod tidy`). Build green: `12/12 //gateway_go/...` tests pass.
+
+### Prevention
+
+- **When adding a Go dep whose own `go.mod` pulls a transitive that is not already a direct `require`, add that transitive as `// indirect` in the root `go.mod` in the same change.** `go mod tidy` does this automatically; in this hermetic repo it must be done by hand (or via `bazel run @rules_go//go:go -- mod tidy`, which was not used here — noted as the cleaner path for next time).
+- **`bazel mod tidy` is not a substitute for `go mod tidy`.** It syncs `use_repo` for BCR modules and directly-used go_deps repos; it does not edit `go.mod`'s require graph. The two tools cover different files — `mod tidy` (Bazel) → `MODULE.bazel` `use_repo`; `go mod tidy` (Go) → `go.mod` require graph + `go.sum`.
+- A future pre-flight check could be `bazel run @rules_go//go:go -- mod tidy` after any `go.mod` edit, with a `git diff --exit-code gateway_go/go.{mod,sum}` gate — deferred as a separate slice, logged here as the natural next step.
+
+### Lessons
+
+1. **`go.sum` presence ≠ module-graph membership for gazelle.** `go.sum` is a checksum database; gazelle `go_deps` resolves repos from the `require` graph. A module can be in `go.sum` (as a transitive-of-a-transitive) and still be invisible to go_deps if no direct `require` reaches it. The fix is always "add the `require` line," never "add more `go.sum` entries."
+2. **The error names both ends of the missing edge — read both.** `unknown repo X requested from Y` means Y exists and X does not. That immediately rules out "X's BUILD file is wrong" and points at "X was never created" — a module-graph problem, not a target-visibility problem.
+3. **Two Bazel tools with similar names solve different problems.** Reaching for `bazel mod tidy` because the symptom mentioned a missing repo was the second red herring. `use_repo` and the `go.mod` require graph are different layers; matching the tool to the layer would have saved one attempt.
+
+---
+
 ## Process notes
 
 - Incidents here cover **development-time** blockers, not a

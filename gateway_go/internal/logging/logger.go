@@ -60,6 +60,24 @@ func SetDefault() *slog.Logger {
 	return l
 }
 
+// SetTraceAwareDefault builds the env-configured handler, wraps it in a
+// TraceContextHandler so every record carries trace_id / span_id (from
+// the request's OTel span) plus the static pod / node identifiers, then
+// installs it as slog.Default() and returns it.
+//
+// pod / node come from the Kubernetes Downward API env vars
+// (AEGIS_POD_NAME / AEGIS_NODE_NAME); pass empty strings to omit them —
+// the correct posture for a Local-mode run outside Kubernetes.
+//
+// Call this only AFTER tracing.Init so spans exist on request contexts;
+// use SetDefault for the bootstrap window before tracing is wired.
+func SetTraceAwareDefault(pod, node string) *slog.Logger {
+	base := New()
+	l := slog.New(NewTraceContextHandler(base.Handler(), pod, node))
+	slog.SetDefault(l)
+	return l
+}
+
 // parseLevel maps the AEGIS_LOG_LEVEL spelling to a slog.Level. Unknown
 // values fall back to LevelInfo silently — the portfolio-grade
 // tradeoff here is "one typo still ships" over "one typo breaks
