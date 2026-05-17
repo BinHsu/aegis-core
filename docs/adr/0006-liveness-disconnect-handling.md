@@ -250,6 +250,35 @@ its owned sessions must complete on that replica; they are not
 migrated. This is consistent with the "no shared state between
 replicas" property.
 
+### Readiness Probe Flip (`/readyz`)
+
+Step 3 above — "Kubernetes load balancer marks the pod `NotReady`
+during termination" — needs a concrete signal. That signal is the
+**drain-aware `/readyz` endpoint** on the Gateway's `:8080` HTTP mux,
+distinct from the unconditional `/healthz` liveness probe.
+
+`/readyz` is backed by a single process-scoped atomic flag
+(`gateway_go/internal/health.Readiness`) with three observable states:
+
+- **503 before listeners bind** — the gate is created NOT ready, so
+  the window between mux wiring and the listeners coming up never
+  reports the pod as routable.
+- **200 while serving** — the entrypoint flips the gate ready once all
+  three listeners (HTTP `:8080`, gRPC `:9090`, metrics `:8081`) are
+  confirmed up.
+- **503 during the SIGTERM drain** — the flip back to NOT ready is the
+  **first action** of the shutdown path, executed immediately after the
+  process context is cancelled and *before* `http.Server.Shutdown` /
+  `grpcSrv.GracefulStop`. This opens the 503 window early so the
+  orchestrator removes the pod from the Service endpoints — stopping
+  NEW traffic — while in-flight requests and streams drain on the
+  bound listeners within `terminationGracePeriodSeconds`.
+
+The ordering is load-bearing: flipping readiness *after* `Shutdown`
+would let new connections land on a server that is already refusing
+them. `/healthz` is deliberately NOT flipped on drain — a draining pod
+is still *live* (must not be restarted), only not *ready*.
+
 ## Decision Outcome
 
 **We adopt the policy above:**
