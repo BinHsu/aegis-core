@@ -33,7 +33,7 @@ extractable* rather than slowly re-coupling.
 
 **Adopt a three-layer repo topology — account fabric / platform tier / workload
 (app + deploy) — with a single shared `aegis-platform` repo for the platform
-tier and a per-workload deploy repo (`aegis-core-deploy`) for aegis-core's
+tier and a per-workload deploy repo (`aegis-core_deploy`) for aegis-core's
 manifests. The workload↔platform boundary is governed by an explicit contract
 (D4) so the layers stay independently extractable.**
 
@@ -44,7 +44,7 @@ manifests. The workload↔platform boundary is governed by an explicit contract
 | Account fabric | AWS Organizations / OUs / SCPs / Identity Center / guardrails / central audit | `aegis-aws-landing-zone` (v2) |
 | Platform tier | VPC / EKS / ArgoCD / cluster add-ons / observability stack | `aegis-platform` |
 | Workload — app | Application code only | `aegis-core`, `aegis-greeter` |
-| Workload — deploy | K8s manifests; ArgoCD watches one per workload | `aegis-core-deploy`, `aegis-greeter-deploy` |
+| Workload — deploy | K8s manifests; ArgoCD watches one per workload | `aegis-core_deploy`, `aegis-greeter_deploy` |
 
 ### D2. Platform tier — a single shared, neutrally-named `aegis-platform`
 
@@ -65,14 +65,14 @@ manifests. The workload↔platform boundary is governed by an explicit contract
   (Kyverno audio-isolation per ADR-0005 R6, default-deny NetworkPolicy). It does
   not require a dedicated VPC/cluster today — see "when to revisit".
 
-### D3. aegis-core's deploy manifests → `aegis-core-deploy`
+### D3. aegis-core's deploy manifests → `aegis-core_deploy`
 
 - aegis-core's `apps/staging/` manifests move **out** of the branch-protected
-  `aegis-core` repo into a new `aegis-core-deploy` repo. This is ldz#214
+  `aegis-core` repo into a new `aegis-core_deploy` repo. This is ldz#214
   Option B (a dedicated GitOps deploy repo), endorsed by the landing-zone.
   Option A — manifests into `aegis-aws-landing-zone` — was rejected, as it
   contradicts ldz ADR-007.
-- `aegis-core-deploy` is aegis-core-owned and carries the full-repo-name prefix
+- `aegis-core_deploy` is aegis-core-owned and carries the full-repo-name prefix
   (CLAUDE.md Rule 11). Its `main` keeps CI status checks and signed commits but
   has **no human-review gate on the tag-bump path** — that is what removes the
   ADR-0032 / Incident 18 branch-protection wall and lets the image-tag
@@ -115,9 +115,9 @@ this and the tiers stay extractable; break it and they re-couple.
 
 ## Consequences
 
-- Once `aegis-core-deploy` exists, the CI image-tag automation runs fully — this
+- Once `aegis-core_deploy` exists, the CI image-tag automation runs fully — this
   supersedes ADR-0032's degraded mode.
-- One more repo for aegis-core to own (`aegis-core-deploy`), and the cross-repo
+- One more repo for aegis-core to own (`aegis-core_deploy`), and the cross-repo
   image-tag write needs a fine-grained token (`contents:write`, scoped to that
   repo, expiring) — the standing cost the in-repo model avoided, accepted in
   exchange for removing the branch-protection fight.
@@ -144,7 +144,7 @@ this and the tiers stay extractable; break it and they re-couple.
 
 - **The greeter-side overlay split and `aegis-stateless`'s post-extraction
   fate** — a `aegis-greeter` / `aegis-stateless`-side decision, not aegis-core's.
-  This ADR only commits aegis-core's half (`aegis-core-deploy`).
+  This ADR only commits aegis-core's half (`aegis-core_deploy`).
 - **aegis-core getting a dedicated VPC/cluster** — revisit trigger: a concrete
   compliance / data-residency / blast-radius driver that namespace-tenancy plus
   Kyverno hardening cannot satisfy. None exists today.
@@ -156,7 +156,7 @@ this and the tiers stay extractable; break it and they re-couple.
 1. Agree this topology and the single-`aegis-platform` convergence (ldz#214).
 2. Extract `aegis-platform` from `aegis-stateless`'s `regional-stack`; ldz
    ADR-033's platform extraction converges onto it (not a second repo).
-3. Create `aegis-core-deploy`; relocate aegis-core `apps/staging/` (task #8);
+3. Create `aegis-core_deploy`; relocate aegis-core `apps/staging/` (task #8);
    retarget `release-staging-image.yml`'s tag-bump to write cross-repo.
 4. The aegis-core ArgoCD `Application` re-points its `source` at
-   `aegis-core-deploy`.
+   `aegis-core_deploy`.
