@@ -156,7 +156,16 @@ this and the tiers stay extractable; break it and they re-couple.
 1. Agree this topology and the single-`aegis-platform` convergence (ldz#214).
 2. Extract `aegis-platform` from `aegis-stateless`'s `regional-stack`; ldz
    ADR-033's platform extraction converges onto it (not a second repo).
-3. Create `aegis-core_deploy`; relocate aegis-core `apps/staging/` (task #8);
-   retarget `release-staging-image.yml`'s tag-bump to write cross-repo.
-4. The aegis-core ArgoCD `Application` re-points its `source` at
-   `aegis-core_deploy`.
+3. **DONE (2026-05-18, aegis-core side).** `aegis-core_deploy` created and the
+   manifests relocated into it (`k8s/base/aegis-core-{gateway,engine,policies}/`);
+   aegis-core's `apps/staging/` deleted; `release-staging-image.yml`'s
+   `bump-image-tag` job retargeted to a cross-repo direct push to
+   `aegis-core_deploy` (the same-repo `createCommitOnBranch`/auto-merge-PR
+   mechanism of ADR-0032 is now superseded). The dead `apps/staging/`
+   manifest scanners (`checkov-k8s`, `kube-score`) were removed from
+   `ci-baseline.yml`. Ops follow-up: create the `AEGIS_CORE_DEPLOY_PAT`
+   repository secret (fine-grained, scoped to `aegis-core_deploy`,
+   `contents: write`) so the bump job can push — until then the job is
+   fail-soft and emits a warning.
+4. **Remaining (platform side).** The aegis-core ArgoCD `Application`
+   re-points its `source` at `aegis-core_deploy`.
