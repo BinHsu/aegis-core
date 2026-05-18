@@ -2,8 +2,8 @@
 
 | Field    | Value                                                                       |
 | -------- | --------------------------------------------------------------------------- |
-| Status   | Accepted (re-decided 2026-05-17 — automation implemented; supersedes the 2026-04-20 deferral below) |
-| Date     | 2026-04-20 (original deferral) · 2026-05-17 (re-decided — automation accepted) |
+| Status   | Superseded by ADR-0036 (2026-05-18 — same-repo `bump-image-tag` mechanism replaced by a cross-repo direct push to `aegis-core_deploy`). Re-decided 2026-05-17 (automation implemented); originally deferred 2026-04-20 |
+| Date     | 2026-04-20 (original deferral) · 2026-05-17 (re-decided — automation accepted) · 2026-05-18 (superseded by ADR-0036) |
 | Deciders | Project author                                                              |
 | Context  | Phase 4c C-1.5: "how does a newly-built staging image get its SHA into `apps/staging/**`?" The 2026-04-20 version deferred automation. The 2026-05-17 revision reverses that and ships CI automation, on the strength of a same-repo observation that removes the original cost argument. |
 | Related  | ADR-0030 (Argo Rollouts), ADR-0027 (GH Variables over hardcode), ADR-0028 (Cosign keyless — same workflow), `.github/workflows/release-staging-image.yml` (the `bump-image-tag` job), `apps/staging/README.md` §"Image tag updates", `docs/github-setup.md` §1 (the `main` ruleset this interacts with) |
@@ -14,6 +14,32 @@
 > in place rather than renamed — a re-decided ADR updates its **Status** field
 > and adds a revision section; it does not get a new filename. The suffix is
 > now historical; the Status field is authoritative.
+
+## Superseded (2026-05-18) — manifests moved out, mechanism replaced
+
+ADR-0036 moves aegis-core's K8s deploy manifests **out** of this
+branch-protected repo into the separate, unprotected `aegis-core_deploy` repo.
+That move-out invalidates the *mechanism* this ADR's 2026-05-17 Revision built
+(but not the *goal* — automated tag bumps are still the decision):
+
+- The same-repo `bump-image-tag` job that rewrote `apps/staging/**` and opened
+  an auto-merge PR is **replaced by a cross-repo direct `git push`** to
+  `aegis-core_deploy`, authenticated by a fine-grained PAT
+  (`AEGIS_CORE_DEPLOY_PAT`, `contents: write`).
+- All the personal-repo branch-protection wrestling documented below is now
+  **moot**: `aegis-core_deploy` is unprotected by design (ADR-0036 D3), so
+  there is no `required_signatures` wall (no need for `createCommitOnBranch`
+  server-side signing), no code-owner-review gate, and the "degraded mode"
+  end state — plus the `422` ruleset-bypass-actor failure that forced it — no
+  longer applies. A plain `git push origin main` is all the job needs.
+- The "no new standing credential" property below is also superseded: the
+  cross-repo write now genuinely needs the `AEGIS_CORE_DEPLOY_PAT` fine-grained
+  token. ADR-0036 §Consequences accepts that PAT as the deliberate cost of the
+  move-out, in exchange for removing the branch-protection fight entirely.
+
+The rest of this ADR is preserved verbatim as the reasoning trail for the
+in-repo era. See ADR-0036 and `.github/workflows/release-staging-image.yml`'s
+`bump-image-tag` job for the current mechanism.
 
 ## Revision (2026-05-17) — automation accepted
 

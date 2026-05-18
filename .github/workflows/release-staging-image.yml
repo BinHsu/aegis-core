@@ -25,14 +25,11 @@ on:
       - "docs/**"
       - ".gitignore"
       - ".github/PULL_REQUEST_TEMPLATE.md"
-      # Phase 4c: manifest-only changes don't alter image bits,
-      # so skip the expensive rebuild+push+sign+attest loop.
-      # CRITICAL: C-1.5's tag-update automation (the `bump-image-tag`
-      # job below, ADR-0032) produces squash-merge commits that touch
-      # `apps/**/*.yaml` ONLY. This ignore keeps those bump merges a
-      # no-op for this workflow — without it, every tag bump would
-      # retrigger a full build+push+bump cycle, an infinite loop.
-      - "apps/**"
+      # NOTE: the historical `apps/**` ignore is gone. Per ADR-0036 the
+      # K8s manifests moved out to the `aegis-core_deploy` repo, so the
+      # `bump-image-tag` job no longer commits back into THIS repo —
+      # there is no in-repo tag-bump commit left to filter out, and thus
+      # no build->push->bump self-trigger loop to break.
 
 # Least privilege: only this workflow gets id-token write. ci-baseline.yml
 # stays tokenless (`permissions: read-all` defaults).
@@ -43,21 +40,20 @@ on:
 # scope (refs/heads/main + job_workflow_ref) gates issuance, so the
 # blast-radius widening is bounded.
 #
-# contents: write + pull-requests: write — required by the
-# `bump-image-tag` job (ADR-0032, re-decided 2026-05-17). That job
-# creates a branch + a tag-bump commit + an auto-merge PR using only
-# the built-in GITHUB_TOKEN. No fine-grained PAT, no second standing
-# credential — aegis-core's manifests live IN THIS SAME REPO
-# (`apps/staging/`), so a same-repo write needs nothing more than the
-# workflow token. The tag-bump commit is created via the GitHub
-# GraphQL `createCommitOnBranch` API, which GitHub signs server-side
-# with its own key, satisfying the `main` ruleset's
-# `required_signatures` rule. See ADR-0032 for the full rationale and
-# the one-time ruleset bypass-actor change this approach needs.
+# The `bump-image-tag` job no longer needs `contents: write` /
+# `pull-requests: write`. Per ADR-0036, aegis-core's K8s manifests moved
+# out to the separate `aegis-core_deploy` repo, which has NO branch
+# protection by design. The tag bump is now a plain cross-repo direct
+# `git push` to that repo authenticated by a fine-grained PAT
+# (`AEGIS_CORE_DEPLOY_PAT`) — no PR, no `createCommitOnBranch`, no
+# `GITHUB_TOKEN` write grant. `contents: read` (the default) is all the
+# build side needs; the cross-repo write uses the PAT, not GITHUB_TOKEN.
+#
+# attestations: write — still required by `actions/attest-build-provenance`
+# (Phase 4b SLSA L3 mini-slice, ADR-0029).
 permissions:
   id-token: write
-  contents: write
-  pull-requests: write
+  contents: read
   attestations: write
 
 env:
@@ -366,175 +362,98 @@ jobs:
           push-to-registry: true
 
   # ---------------------------------------------------------------------------
-  # Phase 4c C-1.5 — image tag bump (ADR-0032, re-decided 2026-05-17)
+  # Phase 4c C-1.5 — cross-repo image tag bump (ADR-0036 manifest move-out)
   # ---------------------------------------------------------------------------
   # After the gateway + engine images are built, pushed, signed, attested
-  # and CVE-scanned, this job rewrites the literal image references in
-  # `apps/staging/**` to the just-pushed `staging-<sha>` / `engine-staging-<sha>`
-  # tags, then opens an auto-merge PR. Once that PR's required status checks
-  # pass it merges to `main` with no human click, and ArgoCD (polling
-  # `apps/staging/`) reconciles the new tags onto the cluster.
+  # and CVE-scanned, this job rewrites the image tag in the deploy manifests
+  # — which now live in the SEPARATE `aegis-core_deploy` repo (ADR-0036), not
+  # in `apps/staging/` here — and pushes the change directly to that repo's
+  # `main`.
   #
-  # Why a PR and not a direct push to `main`:
-  #   The `main` ruleset enforces `required_signatures` + a `pull_request`
-  #   rule (1 approval, code-owner review). A direct `git push` from a runner
-  #   produces an UNSIGNED commit and is rejected outright. This job instead
-  #   creates the commit through the GitHub GraphQL `createCommitOnBranch`
-  #   mutation, which GitHub signs server-side with its own key — the commit
-  #   lands `Verified`. The change still flows through a PR, so the full CI
-  #   gate still runs on the bump.
+  # Why a direct push and not a PR (the ADR-0032 mechanism this supersedes):
+  #   ADR-0032's `createCommitOnBranch` + auto-merge-PR machinery only existed
+  #   because aegis-core's `main` is branch-protected (required_signatures +
+  #   code-owner review). `aegis-core_deploy` has NO branch protection by
+  #   design (ADR-0036 D3 — "no human-review gate on the tag-bump path"), so a
+  #   plain `git push` works: no PR, no server-side-signed commit, no ruleset
+  #   bypass actor. This is the proven aegis-greeter -> aegis-stateless GitOps
+  #   pattern. ArgoCD watches `aegis-core_deploy` and reconciles the new tag.
   #
-  # One-time ops prerequisite (documented in ADR-0032 §"Branch-protection
-  # handling"): `github-actions[bot]` must be added to the `main` ruleset's
-  # `bypass_actors` with `bypass_mode: pull_request`. That lets the bot's
-  # auto-merge PR satisfy the code-owner-review requirement WITHOUT a human
-  # click, while still requiring the PR + passing CI. It does NOT grant
-  # direct-push bypass. Until that change is applied, this job's PR will
-  # open correctly but wait for a manual approval (graceful degradation —
-  # the automation is still strictly better than the old manual edit).
+  # Auth: a fine-grained PAT in the `AEGIS_CORE_DEPLOY_PAT` secret, scoped to
+  # the `aegis-core_deploy` repo with `contents: write` only. This is the one
+  # standing credential ADR-0036 accepts as the cost of the move-out.
   bump-image-tag:
-    name: Bump staging image tags in apps/staging (auto-merge PR)
+    name: Bump image tags in aegis-core_deploy (cross-repo push)
     runs-on: ubuntu-latest
     needs: push-staging-image
     timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
+    # No `contents: write` / `pull-requests: write`: this job never writes to
+    # THIS repo. The cross-repo write to `aegis-core_deploy` is authenticated
+    # by AEGIS_CORE_DEPLOY_PAT, not the workflow GITHUB_TOKEN.
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Rewrite image tags in apps/staging manifests
-        id: rewrite
+      - name: Bump aegis-core_deploy image tags
         env:
-          # ECR registry host + repo name come from GitHub Repository
-          # Variables (ADR-0027), same source the push steps use.
-          ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
-          ECR_REPOSITORY: ${{ vars.ECR_REPO_NAME }}
-        run: |
-          set -euxo pipefail
-          # Tag conventions mirror the push steps above:
+          # Fine-grained PAT scoped to `aegis-core_deploy` (contents: write).
+          DEPLOY_PAT: ${{ secrets.AEGIS_CORE_DEPLOY_PAT }}
+          # Same SHA the image-build + push steps above tag with:
           #   gateway -> staging-<sha>      engine -> engine-staging-<sha>
-          GATEWAY_REF="${ECR_REGISTRY}/${ECR_REPOSITORY}:staging-${GITHUB_SHA}"
-          ENGINE_REF="${ECR_REGISTRY}/${ECR_REPOSITORY}:engine-staging-${GITHUB_SHA}"
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Fail-soft: without the PAT this job cannot push cross-repo. Warn
+          # (naming the required secret) and exit 0 — do NOT red the release
+          # run. The images are already built, pushed, signed and attested;
+          # a missing deploy credential is an ops gap, not a build failure.
+          # Mirrors the BUILDBUDDY_API_KEY fail-soft posture in this workflow.
+          if [ -z "${DEPLOY_PAT:-}" ]; then
+            echo "::warning title=Tag bump skipped::AEGIS_CORE_DEPLOY_PAT is not set — cannot push the image-tag bump to aegis-core_deploy. Create a fine-grained PAT (scope: aegis-core_deploy, contents: write) and store it as the AEGIS_CORE_DEPLOY_PAT repository secret."
+            exit 0
+          fi
+          echo "::add-mask::${DEPLOY_PAT}"
+
+          set -x
+          # The deploy manifests use the SHORT image form
+          # `aegis-core:<tag>` — the registry host is de-hardcoded into the
+          # kustomize overlay (ADR-0036), so the bump rewrites ONLY the tag
+          # and preserves the `staging-` / `engine-staging-` prefix.
+          GATEWAY_IMG="aegis-core:staging-${RUN_SHA}"
+          ENGINE_IMG="aegis-core:engine-staging-${RUN_SHA}"
+
+          # Shallow-clone the unprotected deploy repo via the PAT.
+          git clone --depth 1 \
+            "https://x-access-token:${DEPLOY_PAT}@github.com/BinHsu/aegis-core_deploy.git" \
+            deploy
+          cd deploy
 
           # yq is preinstalled on ubuntu-latest runners. The `image:` field
           # is a plain string on the first (only) container of each workload.
           yq -i \
-            ".spec.template.spec.containers[0].image = \"${GATEWAY_REF}\"" \
-            apps/staging/aegis-core-gateway/rollout.yaml
+            ".spec.template.spec.containers[0].image = \"${GATEWAY_IMG}\"" \
+            k8s/base/aegis-core-gateway/rollout.yaml
           yq -i \
-            ".spec.template.spec.containers[0].image = \"${ENGINE_REF}\"" \
-            apps/staging/aegis-core-engine/rollout.yaml
+            ".spec.template.spec.containers[0].image = \"${ENGINE_IMG}\"" \
+            k8s/base/aegis-core-engine/rollout.yaml
           # seed-job.yaml rides the same engine image SHA as the engine
-          # Rollout (ADR-0032 manual discipline previously kept these in
-          # lockstep by hand; now the workflow keeps them in lockstep).
+          # Rollout — the bump keeps the two in lockstep.
           yq -i \
-            ".spec.template.spec.containers[0].image = \"${ENGINE_REF}\"" \
-            apps/staging/aegis-core-engine/seed-job.yaml
+            ".spec.template.spec.containers[0].image = \"${ENGINE_IMG}\"" \
+            k8s/base/aegis-core-engine/seed-job.yaml
 
-          if git diff --quiet -- apps/staging; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Image tags::Manifests already reference ${GITHUB_SHA}; nothing to bump."
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          # Nothing changed (manifests already at this SHA) -> clean exit.
+          if git diff --quiet; then
+            echo "::notice title=Image tags::aegis-core_deploy already references ${RUN_SHA}; nothing to bump."
+            exit 0
           fi
 
-      - name: Open auto-merge PR with signed tag-bump commit
-        if: steps.rewrite.outputs.changed == 'true'
-        env:
-          # Built-in workflow token — NO PAT. contents:write + pull-requests:write
-          # above are the only grants this needs.
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_SHA: ${{ github.sha }}
-        run: |
-          set -euxo pipefail
           SHORT_SHA="${RUN_SHA:0:12}"
-          BRANCH="ci/bump-staging-image-${SHORT_SHA}"
-
-          # Create the topic branch at the current `main` tip. The branch
-          # tip itself need not be signed — the ruleset's required_signatures
-          # rule gates commits landing on the protected `main`, and the
-          # tag-bump commit added below IS GitHub-signed.
-          git push origin "HEAD:refs/heads/${BRANCH}"
-          HEAD_OID="$(git rev-parse HEAD)"
-
-          # Build the createCommitOnBranch `input` (an object-typed GraphQL
-          # variable). Commits made via this mutation are signed server-side
-          # by GitHub, so the eventual squash-merge onto `main` carries a
-          # Verified signature and satisfies required_signatures.
-          #
-          # `gh api graphql --input <file>` is used (not `-f input=...`)
-          # because -f stringifies the value; the GraphQL variable must be a
-          # real JSON object to deserialize into CreateCommitOnBranchInput!.
-          ADDITIONS="$(
-            for f in \
-              apps/staging/aegis-core-gateway/rollout.yaml \
-              apps/staging/aegis-core-engine/rollout.yaml \
-              apps/staging/aegis-core-engine/seed-job.yaml ; do
-              jq -nc --arg path "$f" --arg contents "$(base64 -w0 "$f")" \
-                '{path: $path, contents: $contents}'
-            done | jq -sc '.'
-          )"
-
-          jq -nc \
-            --arg repo "${REPO}" \
-            --arg branch "${BRANCH}" \
-            --arg oid "${HEAD_OID}" \
-            --arg sha "${SHORT_SHA}" \
-            --argjson additions "${ADDITIONS}" \
-            '{
-               query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
-               variables: {
-                 input: {
-                   branch: { repositoryNameWithOwner: $repo, branchName: $branch },
-                   expectedHeadOid: $oid,
-                   message: {
-                     headline: ("ci(deploy): bump staging image tags to " + $sha),
-                     body: ("Automated staging image tag bump for release " + $sha + ".\n\nReconciled by ArgoCD from apps/staging/. See ADR-0032.")
-                   },
-                   fileChanges: { additions: $additions }
-                 }
-               }
-             }' > /tmp/bump-commit.json
-
-          gh api graphql --input /tmp/bump-commit.json
-
-          # Build the PR body in a file (printf, so the markdown stays
-          # un-indented without breaking the surrounding YAML block scalar).
-          {
-            printf '%s\n\n' 'Automated by `release-staging-image.yml` (ADR-0032, re-decided 2026-05-17).'
-            printf '%s\n\n' "Rewrites the \`apps/staging/**\` image references to the images built and pushed from commit \`${RUN_SHA}\`:"
-            printf -- '- `aegis-core-gateway/rollout.yaml` -> `staging-%s`\n' "${RUN_SHA}"
-            printf -- '- `aegis-core-engine/rollout.yaml` -> `engine-staging-%s`\n' "${RUN_SHA}"
-            printf -- '- `aegis-core-engine/seed-job.yaml` -> `engine-staging-%s`\n\n' "${RUN_SHA}"
-            printf '%s\n' 'The commit is GitHub-signed (created via `createCommitOnBranch`), so it satisfies the `main` ruleset'"'"'s `required_signatures` rule. Auto-merge is enabled; the PR merges once required status checks pass.'
-          } > /tmp/bump-pr-body.md
-
-          # Fail-soft: opening the PR requires the repo setting
-          # Settings -> Actions -> General -> "Allow GitHub Actions to
-          # create and approve pull requests". If it is OFF, `gh pr create`
-          # fails with "GitHub Actions is not permitted to create or approve
-          # pull requests". The signed tag-bump commit and its branch are
-          # ALREADY pushed above, so a failure here must NOT fail the release
-          # run — degrade to a warning and let a human open/merge the PR.
-          # See ADR-0032 "Branch-protection handling".
-          if PR_URL="$(gh pr create \
-            --base main \
-            --head "${BRANCH}" \
-            --title "ci(deploy): bump staging image tags to ${SHORT_SHA}" \
-            --body-file /tmp/bump-pr-body.md 2>/tmp/pr-create.err)"; then
-            # Enable auto-merge: the PR squash-merges once required status
-            # checks pass. On this personal repo github-actions[bot] cannot
-            # be a ruleset bypass actor (GitHub returns 422 — see ADR-0032),
-            # so the review gate still applies and the PR waits for a
-            # repo-admin merge; --auto is harmless and merges unattended if
-            # a bypass ever becomes available.
-            if ! gh pr merge "${PR_URL}" --squash --auto; then
-              echo "::warning title=Tag-bump auto-merge::could not enable auto-merge on ${PR_URL} — merge it manually"
-            fi
-            echo "::notice title=Tag-bump PR::${PR_URL}"
-          else
-            echo "::warning title=Tag-bump PR not created::gh pr create failed; the signed commit is pushed to branch '${BRANCH}' — open the PR manually. To automate, enable Settings -> Actions -> General -> 'Allow GitHub Actions to create and approve pull requests'. gh said: $(cat /tmp/pr-create.err 2>/dev/null || true)"
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ci(deploy): bump aegis-core image tags to ${SHORT_SHA}" \
+            -m "Automated by release-staging-image.yml in aegis-core (ADR-0036). Images built and pushed from aegis-core commit ${RUN_SHA}."
+          # Rebase onto any concurrent change before pushing — releases are
+          # serialized per-commit but a manual edit could have raced in.
+          git pull --rebase origin main
+          git push origin main
+          echo "::notice title=Tag bump pushed::aegis-core_deploy main now references ${RUN_SHA}"
