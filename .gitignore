@@ -232,3 +232,8 @@ coverage/
 # cloning the repo for its actual utility should NOT have to carry the
 # author's personal career material, so it stays out of version control.
 /interview-prep.md
+
+# Claude Code session-local state — not part of the repo
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+.claude/settings.local.json

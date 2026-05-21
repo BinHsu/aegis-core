@@ -26,7 +26,7 @@ on:
       - ".gitignore"
       - ".github/PULL_REQUEST_TEMPLATE.md"
       # NOTE: the historical `apps/**` ignore is gone. Per ADR-0036 the
-      # K8s manifests moved out to the `aegis-core_deploy` repo, so the
+      # K8s manifests moved out to the `aegis-core-deploy` repo, so the
       # `bump-image-tag` job no longer commits back into THIS repo —
       # there is no in-repo tag-bump commit left to filter out, and thus
       # no build->push->bump self-trigger loop to break.
@@ -42,7 +42,7 @@ on:
 #
 # The `bump-image-tag` job no longer needs `contents: write` /
 # `pull-requests: write`. Per ADR-0036, aegis-core's K8s manifests moved
-# out to the separate `aegis-core_deploy` repo, which has NO branch
+# out to the separate `aegis-core-deploy` repo, which has NO branch
 # protection by design. The tag bump is now a plain cross-repo direct
 # `git push` to that repo authenticated by a fine-grained PAT
 # (`AEGIS_CORE_DEPLOY_PAT`) — no PR, no `createCommitOnBranch`, no
@@ -426,34 +426,34 @@ jobs:
   # ---------------------------------------------------------------------------
   # After the gateway + engine images are built, pushed, signed, attested
   # and CVE-scanned, this job rewrites the image tag in the deploy manifests
-  # — which now live in the SEPARATE `aegis-core_deploy` repo (ADR-0036), not
+  # — which now live in the SEPARATE `aegis-core-deploy` repo (ADR-0036), not
   # in `apps/staging/` here — and pushes the change directly to that repo's
   # `main`.
   #
   # Why a direct push and not a PR (the ADR-0032 mechanism this supersedes):
   #   ADR-0032's `createCommitOnBranch` + auto-merge-PR machinery only existed
   #   because aegis-core's `main` is branch-protected (required_signatures +
-  #   code-owner review). `aegis-core_deploy` has NO branch protection by
+  #   code-owner review). `aegis-core-deploy` has NO branch protection by
   #   design (ADR-0036 D3 — "no human-review gate on the tag-bump path"), so a
   #   plain `git push` works: no PR, no server-side-signed commit, no ruleset
   #   bypass actor. This is the proven aegis-greeter -> aegis-stateless GitOps
-  #   pattern. ArgoCD watches `aegis-core_deploy` and reconciles the new tag.
+  #   pattern. ArgoCD watches `aegis-core-deploy` and reconciles the new tag.
   #
   # Auth: a fine-grained PAT in the `AEGIS_CORE_DEPLOY_PAT` secret, scoped to
-  # the `aegis-core_deploy` repo with `contents: write` only. This is the one
+  # the `aegis-core-deploy` repo with `contents: write` only. This is the one
   # standing credential ADR-0036 accepts as the cost of the move-out.
   bump-image-tag:
-    name: Bump image tags in aegis-core_deploy (cross-repo push)
+    name: Bump image tags in aegis-core-deploy (cross-repo push)
     runs-on: ubuntu-latest
     needs: push-staging-image
     timeout-minutes: 10
     # No `contents: write` / `pull-requests: write`: this job never writes to
-    # THIS repo. The cross-repo write to `aegis-core_deploy` is authenticated
+    # THIS repo. The cross-repo write to `aegis-core-deploy` is authenticated
     # by AEGIS_CORE_DEPLOY_PAT, not the workflow GITHUB_TOKEN.
     steps:
-      - name: Bump aegis-core_deploy image tags
+      - name: Bump aegis-core-deploy image tags
         env:
-          # Fine-grained PAT scoped to `aegis-core_deploy` (contents: write).
+          # Fine-grained PAT scoped to `aegis-core-deploy` (contents: write).
           DEPLOY_PAT: ${{ secrets.AEGIS_CORE_DEPLOY_PAT }}
           # Same SHA the image-build + push steps above tag with:
           #   gateway -> staging-<sha>      engine -> engine-staging-<sha>
@@ -467,7 +467,7 @@ jobs:
           # a missing deploy credential is an ops gap, not a build failure.
           # Mirrors the BUILDBUDDY_API_KEY fail-soft posture in this workflow.
           if [ -z "${DEPLOY_PAT:-}" ]; then
-            echo "::warning title=Tag bump skipped::AEGIS_CORE_DEPLOY_PAT is not set — cannot push the image-tag bump to aegis-core_deploy. Create a fine-grained PAT (scope: aegis-core_deploy, contents: write) and store it as the AEGIS_CORE_DEPLOY_PAT repository secret."
+            echo "::warning title=Tag bump skipped::AEGIS_CORE_DEPLOY_PAT is not set — cannot push the image-tag bump to aegis-core-deploy. Create a fine-grained PAT (scope: aegis-core-deploy, contents: write) and store it as the AEGIS_CORE_DEPLOY_PAT repository secret."
             exit 0
           fi
           echo "::add-mask::${DEPLOY_PAT}"
@@ -482,7 +482,7 @@ jobs:
 
           # Shallow-clone the unprotected deploy repo via the PAT.
           git clone --depth 1 \
-            "https://x-access-token:${DEPLOY_PAT}@github.com/BinHsu/aegis-core_deploy.git" \
+            "https://x-access-token:${DEPLOY_PAT}@github.com/BinHsu/aegis-core-deploy.git" \
             deploy
           cd deploy
 
@@ -502,7 +502,7 @@ jobs:
 
           # Nothing changed (manifests already at this SHA) -> clean exit.
           if git diff --quiet; then
-            echo "::notice title=Image tags::aegis-core_deploy already references ${RUN_SHA}; nothing to bump."
+            echo "::notice title=Image tags::aegis-core-deploy already references ${RUN_SHA}; nothing to bump."
             exit 0
           fi
 
@@ -516,4 +516,4 @@ jobs:
           # serialized per-commit but a manual edit could have raced in.
           git pull --rebase origin main
           git push origin main
-          echo "::notice title=Tag bump pushed::aegis-core_deploy main now references ${RUN_SHA}"
+          echo "::notice title=Tag bump pushed::aegis-core-deploy main now references ${RUN_SHA}"
