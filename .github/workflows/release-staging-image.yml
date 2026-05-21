@@ -361,6 +361,66 @@ jobs:
           subject-digest: ${{ steps.push-engine.outputs.digest }}
           push-to-registry: true
 
+      # ---------- Multi-region replication wait (forward-compat template) ----------
+      # Today aegis-core ships to a single ECR region (source); `vars.ECR_DESTINATION_REGIONS`
+      # is unset, so this step is a no-op (~1s — logs "nothing to wait for" and returns).
+      # When the platform side enables ECR cross-region replication and sets that variable
+      # to a JSON array like `["us-east-1","ap-northeast-1"]`, this step gates the
+      # downstream `bump-image-tag` job on the new tags being PRESENT in every destination
+      # region's ECR — so an ArgoCD sync in a downstream region cannot race ahead of
+      # replication and crash-loop pods on `ImagePullBackOff`.
+      #
+      # Fail-soft on timeout: slow replication WARNS but does not red the release run;
+      # kubelet's image-pull retry self-heals once replication catches up. A strict
+      # mode (fail-hard on timeout) is a future toggle — `vars.ECR_WAIT_STRICT`.
+      #
+      # Platform-side prereq when this activates: the OIDC role `${{ env.ECR_ROLE_ARN }}`
+      # needs `ecr:DescribeImages` on each destination region's ECR (today its policy is
+      # scoped only to the source region).
+      - name: Wait for ECR cross-region replication
+        env:
+          DEST_REGIONS_JSON: ${{ vars.ECR_DESTINATION_REGIONS }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          : "${DEST_REGIONS_JSON:=[]}"
+          DESTS=$(printf '%s' "${DEST_REGIONS_JSON}" | jq -r 'if type=="array" then .[] else empty end')
+          if [ -z "${DESTS}" ]; then
+            echo "::notice title=Replication wait::vars.ECR_DESTINATION_REGIONS is empty — single-region today, nothing to wait for."
+            exit 0
+          fi
+
+          TAGS=( "staging-${RUN_SHA}" "engine-staging-${RUN_SHA}" )
+          TIMEOUT_SEC=300
+          INTERVAL_SEC=10
+
+          echo "Waiting for tags ${TAGS[*]} to replicate to: $(printf '%s ' $DESTS)"
+          for region in $DESTS; do
+            for tag in "${TAGS[@]}"; do
+              echo "::group::poll $region / $tag"
+              deadline=$(( $(date +%s) + TIMEOUT_SEC ))
+              while :; do
+                if aws ecr describe-images \
+                     --region "$region" \
+                     --repository-name "${ECR_REPOSITORY}" \
+                     --image-ids "imageTag=${tag}" \
+                     --query 'imageDetails[0].imageDigest' \
+                     --output text 2>/dev/null | grep -q '^sha256:'; then
+                  echo "✓ $region: $tag present"
+                  break
+                fi
+                if [ "$(date +%s)" -gt "$deadline" ]; then
+                  echo "::warning title=Replication timeout::$region did not receive $tag within ${TIMEOUT_SEC}s — proceeding fail-soft (kubelet retry self-heals once replication catches up). Verify the OIDC role has ecr:DescribeImages on $region."
+                  break
+                fi
+                echo "...still waiting ($region / $tag)..."
+                sleep "$INTERVAL_SEC"
+              done
+              echo "::endgroup::"
+            done
+          done
+          echo "::notice title=Replication wait::done."
+
   # ---------------------------------------------------------------------------
   # Phase 4c C-1.5 — cross-repo image tag bump (ADR-0036 manifest move-out)
   # ---------------------------------------------------------------------------
