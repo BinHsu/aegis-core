@@ -68,7 +68,7 @@ jobs:
       # env vars; bazel test forwards them via env_inherit in
       # gateway_go/internal/auth/BUILD.bazel.
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.COGNITO_INTEGRATION_ROLE_ARN }}
