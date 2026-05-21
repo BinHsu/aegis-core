@@ -52,7 +52,7 @@ layer.**
 - Engine dial uses gRPC's built-in client-side load-balancing.
   `AEGIS_ENGINE_ADDR` can be any resolver-understandable target:
   - `localhost:50051` — single engine (Phase 2 local).
-  - `dns:///engine.aegis.svc.cluster.local:50051` — Kubernetes
+  - `dns:///aegis-core-engine.aegis-core.svc.cluster.local:50051` — Kubernetes
     Headless Service resolving to N pod IPs; gRPC round-robin
     picks one per new `StreamTranscribe` stream (Phase 4+ cloud).
   Code always registers `"loadBalancingConfig":[{"round_robin":{}}]`

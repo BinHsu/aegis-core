@@ -35,8 +35,8 @@ Service mesh's design payoff scales roughly with `O(service-count × interaction
 1. **PKI root** — cert-manager `ClusterIssuer` using a private CA rooted in AWS Private CA (Phase 4c+ ldz-provisioned) OR a cert-manager-managed self-signed intermediate for Phase 4c staging. The Phase 4c-tier decision is intentionally the lightweight self-signed intermediate; migrating to AWS Private CA is a Certificate-CR backend swap, no application change.
 
 2. **Per-workload identity** — each Deployment's pods mount a `Certificate` CR output Secret:
-    - `aegis-core-gateway.aegis.svc.cluster.local` + `aegis-core-gateway.aegis.svc` + `aegis-core-gateway.aegis`
-    - `aegis-core-engine.aegis.svc.cluster.local` + `aegis-core-engine.aegis.svc` + `aegis-core-engine.aegis`
+    - `aegis-core-gateway.aegis-core.svc.cluster.local` + `aegis-core-gateway.aegis-core.svc` + `aegis-core-gateway.aegis-core`
+    - `aegis-core-engine.aegis-core.svc.cluster.local` + `aegis-core-engine.aegis-core.svc` + `aegis-core-engine.aegis-core`
     - Kubernetes DNS names in SANs; K8s `ServiceAccount` name carried in the CN for audit correlation
 
 3. **Rotation** — cert-manager renews certs automatically at 2/3 of their lifetime (default 90d cert → renew at 60d). The underlying `Secret` updates in place. Workloads read from mounted files via:
