@@ -407,9 +407,9 @@ jobs:
   #
   # The K8s-manifest scanners (Checkov + kube-score) that used to live
   # here were removed when the deploy manifests moved out of this repo
-  # to `aegis-core_deploy` (ADR-0036) — there is no `apps/staging/` left
+  # to `aegis-core-deploy` (ADR-0036) — there is no `apps/staging/` left
   # for them to scan. Manifest scanning will be re-established in
-  # `aegis-core_deploy`'s own CI as a follow-up.
+  # `aegis-core-deploy`'s own CI as a follow-up.
   #
   # All three remaining scanners are advisory on PR-time today
   # (non-blocking `|| true` guard) to let us see the baseline signal
