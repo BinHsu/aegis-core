@@ -217,7 +217,7 @@ func main() {
 	// N:N-readiness. When `engineAddr` is a single host:port (Phase 2
 	// local demo), round_robin is a no-op — there's one endpoint to
 	// pick from. When Phase 4+ Cloud deployment points at a resolver
-	// target like `dns:///engine.aegis.svc.cluster.local:50051`
+	// target like `dns:///aegis-core-engine.aegis-core.svc.cluster.local:50051`
 	// (Kubernetes Headless Service), gRPC's DNS resolver expands to
 	// N pod IPs and round-robin picks one per new StreamTranscribe
 	// stream. Each bidi stream is then automatically session-pinned

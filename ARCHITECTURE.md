@@ -35,7 +35,7 @@ flowchart LR
     Staff -->|"WebRTC audio<br/>(single mixed track)"| LB["ALB / NGINX Ingress<br/>(session-affinity cookie)"]
     LB --> GW
 
-    subgraph EKSNamespace["EKS namespace: aegis-audio (Kyverno: no PVC, no hostPath)"]
+    subgraph EKSNamespace["EKS namespace: aegis-core (Kyverno: no PVC, no hostPath)"]
         direction TB
         GW["Go Gateway pod<br/>• Pion WebRTC termination<br/>• JWT viewer-token validation<br/>• Per-session fan-out channel<br/>• ControlEvent PAUSE/RESUME/END"]
         ENG["C++ Engine pod<br/>• whisper.cpp large-v3-turbo Q4<br/>• anonymous speaker diarization<br/>• question detection<br/>• RAG query (vector DB client)<br/>• ResourceBudget fail-fast"]
