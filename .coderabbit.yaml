@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+# CodeRabbit quality gate.
+#  - request_changes_workflow: CodeRabbit submits a Changes-Requested review when a
+#    pre-merge check (error mode) fails or review findings are unresolved. That review
+#    blocks merge via the branch ruleset's pull_request rule, counts toward the required
+#    approval, and auto-flips to Approved once the issues are resolved.
+#  - The separate `CodeRabbit` required status check is a completion gate (review ran);
+#    it stays success and does not itself block on findings.
+reviews:
+  request_changes_workflow: true
+  pre_merge_checks:
+    override_requested_reviewers_only: true
+    title:
+      mode: "error"
+    description:
+      mode: "warning"
+    docstrings:
+      mode: "off"
