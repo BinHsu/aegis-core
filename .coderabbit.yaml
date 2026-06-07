@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+# CodeRabbit quality gate. Pre-merge checks in `error` mode + request-changes
+# workflow hold the `CodeRabbit` status non-success until findings are resolved,
+# which the branch ruleset enforces as a required check before merge to main.
+reviews:
+  request_changes_workflow: true
+  pre_merge_checks:
+    override_requested_reviewers_only: true
+    title:
+      mode: "error"
+    description:
+      mode: "warning"
+    docstrings:
+      mode: "off"
