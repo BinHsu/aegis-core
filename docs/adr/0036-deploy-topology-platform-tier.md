@@ -118,9 +118,12 @@ this and the tiers stay extractable; break it and they re-couple.
 - Once `aegis-core-deploy` exists, the CI image-tag automation runs fully — this
   supersedes ADR-0032's degraded mode.
 - One more repo for aegis-core to own (`aegis-core-deploy`), and the cross-repo
-  image-tag write needs a fine-grained token (`contents:write`, scoped to that
-  repo, expiring) — the standing cost the in-repo model avoided, accepted in
-  exchange for removing the branch-protection fight.
+  image-tag write needs a fine-grained token (`contents: write` + `pull-requests: write`,
+  scoped to that repo, expiring) — the standing cost the in-repo model avoided,
+  accepted in exchange for removing the branch-protection fight. The
+  `pull-requests: write` scope is required because the bump job creates a PR
+  (`gh pr create`) and arms auto-merge (`gh pr merge --auto`) rather than
+  pushing directly to `main`.
 - The platform extraction is cross-repo, cross-session work; the sequence below
   must be followed so the landing-zone and aegis-core do not produce two
   divergent platform tiers.
@@ -165,7 +168,8 @@ this and the tiers stay extractable; break it and they re-couple.
    manifest scanners (`checkov-k8s`, `kube-score`) were removed from
    `ci-baseline.yml`. Ops follow-up: create the `AEGIS_CORE_DEPLOY_PAT`
    repository secret (fine-grained, scoped to `aegis-core-deploy`,
-   `contents: write`) so the bump job can push — until then the job is
-   fail-soft and emits a warning.
+   `contents: write` + `pull-requests: write`) so the bump job can push,
+   open the bump PR, and arm auto-merge — until then the job is fail-soft
+   and emits a warning.
 4. **Remaining (platform side).** The aegis-core ArgoCD `Application`
    re-points its `source` at `aegis-core-deploy`.

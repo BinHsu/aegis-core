@@ -25,7 +25,7 @@ That move-out invalidates the *mechanism* this ADR's 2026-05-17 Revision built
 - The same-repo `bump-image-tag` job that rewrote `apps/staging/**` and opened
   an auto-merge PR is **replaced by a cross-repo direct `git push`** to
   `aegis-core-deploy`, authenticated by a fine-grained PAT
-  (`AEGIS_CORE_DEPLOY_PAT`, `contents: write`).
+  (`AEGIS_CORE_DEPLOY_PAT`, `contents: write` + `pull-requests: write`).
 - All the personal-repo branch-protection wrestling documented below is now
   **moot**: `aegis-core-deploy` is unprotected by design (ADR-0036 D3), so
   there is no `required_signatures` wall (no need for `createCommitOnBranch`
