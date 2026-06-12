@@ -24,7 +24,8 @@ tier**.
 
 The `aegis-greeter` ↔ `aegis-stateless` pair already proves a clean two-repo
 GitOps split works in this ecosystem: the application repo's CI writes an image
-tag into a separate, unprotected infra repo, and that repo's ArgoCD reconciles.
+tag into a separate deploy repo whose bump path has no human-review gate, and
+that repo's ArgoCD reconciles.
 This ADR generalizes that proven pattern into an explicit three-layer model and
 records which repo owns which layer — so the layers stay *independently
 extractable* rather than slowly re-coupling.
@@ -73,10 +74,12 @@ manifests. The workload↔platform boundary is governed by an explicit contract
   Option A — manifests into `aegis-aws-landing-zone` — was rejected, as it
   contradicts ldz ADR-007.
 - `aegis-core-deploy` is aegis-core-owned and carries the full-repo-name prefix
-  (CLAUDE.md Rule 11). Its `main` keeps CI status checks and signed commits but
-  has **no human-review gate on the tag-bump path** — that is what removes the
-  ADR-0032 / Incident 18 branch-protection wall and lets the image-tag
-  automation run fully, not degraded.
+  (CLAUDE.md Rule 11). Its `main` is PR-gated by an active ruleset (PR required,
+  squash-only, required `CodeRabbit` status check, review-thread resolution) but
+  has **no human-review gate on the tag-bump path** — the bump job opens a PR and
+  arms auto-merge, and the required `CodeRabbit` check clears a clean bump without
+  a human approver. That automated path is what removes the ADR-0032 / Incident 18
+  branch-protection wall and lets the image-tag automation run fully, not degraded.
 - The existing `apps/staging/` is *relocated*, not rewritten (task #8). The
   relocation also resolves the residual `apps/staging/aegis-policies/` →
   `aegis-core-policies` rename omitted from the ADR-0036-unrelated Rule 11 pass
@@ -162,9 +165,10 @@ this and the tiers stay extractable; break it and they re-couple.
 3. **DONE (2026-05-18, aegis-core side).** `aegis-core-deploy` created and the
    manifests relocated into it (`k8s/base/aegis-core-{gateway,engine,policies}/`);
    aegis-core's `apps/staging/` deleted; `release-staging-image.yml`'s
-   `bump-image-tag` job retargeted to a cross-repo direct push to
-   `aegis-core-deploy` (the same-repo `createCommitOnBranch`/auto-merge-PR
-   mechanism of ADR-0032 is now superseded). The dead `apps/staging/`
+   `bump-image-tag` job retargeted to a cross-repo bump PR against the PR-gated
+   `aegis-core-deploy` `main` (`gh pr create` + `gh pr merge --auto`; the
+   same-repo `createCommitOnBranch` mechanism of ADR-0032 is now superseded). The
+   dead `apps/staging/`
    manifest scanners (`checkov-k8s`, `kube-score`) were removed from
    `ci-baseline.yml`. Ops follow-up: create the `AEGIS_CORE_DEPLOY_PAT`
    repository secret (fine-grained, scoped to `aegis-core-deploy`,

@@ -2,7 +2,7 @@
 
 | Field    | Value                                                                       |
 | -------- | --------------------------------------------------------------------------- |
-| Status   | Superseded by ADR-0036 (2026-05-18 — same-repo `bump-image-tag` mechanism replaced by a cross-repo direct push to `aegis-core-deploy`). Re-decided 2026-05-17 (automation implemented); originally deferred 2026-04-20 |
+| Status   | Superseded by ADR-0036 (2026-05-18 — same-repo `bump-image-tag` mechanism replaced by a cross-repo bump PR + auto-merge against `aegis-core-deploy`). Re-decided 2026-05-17 (automation implemented); originally deferred 2026-04-20 |
 | Date     | 2026-04-20 (original deferral) · 2026-05-17 (re-decided — automation accepted) · 2026-05-18 (superseded by ADR-0036) |
 | Deciders | Project author                                                              |
 | Context  | Phase 4c C-1.5: "how does a newly-built staging image get its SHA into `apps/staging/**`?" The 2026-04-20 version deferred automation. The 2026-05-17 revision reverses that and ships CI automation, on the strength of a same-repo observation that removes the original cost argument. |
@@ -18,20 +18,23 @@
 ## Superseded (2026-05-18) — manifests moved out, mechanism replaced
 
 ADR-0036 moves aegis-core's K8s deploy manifests **out** of this
-branch-protected repo into the separate, unprotected `aegis-core-deploy` repo.
+branch-protected repo into the separate `aegis-core-deploy` repo, whose `main`
+is PR-gated by a ruleset with **no human-review gate on the tag-bump path**.
 That move-out invalidates the *mechanism* this ADR's 2026-05-17 Revision built
 (but not the *goal* — automated tag bumps are still the decision):
 
 - The same-repo `bump-image-tag` job that rewrote `apps/staging/**` and opened
-  an auto-merge PR is **replaced by a cross-repo direct `git push`** to
-  `aegis-core-deploy`, authenticated by a fine-grained PAT
-  (`AEGIS_CORE_DEPLOY_PAT`, `contents: write` + `pull-requests: write`).
-- All the personal-repo branch-protection wrestling documented below is now
-  **moot**: `aegis-core-deploy` is unprotected by design (ADR-0036 D3), so
-  there is no `required_signatures` wall (no need for `createCommitOnBranch`
-  server-side signing), no code-owner-review gate, and the "degraded mode"
-  end state — plus the `422` ruleset-bypass-actor failure that forced it — no
-  longer applies. A plain `git push origin main` is all the job needs.
+  an auto-merge PR is **replaced by a cross-repo bump PR + auto-merge** against
+  `aegis-core-deploy` (`gh pr create` + `gh pr merge --auto`), authenticated by
+  a fine-grained PAT (`AEGIS_CORE_DEPLOY_PAT`, `contents: write` +
+  `pull-requests: write`).
+- The personal-repo branch-protection *wall* documented below is now **moot**:
+  `aegis-core-deploy`'s ruleset puts **no human-review gate** on the tag-bump
+  path (ADR-0036 D3), so there is no `required_signatures` wall (no need for
+  `createCommitOnBranch` server-side signing), no code-owner-review gate, and
+  the "degraded mode" end state — plus the `422` ruleset-bypass-actor failure
+  that forced it — no longer applies. The bump job pushes a branch, opens a PR,
+  and arms auto-merge; the required `CodeRabbit` check clears a clean bump.
 - The "no new standing credential" property below is also superseded: the
   cross-repo write now genuinely needs the `AEGIS_CORE_DEPLOY_PAT` fine-grained
   token. ADR-0036 §Consequences accepts that PAT as the deliberate cost of the
