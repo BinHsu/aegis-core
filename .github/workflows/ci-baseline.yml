@@ -129,7 +129,8 @@ jobs:
   bazel-unit-tests:
     name: Bazel unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # cold ggml builds run 17-28min; 30 was too tight (run 27428960657 hit the wall 2026-06-12)
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v6
