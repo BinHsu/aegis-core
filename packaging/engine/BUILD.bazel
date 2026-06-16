@@ -26,19 +26,25 @@
 #    sysroot for cross-compile, so the right answer is "build on the
 #    correct host", not "block analysis on the wrong host".
 #
-# 2. Trying distroless `static-debian12:nonroot` first (vs `base`).
+# 2. base = "@distroless_cc" (RESOLVED 2026-06-16, WS2-2).
 #    The C++ engine's link line is grpc++ + Abseil + BoringSSL +
 #    protobuf + whisper.cpp/ggml/llama.cpp via rules_foreign_cc CMake
-#    + libopus. Default Bazel cc_binary linkstatic produces a static
-#    binary, but BoringSSL historically uses NSS modules for DNS that
-#    require glibc-with-NSS even when statically linked elsewhere,
-#    and rules_foreign_cc CMake recipes don't always honor -static.
+#    + libopus. The original guess was that cc_binary linkstatic would
+#    yield a fully static binary runnable on `distroless_static`. It does
+#    not: rules_foreign_cc CMake recipes don't honour -static, so the
+#    binary is DYNAMICALLY linked. `distroless_static` ships no ELF loader,
+#    so the image built fine but failed to exec — `exec /usr/local/bin/
+#    engine: no such file or directory` (missing PT_INTERP) — the first
+#    time it was actually run (WS2-2 live verify on local Talos; WS2-1 only
+#    proved the build, never ran it).
 #
-#    If `:image` fails to build because of dynamic-lib references,
-#    swap base = "@distroless_base" (requires adding distroless_base
-#    to MODULE.bazel oci.pull). This BUILD's comment block is the
-#    ground-truth fork point — do NOT silently flip without updating
-#    ADR-0025 §"Slice 4 distroless variant decision".
+#    The fix is `@distroless_cc`, NOT the `@distroless_base` this comment
+#    used to suggest: a dynamically-linked C++ binary needs libstdc++ +
+#    libgcc_s, which `base-debian12` (glibc only) lacks. cc-debian12 is
+#    Google's designated base for dynamically-linked C/C++ (loader + glibc
+#    + libstdc++ + libgcc_s). Pulled in MODULE.bazel. This BUILD's comment
+#    block is the ground-truth fork point — kept in sync with ADR-0025
+#    §"Slice 4 distroless variant decision".
 #
 # 3. Models NOT shipped in image. Engine reads model path via
 #    `AEGIS_MODEL_PATH` env var (`engine_cpp/cmd/engine/main.cc:68-73`)
@@ -123,7 +129,12 @@ pkg_tar(
 
 oci_image(
     name = "image",
-    base = "@distroless_static",
+    # distroless_cc, NOT distroless_static — see comment §2 below and
+    # MODULE.bazel. The engine binary is dynamically linked (CMake deps don't
+    # honour -static); static has no ELF loader, so the image failed to exec
+    # the first time it ran (WS2-2 live verify). cc supplies loader + glibc +
+    # libstdc++/libgcc_s.
+    base = "@distroless_cc",
     entrypoint = ["/usr/local/bin/engine"],
     # Engine listens on :50051 for gRPC (engine_cpp/cmd/engine/main.cc:55).
     # Informational metadata; NetworkPolicy is the actual enforcement

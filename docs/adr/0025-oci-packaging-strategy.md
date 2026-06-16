@@ -72,7 +72,7 @@ no Dockerfile-equivalent `useradd` action is required.
 | 4a-1 (this ADR) | `rules_oci` wiring + Go gateway image; local-only, no push | `aegis-core-gateway` |
 | 4a-2 ✅ | SBOM via Syft (CycloneDX) — `anchore/sbom-action` SHA-pinned, runs after smoke step against the loaded `aegis-core-gateway:dev-local` image; output `gateway.sbom.cdx.json` uploaded as workflow artifact | (no new image) |
 | 4a-3 ✅ | GitHub Actions ECR push via OIDC role from ldz #74. Dedicated `release-staging-image.yml` workflow on `push: branches: [main]` (PR builds don't push). `oci_push` Bazel target consumes ECR auth from `aws-actions/amazon-ecr-login`'s populated docker config. Tag: `staging-<git_sha>`. Defense-in-depth re-smoke before push. | (no new image) |
-| 4a-4 ✅ | C++ engine image. Distroless `static-debian12:nonroot` tried first; if engine fails to start in Phase 4c due to missing libc, swap to `@distroless_base` per the fork-point comment in `packaging/engine/BUILD.bazel`. Models mount-at-runtime — storage delivery specced in cross-repo [ldz #82](https://github.com/BinHsu/aegis-aws-landing-zone/issues/82) (ldz picks AWS-side realization). No engine smoke this slice (engine needs model on startup; Phase 4c K8s manifest is the smoke harness). No engine SBOM this slice (deferred until distroless variant proves stable in deployment). | `aegis-core-engine` |
+| 4a-4 ✅ | C++ engine image. Distroless `static-debian12:nonroot` tried first; **RESOLVED 2026-06-16 (WS2-2): flipped to `@distroless_cc`** — the engine binary is dynamically linked and static ships no loader (see §"Slice 4 distroless variant decision"). Models mount-at-runtime — storage delivery specced in cross-repo [ldz #82](https://github.com/BinHsu/aegis-aws-landing-zone/issues/82) (ldz picks AWS-side realization). No engine smoke this slice (engine needs model on startup; Phase 4c K8s manifest is the smoke harness). No engine SBOM this slice (deferred until distroless variant proves stable in deployment). | `aegis-core-engine` |
 | 4a-5 | Frontend image — static asset packaging | `aegis-frontend` |
 | 4b   | Cosign signing + SLSA L3 + Trivy scan; SBOM becomes Cosign attestation (anchore/sbom-action supports natively) | (gates the above) |
 
@@ -186,7 +186,21 @@ ADR sign time and is now resolved (Slice 4, 2026-04-19):
 recorded in `packaging/engine/BUILD.bazel` if linker / runtime
 loader fails.**
 
-Reasoning:
+**RESOLVED 2026-06-16 (WS2-2): the try-static bet lost — engine flipped to
+`@distroless_cc`.** The first time the engine image was actually run (WS2-2
+live verify on local Talos — WS2-1 had only proved the *build*), it failed
+at `exec /usr/local/bin/engine: no such file or directory`. The 79 MB binary
+was present and arm64-correct; ENOENT-on-exec means a missing ELF interpreter
+— i.e. the binary is dynamically linked (rules_foreign_cc CMake deps don't
+honour -static, as the fork-point comment anticipated) and `static-debian12`
+ships no loader. The fix is `cc-debian12`, NOT the `base-debian12` the
+fork-point originally named: a dynamic C++ binary also needs `libstdc++` +
+`libgcc_s`, which `base` (glibc only) lacks; `cc` is Google's designated base
+for dynamically-linked C/C++. The gateway (Go, genuinely static) stays on
+`static-debian12`. Net cost of the lost bet: one extra CI build cycle, exactly
+as this decision's "cost of trying-and-failing" line predicted.
+
+Original reasoning (kept for the trail):
 - The base image was already pulled in `MODULE.bazel` for the gateway
   Slice 1 — zero new `oci.pull` cost to try it for engine.
 - Default Bazel `cc_binary` linkstatic produces a static-leaning ELF;

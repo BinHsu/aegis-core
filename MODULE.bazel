@@ -295,6 +295,33 @@ use_repo(
     "distroless_static_linux_arm64_v8",
 )
 
+# Distroless cc-debian12:nonroot — the base for the C++ ENGINE image (the Go
+# gateway stays on distroless_static). The engine's link line (grpc++ + BoringSSL
+# + protobuf + whisper.cpp/ggml/llama.cpp via rules_foreign_cc CMake + libopus)
+# produces a DYNAMICALLY-linked binary — the CMake recipes don't honour -static,
+# so the binary needs an ELF loader + glibc + libstdc++/libgcc_s at runtime.
+# distroless_static ships none of those: the engine image built on it failed at
+# `exec /usr/local/bin/engine: no such file or directory` (missing PT_INTERP)
+# the first time it was actually run (WS2-2 live verify, 2026-06-16). cc-debian12
+# is Google's designated base for dynamically-linked C/C++ — it adds the loader,
+# glibc, libstdc++, and libgcc_s that `base-debian12` (glibc only) still lacks.
+# Pinned by manifest-list digest (resolved 2026-06-16); re-pin on bump.
+oci.pull(
+    name = "distroless_cc",
+    digest = "sha256:b0ae8e989418b458e0f25489bc3be523718938a2b70864cc0f6a00af1ddbd985",
+    image = "gcr.io/distroless/cc-debian12",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+)
+use_repo(
+    oci,
+    "distroless_cc",
+    "distroless_cc_linux_amd64",
+    "distroless_cc_linux_arm64_v8",
+)
+
 # -----------------------------------------------------------------------------
 # Phase 4+ dependencies (added as each component comes online):
 #
