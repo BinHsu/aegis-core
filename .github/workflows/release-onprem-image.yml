@@ -15,12 +15,21 @@ name: Release on-prem image to GHCR
 #
 # WHY a native arm64 runner:
 #   The local Talos cluster runs on apple/container = linux/arm64. An amd64
-#   image (the ubuntu-latest default) would not run there. ubuntu-24.04-arm is
+#   image (the ubuntu-latest default) would not run there. ubuntu-22.04-arm is
 #   GitHub's free arm64 Linux runner for public repos. local_config_cc
 #   auto-detects the runner's arm64 GCC — no toolchain / sysroot setup, no
 #   BUILD changes. This is also why the engine build belongs in CI, not on the
 #   16GB dev host: the grpc + BoringSSL + whisper.cpp/ggml/llama.cpp link line
 #   needs more RAM than that host can spare for a build VM (de-risked 2026-06-16).
+#
+# WHY 22.04, not 24.04 (resolved 2026-06-16, WS2-2 live verify):
+#   The runtime base is distroless cc-debian12 (Debian 12, glibc 2.36). A binary
+#   built on ubuntu-24.04 (glibc 2.39, GCC 13 / GLIBCXX_3.4.32) references
+#   symbol versions newer than Debian 12 provides — the engine crashed at
+#   startup with `GLIBC_2.38 not found` / `GLIBCXX_3.4.32 not found`. glibc is
+#   forward-compatible, not backward: build against an OLDER glibc than the
+#   runtime base. ubuntu-22.04 ships glibc 2.35 (<= 2.36) and a libstdc++ no
+#   newer than Debian 12's, so the binary runs. Keep build glibc <= runtime base.
 #
 # Manual trigger only for now (local-first; the operator pulls on demand). A
 # push trigger can be added once the WS2 on-prem flow stabilises.
@@ -47,7 +56,7 @@ env:
 jobs:
   push-onprem-image:
     name: Build + push core images to GHCR (linux/arm64)
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-22.04-arm
     timeout-minutes: 45
     steps:
       - name: Checkout
