@@ -1,0 +1,144 @@
+name: Release on-prem image to GHCR
+
+# WS2-1 (DRAFT) — build the core images on a Linux runner and publish them
+# to GHCR so the local on-prem Talos cluster can consume them.
+#
+# WHY this exists, separate from release-staging-image.yml:
+#   - That workflow pushes to ECR via GitHub OIDC, and the landing-zone IAM
+#     trust pins its job_workflow_ref. This one touches NO AWS — it authes to
+#     GHCR with the built-in GITHUB_TOKEN (packages: write) — so it does not
+#     widen any AWS trust scope.
+#   - The local-first WS2 path has no ECR (accounts are at zero) and CI cannot
+#     reach the in-cluster registry. GHCR is the CI -> local transport: CI
+#     publishes here, the operator crane-pulls and re-pushes into the cluster's
+#     registry:2. (See the WS2 plan on aegis-platform-aws#46.)
+#
+# WHY a native arm64 runner:
+#   The local Talos cluster runs on apple/container = linux/arm64. An amd64
+#   image (the ubuntu-latest default) would not run there. ubuntu-24.04-arm is
+#   GitHub's free arm64 Linux runner for public repos. local_config_cc
+#   auto-detects the runner's arm64 GCC — no toolchain / sysroot setup, no
+#   BUILD changes. This is also why the engine build belongs in CI, not on the
+#   16GB dev host: the grpc + BoringSSL + whisper.cpp/ggml/llama.cpp link line
+#   needs more RAM than that host can spare for a build VM (de-risked 2026-06-16).
+#
+# Manual trigger only for now (local-first; the operator pulls on demand). A
+# push trigger can be added once the WS2 on-prem flow stabilises.
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_gateway:
+        description: "Also build + push the gateway image (Go; builds fast)"
+        type: boolean
+        default: true
+
+# GHCR auth uses the built-in token. No id-token / AWS here.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # GHCR repos (lowercase owner required). The image type lives in the repo
+  # name rather than a tag prefix — GHCR is one package per name.
+  GHCR_ENGINE: ghcr.io/binhsu/aegis-core-engine
+  GHCR_GATEWAY: ghcr.io/binhsu/aegis-core-gateway
+
+jobs:
+  push-onprem-image:
+    name: Build + push core images to GHCR (linux/arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Same cache shape as release-staging-image.yml. Note the cache key is
+      # NOT arch-qualified there; this workflow is the only arm64 builder, so
+      # give it its own key prefix to avoid cross-arch artifact mixing.
+      - name: Cache Bazel
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ github.workspace }}/.bazel_cache
+            ${{ github.workspace }}/.bazelisk
+            /tmp/aegis-bazel-*
+          key: bazel-onprem-arm64-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
+          restore-keys: |
+            bazel-onprem-arm64-
+
+      # Optional remote cache, mirrors ci-baseline.yml. Degrades to local
+      # execution when the secret is absent (forks).
+      - name: Configure BuildBuddy remote cache
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          if [ -z "${BUILDBUDDY_API_KEY:-}" ]; then
+            echo "BUILDBUDDY_API_KEY not set — skipping remote cache (normal in forks)"
+            exit 0
+          fi
+          echo "::add-mask::$BUILDBUDDY_API_KEY"
+          cat > .bazelrc.user <<EOF
+          build --remote_cache=grpcs://remote.buildbuddy.io
+          build --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY
+          build --bes_backend=grpcs://remote.buildbuddy.io
+          build --bes_results_url=https://app.buildbuddy.io/invocation/
+          build --remote_timeout=3600
+          EOF
+
+      # rules_oci's oci_push reads ~/.docker/config.json. Log in to GHCR so the
+      # subsequent bazel run authenticates automatically.
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build engine OCI image (linux/arm64)
+        run: ./tools/bazelisk/bazelisk build //packaging/engine:image
+
+      # Reuse the existing push_staging rule; --repository / --tag are runtime
+      # overrides (the BUILD default points at ECR and is never used here). No
+      # engine smoke step: the engine loads a ggml model from /models at start
+      # and crashes without it (engine_cpp/cmd/engine/main.cc) — the model
+      # arrives via MinIO in WS2-2. Deliverable = builds + pushes by digest.
+      - name: Push engine image to GHCR
+        id: push-engine
+        run: |
+          set -euxo pipefail
+          TAG="onprem-${GITHUB_SHA}"
+          ./tools/bazelisk/bazelisk run //packaging/engine:push_staging -- \
+            --repository "${GHCR_ENGINE}" \
+            --tag "${TAG}" 2>&1 | tee /tmp/engine-push.log
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/engine-push.log | tail -1)
+          echo "ref=${GHCR_ENGINE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Engine image pushed::${GHCR_ENGINE}:${TAG} (${DIGEST})"
+
+      - name: Build gateway OCI image (linux/arm64)
+        if: ${{ inputs.push_gateway }}
+        run: ./tools/bazelisk/bazelisk build //packaging/gateway:image
+
+      - name: Push gateway image to GHCR
+        id: push-gateway
+        if: ${{ inputs.push_gateway }}
+        run: |
+          set -euxo pipefail
+          TAG="onprem-${GITHUB_SHA}"
+          ./tools/bazelisk/bazelisk run //packaging/gateway:push_staging -- \
+            --repository "${GHCR_GATEWAY}" \
+            --tag "${TAG}" 2>&1 | tee /tmp/gateway-push.log
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/gateway-push.log | tail -1)
+          echo "ref=${GHCR_GATEWAY}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Gateway image pushed::${GHCR_GATEWAY}:${TAG} (${DIGEST})"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Core images pushed to GHCR (linux/arm64)"
+            echo "- engine:  \`${{ steps.push-engine.outputs.ref }}\`"
+            if [ "${{ inputs.push_gateway }}" = "true" ]; then
+              echo "- gateway: \`${{ steps.push-gateway.outputs.ref }}\`"
+            fi
+            echo ""
+            echo "Pull into the local cluster registry, e.g.:"
+            echo '```'
+            echo "crane copy ${{ steps.push-engine.outputs.ref }} <node-ip>:5000/aegis-core@<digest>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
