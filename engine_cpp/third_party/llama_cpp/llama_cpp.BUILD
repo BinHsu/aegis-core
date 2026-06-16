@@ -32,6 +32,9 @@ cmake(
         "GGML_CUDA": "OFF",
         "GGML_VULKAN": "OFF",
         "GGML_OPENMP": "OFF",
+        # Portable CPU baseline (see ggml.BUILD). GGML_NATIVE=ON would bake in
+        # the CI runner's ARM microarch and SIGILL on the Apple Silicon guest.
+        "GGML_NATIVE": "OFF",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
     },
     # Depend on the ggml cmake target. rules_foreign_cc propagates

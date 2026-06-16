@@ -27,6 +27,16 @@ cmake(
         "GGML_CUDA": "OFF",
         "GGML_VULKAN": "OFF",
         "GGML_OPENMP": "OFF",
+        # Portable CPU baseline, NOT -mcpu=native. ggml defaults GGML_NATIVE=ON,
+        # which bakes in the BUILD HOST's CPU features. The engine is built on a
+        # GitHub arm64 runner (Ampere/Graviton) but runs on Apple Silicon via
+        # apple/container — a different ARM microarch, so a native build SIGILLs
+        # at the first unsupported instruction during model load (exit 132;
+        # caught WS2-2 live verify 2026-06-16). OFF compiles an armv8-a baseline
+        # that runs on any arm64 (Apple Silicon is a superset). If a perf
+        # baseline ever needs per-host tuning, build per-target — don't ship one
+        # image to heterogeneous CPUs.
+        "GGML_NATIVE": "OFF",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
     },
     lib_source = ":all_srcs",

@@ -63,6 +63,9 @@ cmake(
         # Prevention section. Safe to keep aligned with whatever
         # MACOSX_DEPLOYMENT_TARGET Bazel's apple toolchain emits.
         "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
+        # Portable CPU baseline (see ggml.BUILD). GGML_NATIVE=ON would bake in
+        # the CI runner's ARM microarch and SIGILL on the Apple Silicon guest.
+        "GGML_NATIVE": "OFF",
     },
     # Backend selection (metal/cuda flags) is deferred to the consumer
     # wrapper in the root module, which has access to
