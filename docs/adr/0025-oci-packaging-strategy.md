@@ -193,12 +193,20 @@ at `exec /usr/local/bin/engine: no such file or directory`. The 79 MB binary
 was present and arm64-correct; ENOENT-on-exec means a missing ELF interpreter
 — i.e. the binary is dynamically linked (rules_foreign_cc CMake deps don't
 honour -static, as the fork-point comment anticipated) and `static-debian12`
-ships no loader. The fix is `cc-debian12`, NOT the `base-debian12` the
-fork-point originally named: a dynamic C++ binary also needs `libstdc++` +
-`libgcc_s`, which `base` (glibc only) lacks; `cc` is Google's designated base
-for dynamically-linked C/C++. The gateway (Go, genuinely static) stays on
-`static-debian12`. Net cost of the lost bet: one extra CI build cycle, exactly
-as this decision's "cost of trying-and-failing" line predicted.
+ships no loader. The fix is `cc-debian13`, NOT the `base-debian12` the
+fork-point originally named. Two corrections: (1) a dynamic C++ binary needs
+`libstdc++` + `libgcc_s`, which `base` (glibc only) lacks — `cc` is Google's
+designated base for dynamically-linked C/C++; (2) the cc variant must be new
+enough. `local_config_cc` is non-hermetic, so the binary inherits the CI
+runner's glibc (ubuntu-24.04-arm = glibc 2.39). glibc is forward-compatible
+only, so `cc-debian12` (glibc 2.36) still failed with `GLIBC_2.38 not found`;
+`cc-debian13` (glibc 2.41 / GCC 14) satisfies it. Rule: runtime base glibc >=
+build-runner glibc. (The non-hermetic cache makes this a property of the runner,
+not the source — a Bazel remote-cache hit reused the 24.04-built objects across
+runner versions, so "build on an older runner" did NOT work; moving the base
+forward did.) The gateway (Go, genuinely static) stays on `static-debian12`.
+Net cost of the lost bet: a couple of CI build cycles, as this decision's "cost
+of trying-and-failing" line predicted.
 
 Original reasoning (kept for the trail):
 - The base image was already pulled in `MODULE.bazel` for the gateway

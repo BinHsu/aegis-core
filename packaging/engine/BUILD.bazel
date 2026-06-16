@@ -40,11 +40,16 @@
 #
 #    The fix is `@distroless_cc`, NOT the `@distroless_base` this comment
 #    used to suggest: a dynamically-linked C++ binary needs libstdc++ +
-#    libgcc_s, which `base-debian12` (glibc only) lacks. cc-debian12 is
-#    Google's designated base for dynamically-linked C/C++ (loader + glibc
-#    + libstdc++ + libgcc_s). Pulled in MODULE.bazel. This BUILD's comment
-#    block is the ground-truth fork point — kept in sync with ADR-0025
-#    §"Slice 4 distroless variant decision".
+#    libgcc_s, which `base-*` (glibc only) lacks. cc-* is Google's designated
+#    base for dynamically-linked C/C++ (loader + glibc + libstdc++ + libgcc_s).
+#
+#    The cc variant must also be NEW ENOUGH: local_config_cc is non-hermetic,
+#    so the binary inherits the CI runner's glibc (ubuntu-24.04-arm = 2.39).
+#    glibc is forward-compatible only, so cc-debian12 (glibc 2.36) was too old
+#    (`GLIBC_2.38 not found`); the base is cc-debian13 (glibc 2.41). Keep the
+#    runtime base glibc >= the build-runner glibc. Pulled in MODULE.bazel.
+#    This BUILD's comment block is the ground-truth fork point — kept in sync
+#    with ADR-0025 §"Slice 4 distroless variant decision".
 #
 # 3. Models NOT shipped in image. Engine reads model path via
 #    `AEGIS_MODEL_PATH` env var (`engine_cpp/cmd/engine/main.cc:68-73`)
