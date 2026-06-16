@@ -295,6 +295,40 @@ use_repo(
     "distroless_static_linux_arm64_v8",
 )
 
+# Distroless cc-debian13:nonroot — the base for the C++ ENGINE image (the Go
+# gateway stays on distroless_static). The engine's link line (grpc++ + BoringSSL
+# + protobuf + whisper.cpp/ggml/llama.cpp via rules_foreign_cc CMake + libopus)
+# produces a DYNAMICALLY-linked binary — the CMake recipes don't honour -static,
+# so the binary needs an ELF loader + glibc + libstdc++/libgcc_s at runtime.
+# distroless_static ships none of those: the engine image built on it failed at
+# `exec /usr/local/bin/engine: no such file or directory` (missing PT_INTERP)
+# the first time it was actually run (WS2-2 live verify, 2026-06-16). cc-* is
+# Google's designated base for dynamically-linked C/C++ (loader + glibc +
+# libstdc++ + libgcc_s; base-* has glibc only).
+#
+# WHY debian13, not debian12: local_config_cc is non-hermetic, so the binary
+# inherits the CI runner's glibc (ubuntu-24.04-arm = glibc 2.39). glibc is
+# forward-compatible only — the runtime base must be >= the build glibc.
+# cc-debian12 (glibc 2.36) was too old (`GLIBC_2.38 not found` at startup);
+# cc-debian13 ships glibc 2.41 / GCC 14 libstdc++. Pinned by manifest-list
+# digest (resolved 2026-06-16); re-pin on bump. If the build runner ever moves
+# to a newer glibc than debian13, bump this base in lockstep.
+oci.pull(
+    name = "distroless_cc",
+    digest = "sha256:d3cda6e91129130d7229a1806b6a73d292ef245ab032da7851907798024cefba",
+    image = "gcr.io/distroless/cc-debian13",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+)
+use_repo(
+    oci,
+    "distroless_cc",
+    "distroless_cc_linux_amd64",
+    "distroless_cc_linux_arm64_v8",
+)
+
 # -----------------------------------------------------------------------------
 # Phase 4+ dependencies (added as each component comes online):
 #

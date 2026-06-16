@@ -1,0 +1,12 @@
+# Exposes models/manifest.json as a Bazel target so the engine OCI image can
+# bundle it (packaging/engine:manifest_files). The manifest is the integrity
+# contract the engine binary was built against (ADR-0026 CAS preflight) — it
+# ships WITH the binary, not in the model object store: the object store holds
+# the model *files*, the image holds the manifest that lists + SHA-pins them.
+# (Until 2026-06-16 the manifest was not packaged anywhere — the engine FATALed
+# at `cannot load manifest from models/manifest.json` the first time it ran;
+# WS2-2 live verify.)
+exports_files(
+    ["manifest.json"],
+    visibility = ["//visibility:public"],
+)

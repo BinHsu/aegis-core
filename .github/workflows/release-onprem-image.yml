@@ -22,6 +22,15 @@ name: Release on-prem image to GHCR
 #   16GB dev host: the grpc + BoringSSL + whisper.cpp/ggml/llama.cpp link line
 #   needs more RAM than that host can spare for a build VM (de-risked 2026-06-16).
 #
+# RUNTIME-BASE glibc must be >= the build glibc (resolved 2026-06-16, WS2-2):
+#   The engine binary is dynamically linked and local_config_cc is non-hermetic,
+#   so it inherits the runner's glibc (ubuntu-24.04-arm = glibc 2.39, GCC 13 /
+#   GLIBCXX_3.4.32). glibc is forward-compatible, not backward — the runtime
+#   base must therefore ship glibc >= 2.39. distroless cc-debian12 (glibc 2.36)
+#   was too old: the engine crashed at startup with `GLIBC_2.38 not found` /
+#   `GLIBCXX_3.4.32 not found`. The base is now cc-debian13 (Debian 13, glibc
+#   2.41 / GCC 14) — see packaging/engine/BUILD.bazel + MODULE.bazel.
+#
 # Manual trigger only for now (local-first; the operator pulls on demand). A
 # push trigger can be added once the WS2 on-prem flow stabilises.
 
