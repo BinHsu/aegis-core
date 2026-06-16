@@ -124,11 +124,28 @@ pkg_files(
     prefix = "/usr/local/share/corpora",
 )
 
+# The model manifest (ADR-0026 CAS integrity contract). It ships in the IMAGE
+# because it is versioned WITH the engine binary — the object store / S3 mount
+# holds the model files, the image holds the manifest that lists + SHA-pins
+# them. Placed OUTSIDE /models on purpose: in K8s the engine mounts a volume at
+# /models (emptyDir populated from MinIO on-prem, S3+CSI on AWS), which would
+# shadow anything the image put there. AEGIS_MANIFEST_PATH points the engine
+# here (set in the deploy manifests). Without this the engine FATALs at
+# `cannot load manifest from models/manifest.json` — caught the first time it
+# actually ran (WS2-2 live verify, 2026-06-16).
+pkg_files(
+    name = "manifest_files",
+    srcs = ["//models:manifest.json"],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "/usr/local/share/aegis/models",
+)
+
 pkg_tar(
     name = "engine_layer",
     srcs = [
         ":corpus_files",
         ":engine_files",
+        ":manifest_files",
     ],
 )
 
