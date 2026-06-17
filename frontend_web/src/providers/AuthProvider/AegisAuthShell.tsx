@@ -35,13 +35,10 @@ import {
   useMemo,
 } from "react";
 
-import { cloudUserManager } from "@/lib/auth";
+import { getCloudUserManager } from "@/lib/auth";
+import { getConfig } from "@/lib/config";
 
 import type { AuthPrincipal } from "./types";
-
-const DEPLOY_MODE = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
-  | "local"
-  | "cloud";
 
 const TENANT_CLAIM = "custom:tenant_id";
 
@@ -99,15 +96,16 @@ export function AegisAuthShell({
 }: {
   readonly children: ReactNode;
 }): ReactElement {
-  if (DEPLOY_MODE === "cloud") {
+  if (getConfig().deployMode === "cloud") {
+    const cloudUserManager = getCloudUserManager();
     if (cloudUserManager === null) {
-      // Defensive: `lib/auth.ts` constructs the UserManager when
-      // DEPLOY_MODE is "cloud", so reaching here means the env-var
-      // wiring is inconsistent (e.g. vite bundled one value, runtime
-      // got another). Fail loudly rather than render a half-mode UI.
+      // Defensive: initAuth() constructs the UserManager when
+      // deployMode is "cloud", so reaching here means the config
+      // wiring is inconsistent (cloud mode but no Cognito settings).
+      // Fail loudly rather than render a half-mode UI.
       throw new Error(
-        "AegisAuthShell: DEPLOY_MODE=cloud but cloudUserManager is null. " +
-          "Check VITE_AEGIS_DEPLOY_MODE and VITE_AEGIS_COGNITO_* env vars.",
+        "AegisAuthShell: deployMode=cloud but cloudUserManager is null. " +
+          "Check /config.json (deployMode + cognito.*) or VITE_AEGIS_COGNITO_* env.",
       );
     }
     return (

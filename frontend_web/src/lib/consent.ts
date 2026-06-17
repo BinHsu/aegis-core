@@ -10,6 +10,8 @@
 // The consent-record SHAPE is stable across the Phase 3 → Phase 4
 // migration so no caller code changes when the wire path moves.
 
+import { getConfig } from "./config";
+
 /**
  * Privacy-policy version. Bump when the copy in
  * `AudioProcessingConsent.tsx` materially changes; bumping invalidates
@@ -57,9 +59,7 @@ function clientMetadata(): {
   return {
     userAgent:
       typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
-    deployMode:
-      (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] as string | undefined) ??
-      "local",
+    deployMode: getConfig().deployMode,
   };
 }
 

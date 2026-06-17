@@ -22,23 +22,14 @@ import {
   useSentenceStitcher,
   type StitchedLine,
 } from "@/hooks/useSentenceStitcher";
+import { getConfig } from "@/lib/config";
 
 const PROMPTER_WINDOW = 5;
 
-// Deploy mode + endpoint are normally injected at build time via Vite
-// env vars. The default for ENDPOINT falls back to same-host:8080
-// (not hardcoded `localhost`) so the LAN-scan-QR-code viewer flow
-// works out of the box — a phone loading this page from
-// `http://192.168.x.y:5173/view/...` automatically points at
-// `http://192.168.x.y:8080` for the gateway.
-const DEPLOY_MODE = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
-  | "cloud"
-  | "local";
-const ENDPOINT =
-  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ??
-  (typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8080`
-    : "http://localhost:8080");
+// Deploy mode + endpoint come from runtime config (ADR-15). gatewayEndpoint
+// resolves to same-host:8080 by default (not hardcoded `localhost`) so the
+// LAN-scan-QR-code viewer flow works — a phone loading this page from
+// `http://192.168.x.y:5173/view/...` points at `http://192.168.x.y:8080`.
 
 export function ViewerPage(): JSX.Element {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -63,8 +54,8 @@ export function ViewerPage(): JSX.Element {
   const provider = useMemo(
     () =>
       pickTranscriptStreamProvider({
-        deployMode: DEPLOY_MODE,
-        endpoint: ENDPOINT,
+        deployMode: getConfig().deployMode,
+        endpoint: getConfig().gatewayEndpoint,
       }),
     [],
   );
@@ -153,8 +144,9 @@ export function ViewerPage(): JSX.Element {
     <main>
       <h2>Viewer</h2>
       <p style={{ color: "#888", fontSize: "0.85rem" }}>
-        Session <code>{sessionId}</code> — transport <code>{DEPLOY_MODE}</code>{" "}
-        via <code>{ENDPOINT}</code>
+        Session <code>{sessionId}</code> — transport{" "}
+        <code>{getConfig().deployMode}</code> via{" "}
+        <code>{getConfig().gatewayEndpoint}</code>
       </p>
 
       {state === "host-reconnecting" && (

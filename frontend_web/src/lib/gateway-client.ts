@@ -1,8 +1,8 @@
 // frontend_web/src/lib/gateway-client.ts
 //
 // Single thin wrapper around the generated Connect-ES `Gateway` service
-// client. Both the Host and Viewer pages should import the singleton
-// from here rather than constructing transports themselves — that way
+// client. Both the Host and Viewer pages reach the singleton through
+// `getGatewayClient()` rather than constructing transports themselves —
 // the `baseUrl`, the auth-header injector, and any future cross-cutting
 // concerns (request-id generation, retry policy, telemetry hooks) live
 // in one auditable spot.
@@ -11,93 +11,79 @@
 // `@connectrpc/connect-web` speaks the grpc-web wire protocol, which
 // matches the `improbable-eng/grpc-web` wrapper mounted on the Go
 // Gateway's HTTP :8080 listener (see `gateway_go/cmd/gateway/main.go`
-// — the IsGrpcWebRequest sniff branch). Same proto definitions across
-// the wire; just a client-side library choice.
+// — the IsGrpcWebRequest sniff branch).
 //
-// Auth posture: the transport accepts an optional `getAuthToken` thunk
-// that is called per-request. A nullable return means "send no
-// Authorization header" — the Local-mode default. The Cloud-mode
-// `CognitoAuthProvider` returns the current bearer token. The
-// asymmetric closure shape avoids forcing every call site to know
-// which deploy mode is active.
+// Lifecycle (ADR-15): the transport's baseUrl comes from runtime config,
+// so the client is BUILT in initGatewayClient(cfg) — called once from
+// main.tsx after loadConfig() — not at module-load time. Pre-refactor
+// this was a module-const resolved from import.meta.env; that baked the
+// endpoint into the bundle.
+//
+// Auth posture: the transport calls an optional `getAuthToken` thunk
+// per request. A nullable return means "send no Authorization header" —
+// the Local-mode default. The Cloud-mode auth layer registers a getter
+// via setAuthTokenGetter that returns the current bearer token.
 
 import { createPromiseClient, type PromiseClient } from "@connectrpc/connect";
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
 
 import { Gateway } from "@/gen/proto/aegis/v1/aegis_connect.js";
 
-/**
- * Resolved at module-load time so the rest of the app holds a stable
- * reference. Production builds set `VITE_AEGIS_GATEWAY_ENDPOINT` via
- * env at `vite build` time.
- *
- * Dev-default falls back to the SAME HOST the frontend was served from
- * (not hard-coded `localhost`), port 8080. This matters for the
- * LAN-viewer demo flow: when the host-laptop user opens
- * `http://192.168.x.y:5173/host` and the QR code lands a phone on
- * `http://192.168.x.y:5173/view/...`, the phone's bundle computes
- * `http://192.168.x.y:8080` for the gateway — reachable because the
- * gateway binds on 0.0.0.0 (ADR-0007 LAN bind). Hard-coding
- * `localhost` would break the phone case silently (CORS-block or
- * ERR_CONNECTION_REFUSED).
- */
-function defaultGatewayBaseURL(): string {
-  if (typeof window === "undefined") {
-    return "http://localhost:8080";
-  }
-  return `${window.location.protocol}//${window.location.hostname}:8080`;
-}
-
-const GATEWAY_BASE_URL: string =
-  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ?? defaultGatewayBaseURL();
+import type { AppConfig } from "./config";
 
 /**
- * Per-request auth-header thunk. Mutable so the AuthProvider layer can
- * register a getter once at startup; the transport re-invokes it on
- * every RPC so a token refresh during a long-lived session is picked
- * up without re-creating the client.
+ * Per-request auth-header thunk. Mutable so the auth layer can register
+ * a getter once at startup; the transport re-invokes it on every RPC so
+ * a token refresh during a long-lived session is picked up without
+ * re-creating the client.
  */
 let authTokenGetter: (() => string | null) | null = null;
 
 /**
- * Register the function the transport will call to fetch the current
- * Authorization bearer token. Pass `null` (or omit) to revert to the
- * Local-mode "send no header" behavior.
- *
- * Idempotent: subsequent calls overwrite the prior getter. Typical
- * call site: the AuthProvider's "signed in" callback.
+ * Register the function the transport calls to fetch the current
+ * Authorization bearer token. Pass `null` to revert to the Local-mode
+ * "send no header" behavior. Idempotent.
  */
 export function setAuthTokenGetter(getter: (() => string | null) | null): void {
   authTokenGetter = getter;
 }
 
-/**
- * The Connect transport. Built once per page load. The
- * `interceptors` array is the Connect-idiomatic way to inject
- * cross-cutting per-request behavior — here we use it to layer the
- * Authorization header onto the request metadata before dispatch.
- */
-const transport = createGrpcWebTransport({
-  baseUrl: GATEWAY_BASE_URL,
-  interceptors: [
-    (next) => async (req) => {
-      const token = authTokenGetter?.() ?? null;
-      if (token !== null && token !== "") {
-        req.header.set("Authorization", `Bearer ${token}`);
-      }
-      return next(req);
-    },
-  ],
-});
+let client: PromiseClient<typeof Gateway> | null = null;
 
 /**
- * The singleton Gateway client. Re-exporting the
- * `PromiseClient<typeof Gateway>` shape so call sites can type their
- * own helper functions without re-importing the service descriptor.
+ * Build the singleton Gateway client from runtime config. Call once in
+ * main.tsx after loadConfig(). The interceptor reads `authTokenGetter`
+ * dynamically, so initAuth() may register its getter before OR after
+ * this runs.
  */
-export const gatewayClient: PromiseClient<typeof Gateway> = createPromiseClient(
-  Gateway,
-  transport,
-);
+export function initGatewayClient(cfg: AppConfig): void {
+  const transport = createGrpcWebTransport({
+    baseUrl: cfg.gatewayEndpoint,
+    interceptors: [
+      (next) => async (req) => {
+        const token = authTokenGetter?.() ?? null;
+        if (token !== null && token !== "") {
+          req.header.set("Authorization", `Bearer ${token}`);
+        }
+        return next(req);
+      },
+    ],
+  });
+  client = createPromiseClient(Gateway, transport);
+}
+
+/**
+ * The singleton Gateway client. Throws if accessed before
+ * initGatewayClient() — a loud failure beats a silent unconfigured RPC.
+ */
+export function getGatewayClient(): PromiseClient<typeof Gateway> {
+  if (client === null) {
+    throw new Error(
+      "gateway-client: getGatewayClient() before initGatewayClient(). " +
+        "Call initGatewayClient(cfg) in main.tsx after loadConfig().",
+    );
+  }
+  return client;
+}
 
 export { Gateway };

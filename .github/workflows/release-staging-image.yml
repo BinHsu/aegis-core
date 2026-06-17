@@ -69,6 +69,11 @@ jobs:
     name: Push staging gateway image to ECR
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Expose the captured push digests so the bump-image-tag job can pin the
+    # deploy overlay BY DIGEST (ADR-14/17), not by mutable tag.
+    outputs:
+      gateway_digest: ${{ steps.push-gateway.outputs.digest }}
+      engine_digest: ${{ steps.push-engine.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -462,9 +467,12 @@ jobs:
           # NOTE: if gh pr create returns 403, rotate this PAT to add
           # pull-requests: write — the current PAT is contents-only.
           DEPLOY_PAT: ${{ secrets.AEGIS_CORE_DEPLOY_PAT }}
-          # Same SHA the image-build + push steps above tag with:
-          #   gateway -> staging-<sha>      engine -> engine-staging-<sha>
+          # Commit SHA — used for the branch name + commit/PR metadata only.
           RUN_SHA: ${{ github.sha }}
+          # Image DIGESTS captured by the push job. The overlay pins by digest,
+          # not mutable tag (ADR-14/17 "build once, promote by digest").
+          GATEWAY_DIGEST: ${{ needs.push-staging-image.outputs.gateway_digest }}
+          ENGINE_DIGEST: ${{ needs.push-staging-image.outputs.engine_digest }}
         run: |
           set -euo pipefail
 
@@ -480,13 +488,19 @@ jobs:
           echo "::add-mask::${DEPLOY_PAT}"
 
           set -x
-          # The deploy manifests use the SHORT image form
-          # `aegis-core:<tag>` — the registry host is de-hardcoded into the
-          # kustomize overlay (ADR-0036), so the bump rewrites ONLY the tag
-          # and preserves the `staging-` / `engine-staging-` prefix.
           SHORT_SHA="${RUN_SHA:0:12}"
-          GATEWAY_IMG="aegis-core:staging-${RUN_SHA}"
-          ENGINE_IMG="aegis-core:engine-staging-${RUN_SHA}"
+
+          # Pin the staging overlay BY DIGEST (ADR-10/14/17). The deploy repo's
+          # base image fields stay neutral (`aegis-core`); the per-env digest
+          # lives in the overlay's JSON6902 patch FILES. The seed Job carries the
+          # SAME digest as the engine Rollout (ADR-14). The overlay replacement
+          # splices the platform-injected ECR registry in front of the digest.
+          if [ -z "${GATEWAY_DIGEST:-}" ] || [ -z "${ENGINE_DIGEST:-}" ]; then
+            echo "::warning title=Tag bump skipped::push-staging-image did not surface both digests (gateway='${GATEWAY_DIGEST:-}', engine='${ENGINE_DIGEST:-}'). Nothing to pin."
+            exit 0
+          fi
+          GATEWAY_REF="aegis-core@${GATEWAY_DIGEST}"
+          ENGINE_REF="aegis-core@${ENGINE_DIGEST}"
 
           # Shallow-clone the deploy repo via the PAT.
           git clone --depth 1 \
@@ -494,20 +508,13 @@ jobs:
             deploy
           cd deploy
 
-          # yq is preinstalled on ubuntu-latest runners. The `image:` field
-          # is a plain string on the first (only) container of each workload.
-          # All three edits happen before any git op — single atomic commit.
-          yq -i \
-            ".spec.template.spec.containers[0].image = \"${GATEWAY_IMG}\"" \
-            k8s/base/aegis-core-gateway/rollout.yaml
-          yq -i \
-            ".spec.template.spec.containers[0].image = \"${ENGINE_IMG}\"" \
-            k8s/base/aegis-core-engine/rollout.yaml
-          # seed-job.yaml rides the same engine image SHA as the engine
-          # Rollout — the bump keeps the two in lockstep.
-          yq -i \
-            ".spec.template.spec.containers[0].image = \"${ENGINE_IMG}\"" \
-            k8s/base/aegis-core-engine/seed-job.yaml
+          # yq is preinstalled on ubuntu-latest runners. Each digest pin is a
+          # JSON6902 patch file (a one-element list); set [0].value. All edits
+          # happen before any git op — single atomic commit (ADR-14 both-or-neither).
+          yq -i ".[0].value = \"${GATEWAY_REF}\"" k8s/overlays/staging/digest-gateway.yaml
+          yq -i ".[0].value = \"${ENGINE_REF}\""  k8s/overlays/staging/digest-engine.yaml
+          # seed == engine digest (ADR-14, validate.yml Guard C).
+          yq -i ".[0].value = \"${ENGINE_REF}\""  k8s/overlays/staging/digest-seed.yaml
 
           # Idempotency: manifests already at this SHA → nothing to do.
           if git diff --quiet; then
@@ -521,9 +528,12 @@ jobs:
           BRANCH="release/tag-${SHORT_SHA}"
           git checkout -b "${BRANCH}"
           git add -A
-          git commit -m "ci(deploy): bump aegis-core image tags to ${SHORT_SHA}" \
-            -m "Automated by release-staging-image.yml in aegis-core (ADR-0036)." \
-            -m "Images built and pushed from aegis-core commit ${RUN_SHA}."
+          git commit -m "ci(deploy): pin aegis-core staging digests (${SHORT_SHA})" \
+            -m "Automated by release-staging-image.yml in aegis-core (ADR-10/14/17)." \
+            -m "Pins the staging overlay by digest (gateway + engine + seed, atomic):" \
+            -m "  gateway: ${GATEWAY_REF}" \
+            -m "  engine:  ${ENGINE_REF}" \
+            -m "Built and pushed from aegis-core commit ${RUN_SHA}."
           # --force: re-run for the same source commit recreates the same
           # branch; the fresh bump replaces the previous attempt.
           git push --force origin "${BRANCH}"
@@ -538,9 +548,9 @@ jobs:
           if [ -z "${EXISTING_PR}" ]; then
             gh pr create --repo BinHsu/aegis-core-deploy \
               --base main --head "${BRANCH}" \
-              --title "ci(deploy): bump aegis-core image tags to ${SHORT_SHA}" \
-              --body "$(printf 'Bumps both image references in the staging manifests to the build produced from aegis-core commit \`%s\`.\n\n**Images**\n- Gateway: `aegis-core:staging-%s`\n- Engine:  `aegis-core:engine-staging-%s`\n\nFull SHA: `%s`\n\nAutomated by `release-staging-image.yml` in aegis-core (ADR-0036). Auto-merge is armed: the PR squash-merges once the required CodeRabbit check/review passes.' \
-                "${SHORT_SHA}" "${RUN_SHA}" "${RUN_SHA}" "${RUN_SHA}")"
+              --title "ci(deploy): pin aegis-core staging digests (${SHORT_SHA})" \
+              --body "$(printf 'Pins the staging overlay BY DIGEST to the build produced from aegis-core commit \`%s\` (ADR-10/14/17 — build once, promote by digest; gateway + engine move atomically).\n\n**Digests**\n- Gateway: `aegis-core@%s`\n- Engine:  `aegis-core@%s`\n- Seed:    `aegis-core@%s` (== engine, ADR-14)\n\nFull SHA: `%s`\n\nAutomated by `release-staging-image.yml` in aegis-core. Auto-merge is armed: the PR squash-merges once the required CodeRabbit check/review passes.' \
+                "${RUN_SHA}" "${GATEWAY_DIGEST}" "${ENGINE_DIGEST}" "${ENGINE_DIGEST}" "${RUN_SHA}")"
           fi
           gh pr merge --auto --squash \
             --repo BinHsu/aegis-core-deploy "${BRANCH}"

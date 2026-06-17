@@ -128,6 +128,28 @@ jobs:
         # values at build time — see ADR-0027 §"Build-time env injection".
         run: ./tools/scripts/frontend.sh build
 
+      - name: Write runtime config.json (ADR-15)
+        # The SPA reads /config.json at boot and lets it override anything
+        # baked into the bundle (the committed public/config.json ships
+        # LOCAL mode for a fresh clone). This step is the runtime source of
+        # truth for the staging deploy; values mirror the VITE_* env above,
+        # which now serves only as a build-time fallback.
+        run: |
+          set -euxo pipefail
+          cat > frontend_web/dist/config.json <<EOF
+          {
+            "deployMode": "cloud",
+            "gatewayEndpoint": "${VITE_AEGIS_GATEWAY_ENDPOINT}",
+            "cognito": {
+              "authority": "${VITE_AEGIS_COGNITO_AUTHORITY}",
+              "clientId": "${VITE_AEGIS_COGNITO_CLIENT_ID}",
+              "redirectUri": "${VITE_AEGIS_COGNITO_REDIRECT_URI}",
+              "logoutUri": "${VITE_AEGIS_COGNITO_LOGOUT_URI}"
+            }
+          }
+          EOF
+          cat frontend_web/dist/config.json
+
       # OIDC token → STS AssumeRoleWithWebIdentity → temporary creds
       # exposed as env vars for subsequent aws CLI calls.
       - name: Configure AWS credentials (OIDC)
@@ -148,13 +170,18 @@ jobs:
           aws s3 sync frontend_web/dist/ "s3://${FRONTEND_BUCKET}/" \
             --delete \
             --cache-control "public, max-age=31536000, immutable" \
-            --exclude "index.html"
-          # index.html gets a short cache so users see new builds promptly
-          # without waiting for the year-long immutable TTL on the assets
-          # it references.
+            --exclude "index.html" \
+            --exclude "config.json"
+          # index.html + config.json get a short cache so users see new
+          # builds and config changes promptly without waiting for the
+          # year-long immutable TTL on the content-hashed assets.
           aws s3 cp frontend_web/dist/index.html "s3://${FRONTEND_BUCKET}/index.html" \
             --cache-control "public, max-age=60, must-revalidate" \
             --content-type "text/html; charset=utf-8"
+          # config.json is the ADR-15 runtime config — never immutable-cached.
+          aws s3 cp frontend_web/dist/config.json "s3://${FRONTEND_BUCKET}/config.json" \
+            --cache-control "public, max-age=60, must-revalidate" \
+            --content-type "application/json; charset=utf-8"
 
       - name: Invalidate CloudFront edge cache
         run: |
