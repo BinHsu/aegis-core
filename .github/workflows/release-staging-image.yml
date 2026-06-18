@@ -61,7 +61,16 @@ env:
   # (per ADR-0027 §"GH Variables over hardcode/Secrets"). Forker
   # overrides at Settings → Variables; no YAML edit needed.
   AWS_REGION: ${{ vars.AWS_REGION }}
-  ECR_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.ECR_PUSH_ROLE_NAME }}
+  # aegis-core images live in the SHARED deployment-account ECR (ADR-10 ph2), not
+  # a per-account repo. ECR_PUSH_ROLE_ARN is the deployment-account role
+  # (aegis-core-ci-push) this workflow assumes cross-account to push; staging and
+  # prod then pull from that single registry. Previously this assembled a
+  # per-account ARN from AWS_ACCOUNT_ID, so the push landed in the staging
+  # account while the workloads pulled from the deployment account — empty repo,
+  # gateway ImagePullBackOff (2026-06-18). The per-account repo + push role have
+  # been removed (aegis-platform envs/platform/ecr.tf + envs/bootstrap), so a
+  # regression now fails loud at push time.
+  ECR_ROLE_ARN: ${{ vars.ECR_PUSH_ROLE_ARN }}
   ECR_REPOSITORY: ${{ vars.ECR_REPO_NAME }}
 
 jobs:
