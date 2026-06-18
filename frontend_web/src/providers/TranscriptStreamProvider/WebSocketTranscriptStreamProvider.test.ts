@@ -116,7 +116,11 @@ function encodeViewerEvent(build: (ve: ProtoViewerEvent) => void): ArrayBuffer {
   // underlying buffer is exactly the right size (toBinary() returns
   // a Uint8Array that can share a larger backing buffer via pool
   // allocators).
-  return bytes.buffer.slice(
+  // TS 5.7's lib types Uint8Array.buffer as ArrayBuffer | SharedArrayBuffer;
+  // a WebSocket "arraybuffer" frame is always a plain ArrayBuffer. Assert it
+  // so .slice() returns ArrayBuffer (pre-existing, unrelated to the config
+  // refactor — surfaced by a fresh dependency install with no lockfile).
+  return (bytes.buffer as ArrayBuffer).slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,
   );

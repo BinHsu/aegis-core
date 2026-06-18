@@ -52,7 +52,8 @@ import {
   TranscriptExportConsentModal,
   type TranscriptExportFormat,
 } from "@/components/TranscriptExportConsentModal";
-import { gatewayClient } from "@/lib/gateway-client";
+import { getConfig } from "@/lib/config";
+import { getGatewayClient } from "@/lib/gateway-client";
 import {
   formatTranscriptJson,
   formatTranscriptMarkdown,
@@ -148,12 +149,6 @@ const CURATED_SPEAKER_LABELS: readonly string[] = [
   "Speaker_3",
   "Unknown",
 ] as const;
-
-const DEPLOY_MODE = (import.meta.env["VITE_AEGIS_DEPLOY_MODE"] ?? "local") as
-  | "cloud"
-  | "local";
-const ENDPOINT =
-  import.meta.env["VITE_AEGIS_GATEWAY_ENDPOINT"] ?? "http://localhost:8080";
 
 /**
  * The runtime data attached to an in-flight meeting. Mutable handles
@@ -481,7 +476,7 @@ export function HostPage(): JSX.Element {
     let cancelled = false;
     (async (): Promise<void> => {
       try {
-        const resp = await gatewayClient.listCorpora({ tenantId: "" });
+        const resp = await getGatewayClient().listCorpora({ tenantId: "" });
         if (cancelled) return;
         // Always prepend the opt-out entry so "No corpus" is present
         // even when the engine returns zero seeded corpora.
@@ -520,7 +515,7 @@ export function HostPage(): JSX.Element {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`${ENDPOINT}/lan-ip`);
+        const res = await fetch(`${getConfig().gatewayEndpoint}/lan-ip`);
         if (!res.ok) throw new Error(`/lan-ip returned ${res.status}`);
         const json = (await res.json()) as { best?: string };
         if (!cancelled) {
@@ -559,7 +554,7 @@ export function HostPage(): JSX.Element {
         }
 
         // 2. CreateMeeting RPC.
-        const createResp = await gatewayClient.createMeeting({
+        const createResp = await getGatewayClient().createMeeting({
           ragId,
           title,
           languageHints: [],
@@ -584,7 +579,7 @@ export function HostPage(): JSX.Element {
           throw new Error("peer.localDescription unexpectedly null");
         }
 
-        const negResp = await gatewayClient.negotiateWebRTC({
+        const negResp = await getGatewayClient().negotiateWebRTC({
           sessionId: createResp.sessionId,
           offerSdp: peer.localDescription.sdp,
         });
@@ -597,8 +592,8 @@ export function HostPage(): JSX.Element {
         //    viewer. The host watching their own session catches
         //    "engine isn't transcribing" instantly.
         const streamProvider = pickTranscriptStreamProvider({
-          deployMode: DEPLOY_MODE,
-          endpoint: ENDPOINT,
+          deployMode: getConfig().deployMode,
+          endpoint: getConfig().gatewayEndpoint,
         });
         subscription = streamProvider.subscribe(
           {
@@ -740,7 +735,7 @@ export function HostPage(): JSX.Element {
       console.warn("[host] capture.stop:", err);
     }
     try {
-      await gatewayClient.endMeeting({ sessionId: active.sessionId });
+      await getGatewayClient().endMeeting({ sessionId: active.sessionId });
     } catch (err) {
       console.warn("[host] EndMeeting RPC:", err);
     }
@@ -770,7 +765,8 @@ export function HostPage(): JSX.Element {
             void signIn();
           }}
         >
-          Sign in {DEPLOY_MODE === "cloud" ? "with Cognito" : "(local)"}
+          Sign in{" "}
+          {getConfig().deployMode === "cloud" ? "with Cognito" : "(local)"}
         </button>
       </main>
     );
@@ -1361,7 +1357,7 @@ function HintPanel({
 }
 
 /**
- * Staff-authored hint input. Calls `gatewayClient.sendOfficerHint`;
+ * Staff-authored hint input. Calls `getGatewayClient().sendOfficerHint`;
  * the gateway broadcasts via `Session.Broadcast` and the fan-out
  * echoes back onto the host's own subscription, which lands in the
  * HintPanel below — that's how the staff confirms the hint went out.
@@ -1393,7 +1389,7 @@ function StaffHintInputPanel({
       setSending(true);
       setSendError(null);
       try {
-        await gatewayClient.sendOfficerHint({
+        await getGatewayClient().sendOfficerHint({
           sessionId,
           viewerToken,
           suggestion: trimmed,

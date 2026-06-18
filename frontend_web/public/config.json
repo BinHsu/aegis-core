@@ -1,0 +1,6 @@
+{
+  "_comment": "Runtime config (ADR-15). Built once, served next to the bundle, swapped at deploy. This committed default is LOCAL mode for a fresh clone. Delete this file to fall back to VITE_AEGIS_* env (.env.local). The deploy pipeline overwrites it with the per-environment values (deployMode=cloud + cognito.* + gatewayEndpoint).",
+  "deployMode": "local",
+  "gatewayEndpoint": null,
+  "cognito": null
+}
