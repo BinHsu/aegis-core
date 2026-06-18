@@ -78,7 +78,12 @@ export function initAuth(cfg: AppConfig): void {
 
   setAuthTokenGetter(() => {
     if (!cachedUser || cachedUser.expired) return null;
-    return cachedUser.access_token ?? null;
+    // Send the ID token, not the access token. The gateway's OIDCProvider
+    // validates `aud == app client id` and reads `custom:tenant_id` — both of
+    // which Cognito puts only on the ID token. A Cognito access token carries
+    // the user-pool id as `aud` and no custom attributes, so the gateway would
+    // 401 every request (see ADR-0034 §D2 and oidc_integration_test.go).
+    return cachedUser.id_token ?? null;
   });
 }
 
