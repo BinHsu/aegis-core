@@ -69,33 +69,28 @@ env:
   VITE_AEGIS_GATEWAY_ENDPOINT: https://${{ vars.GATEWAY_DOMAIN }}
   VITE_AEGIS_DEPLOY_MODE: cloud
 
-  # Cognito User Pool — provisioned in ldz `staging/auth/` per
-  # ldz ADR-026 + aegis-core #76 (resolved 2026-04-24 with PR ldz#140).
-  # Hard-coded rather than `vars.*` because:
+  # Cognito User Pool — the WS3 platform tier (aegis-platform-aws
+  # envs/platform/cognito.tf) provisions its OWN user pool + app client
+  # with NO prevent_destroy: the pool id and client id are REASSIGNED on
+  # every apply/teardown cycle. So these are GH Repository Variables, set
+  # post-apply from the platform Cognito outputs — the same pattern as
+  # FRONTEND_CLOUDFRONT_DISTRIBUTION_ID above — which keeps the SPA in
+  # lockstep with the gateway (the gateway reads the same new-pool issuer
+  # via the ArgoCD ConfigMap patch). Previously hardcoded to the retired
+  # ldz pool, which a fresh platform apply no longer owns — the stale
+  # redirect host + pool id broke PKCE login and JWT validation (caught by
+  # the WS3 pre-apply audit). None are secrets: pool id, client id and
+  # hostnames are public SPA surface.
   #
-  #   1. All four values carry `lifecycle.prevent_destroy = true` on
-  #      the ldz side — they outlive workload teardowns. Stable IDs.
-  #   2. None are secrets — Pool ID, Client ID, hostnames are all
-  #      public surface in any browser network panel. SSM PS holds
-  #      the same values for non-secret programmatic read.
-  #   3. Adding 4 GH Variables for stable values would force every
-  #      fork operator into a UI dance for no payoff.
-  #
-  # If we ever pivot the staging User Pool ID (Runbook 008 §
-  # Permanent teardown), the swap is in this file + a re-deploy.
-  # Cross-reference: the same constants live in SSM PS at
-  # `/aegis/staging/cognito/{user-pool-id,app-client-id,issuer-url,
-  # hosted-ui-domain}` for any code path that prefers programmatic
-  # read over baked-in literals.
-  VITE_AEGIS_COGNITO_AUTHORITY: https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_0gdyxKxOB
-  # gitleaks heuristically flags the Client ID's entropy as an
-  # api-key. It isn't — Cognito app client IDs are PUBLIC by design
-  # (the SPA bundle ships them in plain JS, every browser network
-  # panel sees them). Inline allowlist is the right scope; adding a
-  # repo-wide rule would be over-broad.
-  VITE_AEGIS_COGNITO_CLIENT_ID: 1e7i376p7bitfup27gsqklg2hu # gitleaks:allow
-  VITE_AEGIS_COGNITO_REDIRECT_URI: https://aegis-app.staging.binhsu.org/auth/callback
-  VITE_AEGIS_COGNITO_LOGOUT_URI: https://aegis-app.staging.binhsu.org/
+  #   COGNITO_AUTHORITY    = terraform -chdir=envs/platform output cognito_issuer
+  #                          (https://cognito-idp.<region>.amazonaws.com/<pool-id>)
+  #   COGNITO_CLIENT_ID    = terraform -chdir=envs/platform output cognito_app_client_id
+  #   COGNITO_REDIRECT_URI = https://app.<env>.<zone>/auth/callback  (= cognito.tf callback_urls)
+  #   COGNITO_LOGOUT_URI   = https://app.<env>.<zone>/
+  VITE_AEGIS_COGNITO_AUTHORITY: ${{ vars.COGNITO_AUTHORITY }}
+  VITE_AEGIS_COGNITO_CLIENT_ID: ${{ vars.COGNITO_CLIENT_ID }}
+  VITE_AEGIS_COGNITO_REDIRECT_URI: ${{ vars.COGNITO_REDIRECT_URI }}
+  VITE_AEGIS_COGNITO_LOGOUT_URI: ${{ vars.COGNITO_LOGOUT_URI }}
 
 jobs:
   release-staging-frontend:
