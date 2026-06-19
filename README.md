@@ -1,5 +1,7 @@
 # Aegis Core — real-time meeting intelligence for the person beside the principal
 
+[![CI](https://github.com/BinHsu/aegis-core/actions/workflows/ci-baseline.yml/badge.svg)](https://github.com/BinHsu/aegis-core/actions/workflows/ci-baseline.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/BinHsu/aegis-core/badge)](https://securityscorecards.dev/viewer/?uri=github.com/BinHsu/aegis-core)
+
 <!-- session-close-review: status + narrative -->
 
 > **A chief-of-staff's tool for the moment before the principal speaks.**

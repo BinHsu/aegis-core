@@ -110,6 +110,60 @@ Notes on the diagrams:
 *   **Gateway Pods**: Lightweight Go pods handling I/O multiplexing.
 *   **Multi-Tenancy**: Data separation via DynamoDB; physical compute separation for VIP clients via Fargate/Dedicated Instances.
 
+#### 2.1 gateway_go — Internal Components (C4 Level 3)
+
+The diagram below zooms into the `gateway_go` binary. Components are derived directly from the source tree under `gateway_go/cmd/gateway/` and `gateway_go/internal/`.
+
+```mermaid
+C4Component
+    title gateway_go — Internal Components (C4 Level 3)
+
+    Container_Boundary(gw, "gateway_go (Go binary — :8080 HTTP / :9090 gRPC / :8081 metrics)") {
+        Component(main, "Bootstrap / main", "Go", "Wires all components; starts HTTP, gRPC, and metrics listeners; manages process context and graceful drain")
+        Component(oidc, "OIDCProvider", "Go / lestrrat-go/jwx", "Fetches and caches Cognito JWKS every 15 min (RS256); validates iss, aud, exp; maps sub + custom:tenant_id to Principal")
+        Component(authz, "Auth Interceptors", "Go / google.golang.org/grpc", "Unary + stream gRPC interceptors; calls Provider.Authenticate on every inbound RPC; attaches Principal to context")
+        Component(grpcsvc, "GatewayService", "Go / grpc", "Implements aegis.v1.Gateway: CreateMeeting, EndMeeting, NegotiateWebRTC, JoinAsViewer, SendOfficerHint, ListCorpora")
+        Component(pipeline, "Audio Pipeline", "Go", "Reads Opus RTP payloads from Negotiator.AudioChan; forwards verbatim to engine StreamTranscribe; fans transcript egress via Session.Broadcast")
+        Component(webrtc, "WebRTC Negotiator", "Go / pion", "Non-trickle SDP exchange; exposes AudioChan and ICEChan per session; ICE state drives PAUSE/RESUME/END_STREAM control messages")
+        Component(session, "Session Registry", "Go", "Process-scoped in-memory registry; allocates session IDs; fan-out Subscribe/Broadcast per ADR-0004")
+        Component(token, "JWT Issuer", "Go / HMAC-SHA256", "Issues and verifies short-lived viewer join tokens scoped to a session ID")
+        Component(health, "Health + Readiness Handlers", "Go / net/http", "GET /healthz — probes engine Health RPC, returns JSON; GET /readyz — drain-aware 503 during shutdown")
+        Component(ws, "WebSocket Handler", "Go / gorilla/websocket", "Local-mode viewer transport on /ws/viewer; reuses Session.Subscribe; shares registry and token issuer with gRPC path")
+        Component(metrics, "Metrics Server", "Go / prometheus/client_go", "Exposes /metrics on :8081; RED + domain gauges (active_sessions, hints_emitted, transient_loss)")
+        Component(tracing, "OTel Tracer", "Go / opentelemetry-go", "Initializes OTLP exporter (stdout in local mode, gRPC in cloud); propagates W3C traceparent to engine via gRPC metadata")
+        Component(profiling, "Pyroscope Profiler", "Go / grafana/pyroscope-go", "Continuous CPU/alloc profiling to Grafana Cloud Pyroscope; fail-soft on empty/unreachable endpoint")
+        Component(cors, "CORS Policy", "Go / net/http", "Permissive in local mode; strict origin allowlist from AEGIS_ALLOWED_ORIGINS in cloud mode (ADR-0027)")
+        Component(grpcweb, "gRPC-Web Bridge", "Go / improbable-eng/grpc-web", "Wraps gRPC server for browser clients on :8080; content-type sniff routes to grpc-web or native HTTP handlers")
+    }
+
+    System_Ext(cognito, "AWS Cognito", "Cognito User Pool — issues RS256 ID tokens; exposes JWKS endpoint")
+    System_Ext(engine, "aegis-core engine (C++)", "Whisper.cpp inference; gRPC StreamTranscribe bidi stream; Health + ListCorpora RPCs")
+
+    Rel(main, oidc, "constructs (DEPLOY_MODE=cloud)")
+    Rel(main, authz, "registers interceptors using")
+    Rel(main, grpcsvc, "registers with gRPC server")
+    Rel(main, health, "registers /healthz and /readyz on HTTP mux")
+    Rel(main, ws, "registers /ws/viewer on HTTP mux")
+    Rel(main, grpcweb, "wraps gRPC server for :8080")
+    Rel(main, tracing, "initializes; propagates via otelgrpc stats handler")
+    Rel(main, profiling, "initializes; fail-soft")
+    Rel(main, pipeline, "factory closure injected into GatewayService.NegotiateWebRTC")
+    Rel(authz, oidc, "calls Authenticate on each inbound RPC")
+    Rel(authz, grpcsvc, "forwards authenticated request to")
+    Rel(grpcsvc, session, "creates / deletes / looks up sessions")
+    Rel(grpcsvc, token, "issues viewer join tokens; verifies on JoinAsViewer")
+    Rel(grpcsvc, webrtc, "delegates SDP exchange to")
+    Rel(grpcsvc, pipeline, "calls factory on NegotiateWebRTC success; calls stop on EndMeeting")
+    Rel(pipeline, session, "calls Session.Broadcast with transcript ViewerEvents")
+    Rel(pipeline, engine, "streams Opus payloads; receives EgressMessage transcripts", "gRPC bidi / StreamTranscribe")
+    Rel(webrtc, pipeline, "provides AudioChan (Opus RTP) and ICEChan (connection state)")
+    Rel(ws, session, "subscribes to session fan-out")
+    Rel(ws, token, "verifies viewer join token")
+    Rel(health, engine, "calls Health RPC to report engine status", "gRPC / 2 s timeout")
+    Rel(oidc, cognito, "fetches and caches JWKS", "HTTPS /.well-known/jwks.json")
+    Rel(cors, grpcweb, "supplies origin predicate")
+```
+
 ### 3. SRE / FinOps Capacity Management (Multi-Tenancy)
 The Go GW acts as a "Fleet Manager" routing tenants to their respective C++ engine pods based on tier constraints:
 *   **Tier 3 (Shared/Economy)**: Uses a pre-warmed pool of C++ Pods running 24/7 on shared nodes. Scales via K8s HPA to prevent cold starts.
