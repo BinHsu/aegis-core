@@ -58,7 +58,7 @@ The Pyroscope ingest server address is read from `AEGIS_PYROSCOPE_ENDPOINT` (rep
 
 ## Dependency on the landing-zone
 
-The live profiling path needs a Grafana Cloud Pyroscope ingest endpoint, which the landing-zone has not yet provisioned. This is a cross-repo coordination item — it will be tracked as a **separate cross-repo issue** against `aegis-aws-landing-zone` (not opened by this ADR). Until that endpoint exists, `AEGIS_PYROSCOPE_ENDPOINT` stays empty and profiling is a no-op in every deploy mode — by design. The fail-soft posture (D3) is precisely what lets aegis-core ship the code now and flip the switch later with a one-line manifest edit.
+The live profiling path needs a Grafana Cloud Pyroscope ingest endpoint, which the landing-zone has not yet provisioned. This is a cross-repo coordination item — it will be tracked as a **separate cross-repo issue** against `aegis-landing-zone-aws` (not opened by this ADR). Until that endpoint exists, `AEGIS_PYROSCOPE_ENDPOINT` stays empty and profiling is a no-op in every deploy mode — by design. The fail-soft posture (D3) is precisely what lets aegis-core ship the code now and flip the switch later with a one-line manifest edit.
 
 ## Out of scope
 

@@ -1566,13 +1566,13 @@ Three independent latent bugs in the same step, each masking the next — a "bug
 
 Layers 1+2 fired first because they happen before any AWS API call after the SSM read. Fixing them via PR #95 (capture into local var + check exit code + reference local var, not env) exposed layer 3 on the next manual dispatch.
 
-A separate process failure also took ~30 min of dev-time noise: the morning's diagnosis pre-attributed layers 1+2's symptom to a teardown-wipe narrative ("ldz teardown destroyed `/aegis/staging/cognito/*` SSM PS") without checking AWS state. This produced three cross-repo comments on [ldz#153](https://github.com/BinHsu/aegis-aws-landing-zone/issues/153) (originally about Qdrant SSM PS wiped by Incident 33) asking ldz to extend their persistent-layer relocation scope to include Cognito. ldz's reply at 12:40 UTC contained `aws ssm describe-parameters` evidence showing all 5 Cognito SSM parameters had been intact the entire time, and that `staging/auth/` is baseline-tier (teardown-immune) since their PR #140. The misdiagnosis cost ldz one round of evidence-collection plus the issue reopen-and-re-close cycle.
+A separate process failure also took ~30 min of dev-time noise: the morning's diagnosis pre-attributed layers 1+2's symptom to a teardown-wipe narrative ("ldz teardown destroyed `/aegis/staging/cognito/*` SSM PS") without checking AWS state. This produced three cross-repo comments on [ldz#153](https://github.com/BinHsu/aegis-landing-zone-aws/issues/153) (originally about Qdrant SSM PS wiped by Incident 33) asking ldz to extend their persistent-layer relocation scope to include Cognito. ldz's reply at 12:40 UTC contained `aws ssm describe-parameters` evidence showing all 5 Cognito SSM parameters had been intact the entire time, and that `staging/auth/` is baseline-tier (teardown-immune) since their PR #140. The misdiagnosis cost ldz one round of evidence-collection plus the issue reopen-and-re-close cycle.
 
 ### Detection
 
 The failure surfaced as `unbound variable` rather than as the actual SSM-read or KMS-decrypt failure, because layer 2 fires before layer 3 has a chance to. This is what made the morning's misdiagnosis plausible: an unbound-variable error after three SSM reads strongly *looks* like one of the SSM reads failed silently and the variable was never set. The hypothesis fit the symptom.
 
-What it didn't fit was the exit code path. Layer 1's bash gotcha means failure was always silent rather than loud, and the step ran for the same 5-second AWS-call duration whether or not the parameter existed. The morning's first triage tool was checking ldz's open cross-repo issues — finding [ldz#153](https://github.com/BinHsu/aegis-aws-landing-zone/issues/153) about SSM PS teardown-wipe (real, but Qdrant-scoped) and pattern-matching it onto the Cognito symptom. The faster path would have been `aws ssm describe-parameters --filters Key=Name,Option=BeginsWith,Values=/aegis/staging/cognito/` from the dev box (or asking ldz for that one query before drafting a scope-expansion request).
+What it didn't fit was the exit code path. Layer 1's bash gotcha means failure was always silent rather than loud, and the step ran for the same 5-second AWS-call duration whether or not the parameter existed. The morning's first triage tool was checking ldz's open cross-repo issues — finding [ldz#153](https://github.com/BinHsu/aegis-landing-zone-aws/issues/153) about SSM PS teardown-wipe (real, but Qdrant-scoped) and pattern-matching it onto the Cognito symptom. The faster path would have been `aws ssm describe-parameters --filters Key=Name,Option=BeginsWith,Values=/aegis/staging/cognito/` from the dev box (or asking ldz for that one query before drafting a scope-expansion request).
 
 The actual correct diagnosis came in two beats:
 
@@ -1692,7 +1692,7 @@ A PR-run-failed notification on the release commit surfaced the red run. `gh run
 
 - **A "this needs a one-time ops step" claim in an ADR must be verified against the live API before it ships, or marked explicitly as unverified.** ADR-0032's bypass snippet read as authoritative and was wrong; the cost was a red pipeline and this postmortem.
 - **A CI step whose failure is meant to be non-fatal must be written non-fatal** — `if cmd; then`, an explicit `|| true`, or a trailing `exit 0`. A "graceful degradation" sentence in a doc does not make `set -e` degrade gracefully.
-- The deeper structural fix — moving deploy manifests out of the branch-protected repo so the tag bump never needs a bypass — is tracked as cross-repo RFC `aegis-aws-landing-zone#214`.
+- The deeper structural fix — moving deploy manifests out of the branch-protected repo so the tag bump never needs a bypass — is tracked as cross-repo RFC `aegis-landing-zone-aws#214`.
 
 ### Lessons
 
@@ -1707,7 +1707,7 @@ A PR-run-failed notification on the release commit surfaced the red run. `gh run
 - Incidents here cover **development-time** blockers, not a
   running production system. Once the system is in Phase 4+ with
   real users, this file will split: operational incidents go to a
-  separate `ops/incidents.md` on the `aegis-aws-landing-zone` repo (customer
+  separate `ops/incidents.md` on the `aegis-landing-zone-aws` repo (customer
   impact is out of scope for the application repo).
 - Each postmortem links back to the commit(s) that resolved it;
   the commit messages themselves carry the nitty-gritty details

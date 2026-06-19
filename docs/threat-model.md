@@ -6,7 +6,7 @@
 - **Last reviewed**: 2026-04-11
 - **Scope**: Aegis Core application architecture. Infrastructure-level
   threats (EKS cluster, AWS account, network boundary) are covered by
-  the [aegis-aws-landing-zone](https://github.com/BinHsu/aegis-aws-landing-zone)
+  the [aegis-landing-zone-aws](https://github.com/BinHsu/aegis-landing-zone-aws)
   repository's own threat model.
 
 ## How to Use This Document
@@ -155,7 +155,7 @@ to reach the host's LAN-bound Go Gateway port.
 |---|---|---|---|---|
 | R1 | User denies consenting to real-time audio processing | Legal / regulatory (GDPR general PII rules) | Append-only consent ledger with `user_id`, `policy_version`, `timestamp`, `client_metadata` (§9.3); DynamoDB Streams → S3 WORM in Cloud mode for tamper-evident backup | Low |
 | R2 | User denies creating a meeting or performing an action | Go Gateway audit log | Structured audit log with request ID + tenant ID + user ID + action; retained per §10 | Low |
-| R3 | Aegis operator denies accessing customer data | Infrastructure logs | EKS Pod Identity audit trail via AWS CloudTrail; Pod-level access logged by `aegis-aws-landing-zone` | Medium — depends on `aegis-aws-landing-zone` controls |
+| R3 | Aegis operator denies accessing customer data | Infrastructure logs | EKS Pod Identity audit trail via AWS CloudTrail; Pod-level access logged by `aegis-landing-zone-aws` | Medium — depends on `aegis-landing-zone-aws` controls |
 
 ### Information Disclosure
 

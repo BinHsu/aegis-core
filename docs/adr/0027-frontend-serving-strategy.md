@@ -6,7 +6,7 @@
 | Date     | 2026-04-19                                                                  |
 | Deciders | Project author                                                              |
 | Context  | Phase 4a Slice 5 ships the frontend deploy path. Frontend is a static React+Vite SPA bundle. The naive "Slice 5 = build a frontend OCI image" framing in earlier ROADMAP is wrong — the frontend is static assets that belong on a CDN, not a container. Three options (bundle into gateway image, separate frontend image with nginx, S3+CloudFront) were specced; ldz confirmed Option C was their long-standing roadmap. |
-| Related  | ADR-0007 (Local mode LAN viewer flow — origin permissiveness rationale), ADR-0015 (hermetic Node.js via aspect_rules_js), ADR-0025 (OCI packaging strategy), `aegis-aws-landing-zone#90` (cross-repo Q&A confirming Option C), `aegis-aws-landing-zone#91` (provision trigger), ldz ADR-019 (forthcoming, frontend serving infra) |
+| Related  | ADR-0007 (Local mode LAN viewer flow — origin permissiveness rationale), ADR-0015 (hermetic Node.js via aspect_rules_js), ADR-0025 (OCI packaging strategy), `aegis-landing-zone-aws#90` (cross-repo Q&A confirming Option C), `aegis-landing-zone-aws#91` (provision trigger), ldz ADR-019 (forthcoming, frontend serving infra) |
 
 ## Context
 
@@ -149,7 +149,7 @@ The fork runbook (`docs/runbooks/fork-and-self-deploy.md`) documents the 9 Varia
 
 ## Cross-repo trail
 
-- ldz #90 (cross-repo Q&A): https://github.com/BinHsu/aegis-aws-landing-zone/issues/90
-- ldz #91 (provision trigger): https://github.com/BinHsu/aegis-aws-landing-zone/issues/91
-- ldz #88 (image set handoff — amended in this slice to clarify "no frontend image"): https://github.com/BinHsu/aegis-aws-landing-zone/issues/88
+- ldz #90 (cross-repo Q&A): https://github.com/BinHsu/aegis-landing-zone-aws/issues/90
+- ldz #91 (provision trigger): https://github.com/BinHsu/aegis-landing-zone-aws/issues/91
+- ldz #88 (image set handoff — amended in this slice to clarify "no frontend image"): https://github.com/BinHsu/aegis-landing-zone-aws/issues/88
 - ldz ADR-019 (forthcoming, frontend infra side; cross-link will be added when published)

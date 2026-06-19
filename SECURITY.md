@@ -25,9 +25,10 @@ vulnerability:
 2. Click "Report a vulnerability."
 3. Fill out the form with as much detail as possible.
 
-If GitHub private reporting is unavailable, email
-`security@<project-domain-tbd>` with the subject line
-`[SECURITY] Aegis Core vulnerability report`.
+If GitHub private reporting is temporarily unavailable, open a
+**Discussion** in this repository under the "Security" category and
+mark it as sensitive — do not post vulnerability details in a public
+issue.
 
 ### What to Include
 
@@ -65,7 +66,7 @@ If GitHub private reporting is unavailable, email
 
 ### Out of Scope
 
-- The separate [aegis-aws-landing-zone](https://github.com/BinHsu/aegis-aws-landing-zone)
+- The separate [`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws)
   infrastructure repository. Report infrastructure / AWS account
   vulnerabilities there.
 - Third-party dependencies themselves — please report upstream. If the

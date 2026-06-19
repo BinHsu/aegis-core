@@ -14,14 +14,14 @@
 aegis-core's release workflows source AWS infra identifiers (account ID, role names, S3 bucket name, CloudFront distribution ID, region, domains) from **GitHub Repository Variables**, not from hardcoded values or GitHub Secrets. This is the design fork-friendliness rests on: a fork operator overrides the Variables in their fork's repo settings, and the same workflow YAML deploys to their AWS account with **zero code edits**. ADR-0027 §"GH Variables over hardcode/Secrets" documents the rationale.
 
 The work for a forker is therefore:
-1. Provision the AWS infra in their own account (via forked `aegis-aws-landing-zone` Terraform — strongly recommended)
+1. Provision the AWS infra in their own account (via forked `aegis-landing-zone-aws` Terraform — strongly recommended)
 2. Read the values out of Terraform outputs (or AWS CLI as fallback)
 3. Set 9 Repository Variables in their forked aegis-core
 4. Push to `main` and watch the workflows land green
 
 ## Prerequisites
 
-- Forked both `BinHsu/aegis-core` and `BinHsu/aegis-aws-landing-zone` on GitHub.
+- Forked both `BinHsu/aegis-core` and `BinHsu/aegis-landing-zone-aws` on GitHub.
 - An AWS account you own (not upstream's `251774439261`).
 - AWS CLI configured locally with admin (or at least sufficient IAM/S3/CloudFront/ECR read perms) for the one-time bootstrap.
 - Terraform installed if using the recommended primary path.
@@ -29,7 +29,7 @@ The work for a forker is therefore:
 
 ## Step 1 — Provision AWS infra via your forked landing-zone
 
-In your fork of `aegis-aws-landing-zone`:
+In your fork of `aegis-landing-zone-aws`:
 
 1. Edit `terraform/environments/staging/` (or your equivalent) to target **your** AWS account / region / domain. The Terraform code parameterizes these via variables.
 2. Apply the `bootstrap` layer — provisions:
@@ -54,7 +54,7 @@ Two paths, depending on how your fork's AWS infra was provisioned:
 
 ### Path A — Terraform outputs from forked landing-zone (ldz #95 confirmed schema)
 
-Your fork of `aegis-aws-landing-zone`'s `staging/edge/` and `staging/bootstrap/` Terraservices both declare outputs for the values aegis-core consumes. Live output schema (per ldz #95 closing):
+Your fork of `aegis-landing-zone-aws`'s `staging/edge/` and `staging/bootstrap/` Terraservices both declare outputs for the values aegis-core consumes. Live output schema (per ldz #95 closing):
 
 | ldz Terraform output | aegis-core GH Variable |
 | --- | --- |
@@ -67,7 +67,7 @@ Your fork of `aegis-aws-landing-zone`'s `staging/edge/` and `staging/bootstrap/`
 ldz's suggested one-liner (from the #95 closing comment) — adapt `YOUR_ORG/aegis-core` to your fork:
 
 ```bash
-cd /path/to/your/aegis-aws-landing-zone/terraform/environments/staging/edge
+cd /path/to/your/aegis-landing-zone-aws/terraform/environments/staging/edge
 
 terraform output -raw frontend_s3_bucket_name              | xargs -I{} gh variable set FRONTEND_S3_BUCKET --body {} -R YOUR_ORG/aegis-core
 terraform output -raw frontend_cloudfront_distribution_id  | xargs -I{} gh variable set FRONTEND_CLOUDFRONT_DISTRIBUTION_ID --body {} -R YOUR_ORG/aegis-core
@@ -157,4 +157,4 @@ Real secrets (BUILDBUDDY_API_KEY, future Cosign signing keys) stay in GitHub Sec
 - [ADR-0027 Frontend serving strategy](../adr/0027-frontend-serving-strategy.md) — the canonical design + the GH Variables decision rationale.
 - [ADR-0025 OCI packaging strategy](../adr/0025-oci-packaging-strategy.md) — Camp B doctrine + ECR push posture.
 - [`docs/runbooks/buildbuddy-cache-setup.md`](buildbuddy-cache-setup.md) — sister runbook for the optional BuildBuddy remote cache; also fork-aware.
-- [aegis-aws-landing-zone](https://github.com/BinHsu/aegis-aws-landing-zone) — the Terraform repo whose `staging/{bootstrap,edge}/` Terraservices land the AWS resources this runbook references; ldz #93 tracks the Terraform outputs request that makes Step 2 (primary path) one command.
+- [aegis-landing-zone-aws](https://github.com/BinHsu/aegis-landing-zone-aws) — the Terraform repo whose `staging/{bootstrap,edge}/` Terraservices land the AWS resources this runbook references; ldz #93 tracks the Terraform outputs request that makes Step 2 (primary path) one command.

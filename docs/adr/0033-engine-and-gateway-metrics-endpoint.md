@@ -10,7 +10,7 @@
 
 ## Revision 2026-04-21 — observability backend reversal (decisions intact)
 
-Landing-zone reversed the observability backend from self-hosted kube-prometheus-stack to Grafana Cloud free tier via [ldz ADR-022](https://github.com/BinHsu/aegis-aws-landing-zone/blob/main/docs/decisions/022-observability-backend-grafana-cloud.md) + [ldz ADR-023](https://github.com/BinHsu/aegis-aws-landing-zone/blob/main/docs/decisions/023-observability-responsibility-model.md) (ldz PR #123 merged 2026-04-21 06:59 UTC). ACK'd by aegis-core on [#46](https://github.com/BinHsu/aegis-core/issues/46).
+The observability backend was reversed from self-hosted kube-prometheus-stack to Grafana Cloud free tier. That decision moved to the platform tier during the platform-tier extraction and now lives in [aegis-platform-aws ADR-04 — Observability](https://github.com/BinHsu/aegis-platform-aws/blob/main/docs/adr/04-observability.md) (originally landing-zone PR #123, merged 2026-04-21 06:59 UTC). ACK'd by aegis-core on [#46](https://github.com/BinHsu/aegis-core/issues/46).
 
 **Every decision in this ADR remains intact** — the backend change swaps *who does the scraping*, not *what aegis-core exposes*:
 
