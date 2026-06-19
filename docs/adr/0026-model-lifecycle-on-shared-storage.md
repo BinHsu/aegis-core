@@ -6,7 +6,7 @@
 | Date     | 2026-04-19                                                                  |
 | Deciders | Project author                                                              |
 | Context  | Phase 4a Slice 4 ships the engine OCI image; Phase 4c will ship K8s manifests that mount model storage. Rolling deployments will run multiple engine pod versions concurrently, each potentially needing a different model version. The storage shape, the engine's loading contract, and the populator's identity must be designed together to avoid version coordination becoming an incident class. |
-| Related  | ADR-0021 (shared ggml runtime), ADR-0025 (OCI packaging strategy), `aegis-aws-landing-zone#85` (cross-repo binding FYI), `models/manifest.json` schema |
+| Related  | ADR-0021 (shared ggml runtime), ADR-0025 (OCI packaging strategy), `aegis-landing-zone-aws#85` (cross-repo binding FYI), `models/manifest.json` schema |
 
 ## Revision (2026-04-19) — pivoted to content-addressable storage + CI-driven populator
 
@@ -26,7 +26,7 @@ This revision rewrites the ADR end-to-end against the new model. Any reader look
 
 ## Context
 
-Slice 4 deliberately keeps models out of the engine OCI image (~50-100 MB image vs ~1.5 GB if baked in; ADR-0025 §"Slice 4 distroless variant decision"). Engine reads `/models` at runtime from a Kubernetes-mounted directory backed by ldz-provisioned storage. **Storage realization: Amazon S3 Files** (April 2026 launch, EFS-backed S3 bucket-as-filesystem; cross-repo FYI to ldz at [aegis-aws-landing-zone#85](https://github.com/BinHsu/aegis-aws-landing-zone/issues/85)). RD owns the architectural call; ldz executes; discussion space is at the IAM / resource / lifecycle mechanics layer.
+Slice 4 deliberately keeps models out of the engine OCI image (~50-100 MB image vs ~1.5 GB if baked in; ADR-0025 §"Slice 4 distroless variant decision"). Engine reads `/models` at runtime from a Kubernetes-mounted directory backed by ldz-provisioned storage. **Storage realization: Amazon S3 Files** (April 2026 launch, EFS-backed S3 bucket-as-filesystem; cross-repo FYI to ldz at [aegis-landing-zone-aws#85](https://github.com/BinHsu/aegis-landing-zone-aws/issues/85)). RD owns the architectural call; ldz executes; discussion space is at the IAM / resource / lifecycle mechanics layer.
 
 The follow-on architectural question that this ADR resolves: **what happens during a rolling deployment** when:
 

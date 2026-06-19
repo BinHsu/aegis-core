@@ -6,7 +6,7 @@
 | Date     | 2026-04-20                                                                  |
 | Deciders | Project author                                                              |
 | Context  | Phase 4c must realize ARCH §"Zero Trust Networking (mTLS)" (line 180), which reads: *"the communication between the Go Gateway and the C++ Engine is protected by a Service Mesh (e.g., Istio) enforcing Mutual TLS."* The `e.g.` is load-bearing — this ADR formalizes the mTLS commitment while rejecting the mesh path and writing down why. |
-| Related  | ADR-0017 (Gateway–Engine topology), ADR-0030 (Argo Rollouts — also no-mesh), ADR-0028 (Cosign keyless — same `cert-manager + Fulcio` PKI heritage), ARCH §10.6 (Enterprise-Grade Compliance), `aegis-aws-landing-zone#54` (platform surface contract — mTLS primitives) |
+| Related  | ADR-0017 (Gateway–Engine topology), ADR-0030 (Argo Rollouts — also no-mesh), ADR-0028 (Cosign keyless — same `cert-manager + Fulcio` PKI heritage), ARCH §10.6 (Enterprise-Grade Compliance), `aegis-landing-zone-aws#54` (platform surface contract — mTLS primitives) |
 | Supersedes | ARCH §"Zero Trust Networking" mesh-by-default implication (line 180). ARCH's `e.g., Istio` is preserved as an example of the family of solutions, but the binding mechanism for Aegis is documented here. |
 
 ## Context

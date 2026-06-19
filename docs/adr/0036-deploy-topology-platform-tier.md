@@ -6,7 +6,7 @@
 | Date     | 2026-05-18 |
 | Deciders | Project author |
 | Context  | aegis-core's Kubernetes deploy manifests currently live inside the branch-protected `aegis-core` repo (`apps/staging/`), which makes the CI image-tag automation fight branch protection (ADR-0032, Incident 18). This ADR records aegis-core's stance on the deploy topology — a three-layer split (account fabric / platform tier / workload) with the platform tier extracted into a shared `aegis-platform` repo and each workload's manifests in its own deploy repo. It is the decision artifact behind cross-repo issues ldz#213 / #214 / #215. |
-| Related  | ADR-0032 (CI image-tag automation — the degraded mode + Incident 18 branch-protection wall this topology removes); `aegis-aws-landing-zone` ADR-033 (landing-zone descope to account fabric; EKS / ArgoCD / observability reclassified as an extractable Platform tier); `aegis-aws-landing-zone` ADR-007 (infra/app repo split — rejects application manifests in the infra repo); cross-repo ldz#213 / #214 / #215; the `aegis-greeter` ↔ `aegis-stateless` pair (the proven two-repo GitOps precedent this topology generalizes) |
+| Related  | ADR-0032 (CI image-tag automation — the degraded mode + Incident 18 branch-protection wall this topology removes); `aegis-landing-zone-aws` ADR-033 (landing-zone descope to account fabric; EKS / ArgoCD / observability reclassified as an extractable Platform tier); `aegis-landing-zone-aws` ADR-007 (infra/app repo split — rejects application manifests in the infra repo); cross-repo ldz#213 / #214 / #215; the `aegis-greeter` ↔ `aegis-stateless` pair (the proven two-repo GitOps precedent this topology generalizes) |
 
 ## Context
 
@@ -16,7 +16,7 @@ ruleset, every CI image-tag bump is a write to a protected branch — the wall
 recorded in ADR-0032 and Incident 18. The automation can only run in degraded
 mode (the bot opens a PR, a human merges it).
 
-Concurrently the landing-zone is correcting its own scope: `aegis-aws-landing-zone`
+Concurrently the landing-zone is correcting its own scope: `aegis-landing-zone-aws`
 ADR-033 descopes that repo to the pure *account fabric* (AWS Organizations, OUs,
 SCPs, Identity Center, the centralized security baseline) and reclassifies the
 EKS cluster, ArgoCD, and the observability stack as an extractable **Platform
@@ -42,10 +42,10 @@ manifests. The workload↔platform boundary is governed by an explicit contract
 
 | Layer | Responsibility | Repo |
 | --- | --- | --- |
-| Account fabric | AWS Organizations / OUs / SCPs / Identity Center / guardrails / central audit | `aegis-aws-landing-zone` (v2) |
-| Platform tier | VPC / EKS / ArgoCD / cluster add-ons / observability stack | `aegis-platform` |
+| Account fabric | AWS Organizations / OUs / SCPs / Identity Center / guardrails / central audit | [`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws) (v2) |
+| Platform tier | VPC / EKS / ArgoCD / cluster add-ons / observability stack | [`aegis-platform-aws`](https://github.com/BinHsu/aegis-platform-aws) |
 | Workload — app | Application code only | `aegis-core`, `aegis-greeter` |
-| Workload — deploy | K8s manifests; ArgoCD watches one per workload | `aegis-core-deploy`, `aegis-greeter-deploy` |
+| Workload — deploy | K8s manifests; ArgoCD watches one per workload | [`aegis-core-deploy`](https://github.com/BinHsu/aegis-core-deploy), `aegis-greeter-deploy` |
 
 ### D2. Platform tier — a single shared, neutrally-named `aegis-platform`
 
@@ -56,7 +56,7 @@ manifests. The workload↔platform boundary is governed by an explicit contract
 - Extracted from `aegis-stateless`'s proven `terraform/modules/regional-stack`
   (the "successfully landed" reference implementation, with per-cluster ArgoCD
   and read-only-deploy-key repo auth). **Not** rewritten from scratch, **not**
-  extracted from the descoping `aegis-aws-landing-zone`, and **not** folded into
+  extracted from the descoping `aegis-landing-zone-aws`, and **not** folded into
   `aegis-stateless` — folding it in would re-mix two workloads' platform in one
   repo, the exact scope creep ldz ADR-033 is itself correcting.
 - ldz ADR-033 independently extracts a Platform tier out of the landing-zone.
@@ -71,7 +71,7 @@ manifests. The workload↔platform boundary is governed by an explicit contract
 - aegis-core's `apps/staging/` manifests move **out** of the branch-protected
   `aegis-core` repo into a new `aegis-core-deploy` repo. This is ldz#214
   Option B (a dedicated GitOps deploy repo), endorsed by the landing-zone.
-  Option A — manifests into `aegis-aws-landing-zone` — was rejected, as it
+  Option A — manifests into `aegis-landing-zone-aws` — was rejected, as it
   contradicts ldz ADR-007.
 - `aegis-core-deploy` is aegis-core-owned and carries the full-repo-name prefix
   (CLAUDE.md Rule 11). Its `main` is PR-gated by an active ruleset (PR required,
@@ -137,7 +137,7 @@ this and the tiers stay extractable; break it and they re-couple.
 
 - **A. Manifests stay in `aegis-core` (status quo).** The branch-protection
   wall — ADR-0032 / Incident 18. Rejected.
-- **B. Manifests into `aegis-aws-landing-zone` (ldz#214 Option A).** Rejected —
+- **B. Manifests into `aegis-landing-zone-aws` (ldz#214 Option A).** Rejected —
   contradicts ldz ADR-007 (no application manifests in the infra repo).
 - **C. Fold the platform tier into `aegis-stateless`.** Rejected — re-mixes two
   workloads' platform in one repo and couples the platform's identity to

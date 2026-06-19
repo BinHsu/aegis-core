@@ -51,7 +51,7 @@ The current cold-build cost is paid by exactly two consumers:
   serving back malicious artifacts would be a nuclear option for an
   attacker. SaaS providers must have credible SOC 2; self-hosted
   must run inside our trust boundary (i.e., the
-  aegis-aws-landing-zone repo's VPC).
+  aegis-landing-zone-aws repo's VPC).
 - **D4. Solo-dev → small-team transition.** The trigger to adopt
   remote cache is almost certainly "second contributor joins" —
   cache reuse value scales with the number of cache producers, not
@@ -105,7 +105,7 @@ build --remote_header=x-buildbuddy-api-key=$BB_KEY
 
 `https://github.com/buchgr/bazel-remote` is a single-binary HTTP/2
 cache backed by S3 or local disk. Run on a t4g.small in the
-`aegis-aws-landing-zone` repo's VPC; point Bazel at it via:
+`aegis-landing-zone-aws` repo's VPC; point Bazel at it via:
 
 ```
 build --remote_cache=https://cache.aegis.internal
@@ -118,7 +118,7 @@ build --remote_upload_local_results=true
 - **Cons**: ops surface — single point of failure unless we run
   multi-AZ; certificate management; observability is rolled-our-own;
   total ownership of "is the cache poisoned?" question. The
-  `aegis-aws-landing-zone` repo already runs ArgoCD + monitoring so adding one
+  `aegis-landing-zone-aws` repo already runs ArgoCD + monitoring so adding one
   more service is 1 day of work, not 1 week, but it IS work.
   **Also**: requires an always-on EC2 instance, which contradicts the
   2026-04-17 cost stance that EKS (and by extension any always-on AWS
@@ -150,7 +150,7 @@ pattern). `clone → bazel build` stays hermetic and remote-cache-free.
     always-on, managed by AWS.
   - **Full zero-trust.** OIDC federation → ephemeral IAM creds → no
     long-lived secret stored in GHA. Aligns with the AWS OIDC trust
-    chain the `aegis-aws-landing-zone` repo will build anyway for
+    chain the `aegis-landing-zone-aws` repo will build anyway for
     Cosign / ECR push / EKS deploy (Phase 4 packaging).
   - **Cost is predictable and small.** At 100 GB/month transfer:
     ~$1 storage + ~$9 egress ≈ **~$10/month**. An order of magnitude
@@ -164,7 +164,7 @@ pattern). `clone → bazel build` stays hermetic and remote-cache-free.
     trust policy for `aegis-core`'s repo in IAM, and a CI workflow
     block with `permissions: id-token: write`. None of these are
     hard, but together it's ~½ day of first-time wiring.
-  - **Requires `aegis-aws-landing-zone` to own the S3 bucket and IAM
+  - **Requires `aegis-landing-zone-aws` to own the S3 bucket and IAM
     role**, so depends on that repo being in a state where Phase 4
     infrastructure is actually deployable.
   - **Observability is basic.** S3 access logs + CloudWatch metrics
@@ -178,7 +178,7 @@ pattern). `clone → bazel build` stays hermetic and remote-cache-free.
 ### Phase A — demo horizon: **Option β (BuildBuddy Personal)**
 
 For the window between "actively developing Phase 3b–4 with
-accelerating CI pain" and "the `aegis-aws-landing-zone` repo has
+accelerating CI pain" and "the `aegis-landing-zone-aws` repo has
 real deployed infrastructure including IAM OIDC for GHA".
 
 Why β now:
@@ -197,7 +197,7 @@ Triggered when ANY of these conditions fires:
 
 | # | Trigger condition                                                   |
 |---|---------------------------------------------------------------------|
-| T1 | `aegis-aws-landing-zone` ships the AWS OIDC trust policy for GHA (for Cosign / ECR / EKS deploy). At that point the S3 cache is a +1 trust-policy line, not a new project. |
+| T1 | `aegis-landing-zone-aws` ships the AWS OIDC trust policy for GHA (for Cosign / ECR / EKS deploy). At that point the S3 cache is a +1 trust-policy line, not a new project. |
 | T2 | BuildBuddy free-tier limits start to bite (>100 GB/month transfer observed in BuildBuddy dashboard for ≥2 consecutive months) |
 | T3 | First external contributor lands a PR and their build participates in cache reuse (validates that δ's IAM model works for non-owner identities) |
 | T4 | BuildBuddy free-tier policy shifts (pricing change, TOS change, region restriction) — fallback posture is "we already know where we're going" |
@@ -210,12 +210,12 @@ bucket provisioned ahead of time (cheap), swap the workflow's
 the `--credential_helper` flag, pull the BuildBuddy key out of GHA
 secrets. Total blast radius: one workflow file.
 
-### δ prerequisites — what `aegis-aws-landing-zone` must provide
+### δ prerequisites — what `aegis-landing-zone-aws` must provide
 
 The β→δ migration requires a cross-repo coordination step per
 README §"Cross-Repository Coordination Protocol" (`README.md:466–496`).
 When the migration trigger fires, the next action from `aegis-core`
-is to file a `cross-repo/blocking` issue on `aegis-aws-landing-zone`
+is to file a `cross-repo/blocking` issue on `aegis-landing-zone-aws`
 requesting the following — **do not self-migrate before the sibling
 side has provisioned these resources**:
 
@@ -305,7 +305,7 @@ radius bounded to the cache tier.
 ### δ prerequisites — implementation status (2026-04-17)
 
 Cross-repo coordination resolved same-day via
-[landing-zone #72](https://github.com/BinHsu/aegis-aws-landing-zone/issues/72)
+[landing-zone #72](https://github.com/BinHsu/aegis-landing-zone-aws/issues/72)
 (cross-repo/blocking) → ldz PR #74 merged to main.
 
 Provisioned via Terraform (code merged; live ARNs available after
@@ -343,7 +343,7 @@ The migration from Option β (BuildBuddy Personal) to Option δ (S3 +
 OIDC) is now purely an aegis-core-side CI workflow change. The
 landing-zone infrastructure is pre-provisioned and will be live
 after ldz's next Terraform apply. When the migration trigger fires
-(most likely T1 — `aegis-aws-landing-zone` shipping its AWS OIDC
+(most likely T1 — `aegis-landing-zone-aws` shipping its AWS OIDC
 trust policy for Cosign / ECR / EKS deploy, which this PR #74
 effectively satisfies), the aegis-core side needs:
 

@@ -5,8 +5,8 @@
 | Status   | Accepted                                                                    |
 | Date     | 2026-04-20                                                                  |
 | Deciders | Project author                                                              |
-| Context  | Phase 4c "Progressive Delivery" opening. ROADMAP lines 328–329 leave the controller choice open ("Argo Rollouts or Flagger"); this ADR closes it. Upstream is ArgoCD on `aegis-aws-landing-zone`'s EKS cluster; there is no service mesh installed today and (per ADR-0031) none is planned. |
-| Related  | ADR-0017 (Gateway–Engine topology), ADR-0031 (mTLS without service mesh), ARCH §10.4 (Progressive Delivery), `aegis-aws-landing-zone#96` (Kyverno verify-image — admission-time consumer downstream of canary weights) |
+| Context  | Phase 4c "Progressive Delivery" opening. ROADMAP lines 328–329 leave the controller choice open ("Argo Rollouts or Flagger"); this ADR closes it. Upstream is ArgoCD on `aegis-landing-zone-aws`'s EKS cluster; there is no service mesh installed today and (per ADR-0031) none is planned. |
+| Related  | ADR-0017 (Gateway–Engine topology), ADR-0031 (mTLS without service mesh), ARCH §10.4 (Progressive Delivery), `aegis-landing-zone-aws#96` (Kyverno verify-image — admission-time consumer downstream of canary weights) |
 
 ## Context
 

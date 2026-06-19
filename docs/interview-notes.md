@@ -165,14 +165,14 @@ verify.
 | Principle                                | How this repo realises it                                                                                          | Artifact                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | Demo horizon = near-zero idle cost       | In-memory session state (refresh = meeting ends); no always-on cache/DB for the demo tier.                         | `ADR-0023` Decision A, `gateway_go/internal/grpc/gateway_service.go`                                 |
-| Pay-per-query stateful tier              | DynamoDB On-Demand for the consent ledger when it lands; idle ≈ 0, billed only on real events.                     | `ADR-0022` (multi-tenancy + pricing choice), cross-repo dependency on `aegis-aws-landing-zone`       |
+| Pay-per-query stateful tier              | DynamoDB On-Demand for the consent ledger when it lands; idle ≈ 0, billed only on real events.                     | `ADR-0022` (multi-tenancy + pricing choice), cross-repo dependency on `aegis-landing-zone-aws`       |
 | Remote-cache SaaS tier matches usage     | BuildBuddy Personal free tier for the demo; plan documented for S3+OIDC at production volume.                      | `ADR-0014` (Option β → Option δ), `docs/runbooks/buildbuddy-cache-setup.md`                          |
 | RAG retrieval is opt-in                  | Empty `rag_id` is first-class "no corpus" mode; no corpus → no embedding calls → no vector-DB query cost.          | `ADR-0023` Decision B, `proto/aegis/v1/aegis.proto` (`CreateMeetingRequest.rag_id`)                   |
 | Self-hosted vector store for the MVP     | Qdrant binary + storage dir live inside the repo; no managed SaaS billing until usage justifies it.                | `ADR-0019`, `docs/runbooks/qdrant-local-setup.md`                                                    |
 | Models pulled on demand, not baked in    | `models/` gitignored; SHA-verified downloads per build; no fat images shipping 75 MB of weights.                   | `.gitignore` §AI model artifacts, `ARCHITECTURE.md` §10.1                                            |
 | Skipped features = avoided spend         | Explicit no-biometric, no-voiceprint, no-durable-transcript decisions. The cheapest line item is the one you don't build. | `ADR-0012`, `ARCHITECTURE.md` §9.1, `ROADMAP.md` §"Known Gaps"                                   |
 | Engine owns inference (no Python runtime)| bge-m3 + Whisper run via llama.cpp C API inside the engine binary; no SageMaker endpoint on standby, no per-token API bill. | `ADR-0020`, `ADR-0021`, `engine_cpp/src/inference/ggml_embedder.cc`                                 |
-| Cloud infra cost evidence is in its own repo | Separation keeps Terraform / billing alerts / CUR dashboards out of the app repo's review surface.             | [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone) (linked throughout)     |
+| Cloud infra cost evidence is in its own repo | Separation keeps Terraform / billing alerts / CUR dashboards out of the app repo's review surface.             | [`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws) (linked throughout)     |
 
 These three tables are the short answer when a platform / security /
 finance reviewer asks "does this repo match our governance posture?".
@@ -203,7 +203,7 @@ probably not the strongest candidate:
 - **Deep Kubernetes / cloud-operations work.** There *is* an ADR in
   this repo explaining how the system is meant to be deployed, but the
   actual cloud-infrastructure evidence lives in the companion
-  [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+  [`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws)
   repo. That repo gets its own walkthrough on request.
 
 ---
@@ -227,7 +227,7 @@ multiplexing, graceful-degradation paths).
 - `aegis-core` (this repo) — **backend + platform** architecture. How
   services are designed, how the code is structured, how the build
   works, how contracts between languages are maintained.
-- [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+- [`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws)
   (separate repo) — **cloud infrastructure**
   architecture. How the above runs on AWS under strict compliance,
   deployment pipelines, cost visibility, incident response.

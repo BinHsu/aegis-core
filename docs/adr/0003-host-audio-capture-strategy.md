@@ -195,7 +195,7 @@ call on the laptop microphone.
 - **HTTPS / secure context requirement.** Both `getUserMedia` and
   `getDisplayMedia` require a secure context.
   - In Cloud mode: Go Gateway serves the frontend over TLS (ACM cert via
-    the `aegis-aws-landing-zone` infra repository).
+    the `aegis-landing-zone-aws` infra repository).
   - In Local mode: the frontend is loaded from `http://localhost:PORT`.
     `localhost` is exempt from the secure-context requirement by browser
     specification, so capture works without a self-signed cert for the

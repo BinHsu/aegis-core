@@ -167,7 +167,7 @@ zero required reviews. Even degraded this is strictly better than the old
 fully-manual edit — the human action shrinks from "find the SHA, edit three
 files, sign the commit" to "click merge". A fully-unattended merge would
 require moving the deploy manifests out of this branch-protected repo into a
-GitOps source repo — tracked as cross-repo RFC `aegis-aws-landing-zone#214`.
+GitOps source repo — tracked as cross-repo RFC `aegis-landing-zone-aws#214`.
 
 **Earlier defect (fixed 2026-05-17).** As first shipped, the `bump-image-tag`
 step was not fail-soft: a failing `gh pr create` made the step `exit 1` and

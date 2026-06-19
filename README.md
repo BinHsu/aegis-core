@@ -1,81 +1,73 @@
-# 🛡️ Aegis Core
+# Aegis Core — real-time meeting intelligence for the person beside the principal
 
 <!-- session-close-review: status + narrative -->
 
 > **A chief-of-staff's tool for the moment before the principal speaks.**
 
-Aegis Core is real-time meeting intelligence built for the person
-sitting next to the principal — the chief-of-staff whose job is to make
-sure the leader walks into the negotiation, the press conference, the
-board review with the right facts already at hand. Great leaders are
-great because of the people around them. This repository is a
-deliberate act of care for that work: a tool that respects the
-chief-of-staff's judgment, stays out of the principal's way, and keeps
-its promises about what it does with sensitive audio.
-
 A C++ engine transcribes meeting audio on-device; a Go gateway handles
 session boundaries, authentication, and WebRTC; a RAG-backed retriever
-surfaces the fact the chief-of-staff needs, in the language the room is
-speaking, the moment a question appears in the transcript. Nothing
-leaves the machine unless the chief-of-staff explicitly makes it leave.
-
-A codebase does not make a company — that takes a business model, a
-team, and a decade of judgment calls. But a codebase can make a
-promise: that what the README says is what the build system enforces,
-that the words "privacy," "sovereignty," and "local-first" describe the
-code rather than the marketing. Aegis Core is the bet that efficiency
-and readability can both be maximized at once, with the tension between
-them made visible rather than hidden.
+surfaces the fact the chief-of-staff needs — in the language the room is
+speaking — the moment a question appears in the transcript. A user opens a
+browser, starts a session, and the gateway relays audio to the C++ engine; the
+resulting transcript fans out live to viewers. Nothing leaves the machine unless
+the chief-of-staff explicitly makes it leave.
 
 The first-generation Python/macOS prototype lives at
 [BinHsu/Aegis-Prompter](https://github.com/BinHsu/Aegis-Prompter);
 this V2 is a ground-up enterprise rewrite.
 
-## Features at a Glance
+---
 
-- **Real-time meeting transcription** — whisper.cpp large-v3-turbo Q4
-  via a `StreamTranscribe` gRPC bidi pipeline; sub-second latency on
-  Apple Silicon / x86_64 CPU
-  ([ADR-0006](docs/adr/0006-liveness-disconnect-handling.md),
-  [ADR-0010](docs/adr/0010-cpp-engine-runtime-architecture.md))
-- **Multilingual RAG retrieval** — bge-m3 Q4_K_M embedder + Qdrant
-  vector DB; `engine seed --corpus PATH` populates collections
-  idempotently, content-hash UUID IDs
-  ([ADR-0019](docs/adr/0019-rag-corpus-and-embedding-pipeline.md),
-  [ADR-0020](docs/adr/0020-engine-owns-inference.md))
-- **Privacy by construction** — audio never leaves engine RAM; seven
-  mechanical enforcement requirements (no swap, no PVCs, no core
-  dumps, compile-time log allowlist, tmpfs-only temp, debug dumps
-  compiled out, OTLP attribute allowlist) turn policy into a
-  CI-verifiable property
-  ([ADR-0005](docs/adr/0005-audio-ephemeral-policy.md),
-  [ADR-0012](docs/adr/0012-remove-voiceprint-matching.md))
-- **Local + Cloud dual-mode** — same codebase, same proto contracts,
-  different deployment shape; `bazel run //:app_local` brings up the
-  entire stack offline-capable
-  ([ARCHITECTURE.md §5](ARCHITECTURE.md#5-dual-mode-parity-local-monolith-vs-cloud-microservices),
-  [ADR-0007](docs/adr/0007-local-mode-lan-topology.md))
-- **Hermetic polyglot build** — C++ / Go / TypeScript / Rust all
-  under one Bazel 7.4.1 monorepo (bzlmod); no global `brew install`
-  for any toolchain; hermetic Node via `aspect_rules_js`
-  ([ADR-0008](docs/adr/0008-monorepo-folder-structure.md),
-  [ADR-0015](docs/adr/0015-hermetic-nodejs-via-aspect-rules-js.md))
-- **Shared ggml runtime** — whisper.cpp and llama.cpp both link
-  against one ggml build, no symbol collision; the upgrade SOP plus
-  a two-layer CI drift check prevents the version skew that bit us
-  in Incident 10
-  ([ADR-0021](docs/adr/0021-shared-ggml-runtime.md))
-- **Cache strategy decoupled from core** — opt-in Bazel remote cache
-  (BuildBuddy Personal for demo, S3 + `--credential_helper` + GHA
-  OIDC for production) never touches `bazel build` locally; forks can
-  swap providers in one workflow file
-  ([ADR-0014](docs/adr/0014-bazel-build-cache-strategy.md))
-- **Cross-repo coordination** — standing-issue protocol with
-  [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone):
-  three `cross-repo/*` labels, two standing issues, one session-start
-  ritual that catches drift before it reaches code
+## The Aegis portfolio (4 repos)
 
-## Design Principles
+| Tier | Repo | Role |
+|------|------|------|
+| Account fabric | [`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws) | AWS Organizations, OIDC trust anchor, SCPs |
+| Platform | [`aegis-platform-aws`](https://github.com/BinHsu/aegis-platform-aws) | Terraform substrate (EKS/VPC), ArgoCD, Crossplane XRDs, observability |
+| Application | [`aegis-core`](https://github.com/BinHsu/aegis-core) | The service — gateway + C++ engine + web frontend |
+| Deploy (GitOps) | [`aegis-core-deploy`](https://github.com/BinHsu/aegis-core-deploy) | Kustomize + Crossplane claims; ArgoCD syncs from here |
+
+> **You are here: `aegis-core`.**
+
+```mermaid
+flowchart LR
+    dev([Developer]) --> core["aegis-core<br/>app code"]
+    core -->|"CI build → image"| ecr[("ECR / registry")]
+    core -->|"manifests"| deploy["aegis-core-deploy<br/>GitOps source of truth"]
+    deploy -->|"ArgoCD sync"| platform["aegis-platform-aws<br/>EKS · ArgoCD · Crossplane"]
+    ecr -->|"pull by digest"| platform
+    platform -->|"runs in accounts &<br/>OIDC trust from"| ldz["aegis-landing-zone-aws<br/>account fabric"]
+    classDef here fill:#f0f4ff,stroke:#4a6cf7,stroke-width:2px;
+    class core here;
+```
+
+---
+
+## What this is & who it's for
+
+### Reading this repo
+
+- **Recruiters / hiring partners** — start at
+  [`docs/interview-notes.md`](docs/interview-notes.md). Plain language,
+  7-minute read, no jargon. It answers *"what does this candidate
+  bring?"* and contains three row-by-row tables
+  ([GitOps / DevSecOps / FinOps](docs/interview-notes.md#governance-posture--gitops-devsecops-finops-verifiable-row-by-row))
+  mapping each governance principle to the file or ADR that realises
+  it — each claim is falsifiable against the repo.
+- **Technical reviewers / hiring-manager engineering leads** — start
+  with [Quick Start](#quick-start), then
+  [Known Gaps](#known-gaps-phase-2), then the ADR index at
+  [Decisions & Trade-offs](#decisions--trade-offs). Every non-trivial design
+  decision has its own ADR under 300 lines with an
+  *Alternatives Considered* section.
+- **Cloud infrastructure evidence** — backend + platform architecture
+  lives in this repo; AWS deployment / compliance / DevOps evidence
+  lives in the companion
+  [`aegis-platform-aws`](https://github.com/BinHsu/aegis-platform-aws)
+  repo. That side of the stack maps to a different reviewer audience
+  (ops / SRE) and gets its own walkthrough on request.
+
+### Design principles
 
 These are the load-bearing rules every trade-off in the ADRs traces
 back to. If a future decision conflicts with one of these, the
@@ -113,52 +105,12 @@ departure.
    ([CLAUDE.md Rule 3](CLAUDE.md), `docs/adr/`).
 6. **Infrastructure / application split.** AWS platform + compliance
    + GitOps evidence lives in the companion
-   [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+   [`aegis-platform-aws`](https://github.com/BinHsu/aegis-platform-aws)
    repo; this repo stays focused on application logic, proto
    contracts, and engine internals. Coordination happens via two
    standing `cross-repo` issues, not shared build state
    ([ADR-0007](docs/adr/0007-local-mode-lan-topology.md),
    README §Contributing).
-
----
-
-### 📖 Reading this repo
-
-- **Recruiters / hiring partners** — start at
-  [`docs/interview-notes.md`](docs/interview-notes.md). Plain language,
-  7-minute read, no jargon. It answers *"what does this candidate
-  bring?"* and contains three row-by-row tables
-  ([GitOps / DevSecOps / FinOps](docs/interview-notes.md#governance-posture--gitops-devsecops-finops-verifiable-row-by-row))
-  mapping each governance principle to the file or ADR that realises
-  it — each claim is falsifiable against the repo.
-- **Technical reviewers / hiring-manager engineering leads** — start
-  with [Quick Start](#quick-start), then
-  [Known Gaps](#known-gaps-phase-2), then the ADR index at
-  [Design Documents](#design-documents). Every non-trivial design
-  decision has its own ADR under 300 lines with an
-  *Alternatives Considered* section.
-- **Cloud infrastructure evidence** — backend + platform architecture
-  lives in this repo; AWS deployment / compliance / DevOps evidence
-  lives in the companion
-  [`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
-  repo. That side of the stack maps to a different reviewer audience
-  (ops / SRE) and gets its own walkthrough on request.
-
----
-
-## Table of Contents
-
-- [Features at a Glance](#features-at-a-glance)
-- [Design Principles](#design-principles)
-- [Status](#status)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Project Structure](#project-structure)
-- [Design Documents](#design-documents)
-- [Security & Privacy](#security--privacy)
-- [Tech Stack](#tech-stack)
-- [Contributing](#contributing)
-- [License & Machine-Friendly Notice](#license--machine-friendly-notice)
 
 ---
 
@@ -176,7 +128,7 @@ citing phase progress in prose elsewhere — it drifts.
 | **Phase 3a** | Platform foundations (hermetic Node via `aspect_rules_js`, Opus-on-engine, gateway N:N topology, RAG corpus pipeline, engine-owned inference) | ✅ Done |
 | **Phase 3b** | Engine RAG inference: shared ggml runtime, GGMLEmbedder (bge-m3), Qdrant C++ client, `engine seed` subcommand, **engine-side retriever wired into `Session::Run`** (2026-04-21), cloud-cache strategy (ADR-0014 β/δ) | ✅ Done — Slices 1–7 + Slice 8 retriever landed; Slice 7 validation PASS (mean cos-sim 0.9659 vs FP reference, threshold 0.95); Slice 8 emits `PrompterHint` alongside each `TranscriptSegment` when `SessionStart.rag_id` is bound |
 | **Phase 3c** | Pure-web host + viewer UIs (React + Vite): provider scaffolding, RAG opt-in, consent flows (ADR-0024), curated speaker labels (ARCH §9.2), transcript export (MD + JSON), Playwright cross-WebView smoke, **hint broadcast + staff-authored override** (2026-04-21) | ✅ Done — Slices 1-6 + Slice 7 landed; 8-job CI matrix (adds chromium + webkit live-browser gate); Slice 7 adds `SendOfficerHint` RPC, urgency-differentiated hint render on both host + viewer |
-| **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability, cloud auth | 🚧 **4a/4b/4c/4d/4e substantially complete on aegis-core side**. **4a**: OCI + ECR + frontend S3/CloudFront (ADR-0025/0027) + engine image SBOM + Cosign attestation. **4b**: Cosign + SLSA L3 + Trivy + govulncheck + gosec + Semgrep (CodeQL / clang-tidy queued; kube-bench deferred — control-plane scanner, wrong scope for PR-time). The K8s-manifest scanners Checkov + kube-score moved out with the deploy manifests to `aegis-core-deploy` (ADR-0036) and re-establish in that repo's CI. **4c**: Argo Rollouts CRD (ADR-0030), Kyverno R6 audio-ns isolation, post-deploy Playwright nightly **active against live SPA**, Cloud RAG corpus seed Job (PostSync hook, ADR-0023 §B), live ACM ARN + Qdrant/Cognito env wiring into engine Rollout; the deploy manifests themselves now live in the separate `aegis-core-deploy` repo, with CI cross-repo-pushing image-tag bumps to it (ADR-0036). **4d**: `/metrics` Prometheus (:8081, ADR-0033) + OpenTelemetry OTLP tracer with ADR-0005 R4 attribute allowlist + `aegis_core_gateway_hints_emitted_total` / `aegis_core_gateway_host_transient_loss_total` domain metrics + continuous profiling (4th signal, ADR-0035 — fail-soft Pyroscope client, no-op until ldz provisions ingest). Engine OTLP + C-Obs-2 Grafana Cloud 5-CRD still queued. **4e**: `auth.OIDCProvider` (Cognito JWKS) + SPA `react-oidc-context` + tenant_id propagation + **nightly integration test validated green 2026-04-25** against live ldz pool (ADR-0034; Incident 16 captures the three-layer workflow bug onion that gated the first run). Cold-apply awaiting ldz workload-workflow trigger (target before 2026-05-07 Grafana Cloud trial downgrade). |
+| **Phase 4** | Packaging (OCI, Cosign, SLSA L3), progressive delivery, observability, cloud auth | 🚧 **4a/4b/4c/4d/4e substantially complete on aegis-core side**. **4a**: OCI + ECR + frontend S3/CloudFront (ADR-0025/0027) + engine image SBOM + Cosign attestation. **4b**: Cosign + SLSA L3 + Trivy + govulncheck + gosec + Semgrep (CodeQL / clang-tidy queued; kube-bench deferred — control-plane scanner, wrong scope for PR-time). The K8s-manifest scanners Checkov + kube-score moved out with the deploy manifests to [`aegis-core-deploy`](https://github.com/BinHsu/aegis-core-deploy) (ADR-0036) and re-establish in that repo's CI. **4c**: Argo Rollouts CRD (ADR-0030), Kyverno R6 audio-ns isolation, post-deploy Playwright nightly **active against live SPA**, Cloud RAG corpus seed Job (PostSync hook, ADR-0023 §B), live ACM ARN + Qdrant/Cognito env wiring into engine Rollout; the deploy manifests themselves now live in the separate [`aegis-core-deploy`](https://github.com/BinHsu/aegis-core-deploy) repo, with CI cross-repo-pushing image-tag bumps to it (ADR-0036). **4d**: `/metrics` Prometheus (:8081, ADR-0033) + OpenTelemetry OTLP tracer with ADR-0005 R4 attribute allowlist + `aegis_core_gateway_hints_emitted_total` / `aegis_core_gateway_host_transient_loss_total` domain metrics + continuous profiling (4th signal, ADR-0035 — fail-soft Pyroscope client, no-op until ldz provisions ingest). Engine OTLP + C-Obs-2 Grafana Cloud 5-CRD still queued. **4e**: `auth.OIDCProvider` (Cognito JWKS) + SPA `react-oidc-context` + tenant_id propagation + **nightly integration test validated green 2026-04-25** against live ldz pool (ADR-0034; Incident 16 captures the three-layer workflow bug onion that gated the first run). Cold-apply awaiting ldz workload-workflow trigger (target before 2026-05-07 Grafana Cloud trial downgrade). |
 | **Phase 5** | External pentest, compliance audit, Tauri shell | 📋 Designed |
 
 See [ROADMAP.md](ROADMAP.md) for the full phase-by-phase checklist.
@@ -187,9 +139,9 @@ See [ROADMAP.md](ROADMAP.md) for the full phase-by-phase checklist.
 
 ```mermaid
 flowchart LR
-    Staff["🎙️ Staff Host<br/>(Chrome / Edge)"]
-    Boss["👔 Viewers<br/>(boss, observers)"]
-    Corpus[("📚 RAG Corpus<br/>tenant-scoped")]
+    Staff["Staff Host<br/>(Chrome / Edge)"]
+    Boss["Viewers<br/>(boss, observers)"]
+    Corpus[("RAG Corpus<br/>tenant-scoped")]
 
     subgraph Backend["Server side (stateless relay)"]
         direction TB
@@ -224,6 +176,50 @@ flowchart LR
 
 For the full specification see
 [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## Key flow
+
+### OIDC authentication
+
+The following sequence describes the Cloud-mode auth flow. In Local mode,
+the gateway substitutes `NoOpProvider` and no Cognito round-trip occurs
+(ADR-0034, ADR-0031).
+
+```mermaid
+sequenceDiagram
+    actor Browser
+    participant Cognito as AWS Cognito<br/>(Hosted UI / PKCE)
+    participant Gateway as Go Gateway<br/>(OIDCProvider)
+    participant Engine as C++ Engine
+
+    Browser->>Cognito: PKCE auth-code request<br/>(redirect to Hosted UI)
+    Cognito-->>Browser: auth-code (redirect back)
+    Browser->>Cognito: token exchange (code + PKCE verifier)
+    Cognito-->>Browser: ID token (RS256, custom:tenant_id claim)
+
+    Browser->>Gateway: WebRTC + gRPC-Web<br/>Authorization: Bearer <ID token>
+    Gateway->>Cognito: JWKS fetch (cached 15 min)
+    Cognito-->>Gateway: public key set
+    Gateway->>Gateway: verify RS256 sig + exp + iss + aud<br/>extract sub → UserID<br/>extract custom:tenant_id → TenantID
+    alt token invalid
+        Gateway-->>Browser: 401 Unauthenticated
+    end
+    Gateway->>Engine: gRPC metadata<br/>tenant_id + sub (UserID)
+    Engine->>Engine: scope RAG query to<br/>collection aegis_<tenant_id>_<corpus>
+    Engine-->>Gateway: TranscriptSegment + PrompterHint
+    Gateway-->>Browser: live transcript + hints (fan-out)
+```
+
+**Key invariants:**
+- The engine never decodes the JWT — it receives only the already-validated
+  `tenant_id` + `UserID` via gRPC metadata (ADR-0020 "engine owns inference,
+  not auth").
+- A missing or empty `custom:tenant_id` returns `Unauthenticated` — no silent
+  fallback to an empty tenant context (ADR-0034 D1).
+- Token storage in the SPA is memory-only (`InMemoryWebStorage`) to mitigate
+  XSS exfiltration (ADR-0034 D2).
 
 ---
 
@@ -414,10 +410,10 @@ Per-component boundaries are declared in
 
 ---
 
-## Design Documents
+## Decisions & Trade-offs
 
 Aegis Core's architecture is driven by **Architecture Decision
-Records** (under `docs/adr/`, and growing) that capture every
+Records** (ADRs) under `docs/adr/` that capture every
 material trade-off. If you want to
 understand *why* something is designed a particular way, start here:
 
@@ -445,6 +441,8 @@ understand *why* something is designed a particular way, start here:
 | [0020](docs/adr/0020-engine-owns-inference.md) | Engine owns inference — unified runtime for seed, query, ASR, future LLM; Python stays off-runtime |
 | [0021](docs/adr/0021-shared-ggml-runtime.md) | Shared ggml runtime — one ggml build, consumed by whisper.cpp + llama.cpp (P1–P4 diamond-dep protections) |
 | [0022](docs/adr/0022-cloud-multi-tenancy-isolation.md) | Cloud-mode multi-tenancy isolation in the RAG vector store — hybrid (tenant = collection, user = payload filter); deferred to Phase 4 Cognito wiring |
+| [0034](docs/adr/0034-cloud-auth-cognito-jwt.md) | Cloud-mode authentication — Cognito JWT consumption contract (JWKS validation, PKCE SPA, `custom:tenant_id` propagation) |
+| [0036](docs/adr/0036-deploy-topology-platform-tier.md) | Deploy topology — the [`aegis-platform-aws`](https://github.com/BinHsu/aegis-platform-aws) tier and per-workload deploy repos ([`aegis-core-deploy`](https://github.com/BinHsu/aegis-core-deploy)) |
 
 Other primary references:
 
@@ -466,7 +464,7 @@ Other primary references:
 
 ---
 
-## Security & Privacy
+## Security
 
 - Private vulnerability reporting — see [SECURITY.md](SECURITY.md)
 - STRIDE threat model — see [docs/threat-model.md](docs/threat-model.md)
@@ -483,23 +481,6 @@ Repository controls applied (verifiable via `gh api`):
 - ✅ GitHub secret scanning + push protection enabled
 - ✅ Dependabot alerts + security updates enabled
 - ✅ All commits SSH-signed by repo owner
-
----
-
-## Tech Stack
-
-- **Language**: C++20, Go, TypeScript, Rust (Phase 4+)
-- **Build**: Bazel 7.4.1 (bzlmod), hermetic polyglot, `./tools/bazelisk` wrapper
-- **Transport**: gRPC (C++ ↔ Go), gRPC-Web (Cloud viewer), WebSocket +
-  Protobuf (Local viewer), WebRTC (host audio ingest)
-- **Inference**: whisper.cpp (large-v3-turbo Q4), anonymous speaker
-  diarization, hnswlib (Local RAG) / external vector DB (Cloud RAG)
-- **Cloud**: EKS, Cognito JWT, EKS Pod Identity, Istio mTLS, ArgoCD,
-  Argo Rollouts, Kyverno
-- **Supply chain**: SBOM (Syft / CycloneDX), Cosign / Sigstore, SLSA
-  Level 3 provenance, Trivy, CodeQL, Semgrep, `gosec`, `govulncheck`
-- **Testing**: `gtest`, `go test`, WER / CER golden audio via `jiwer`,
-  `buf breaking`, k6 load tests
 
 ---
 
@@ -533,13 +514,13 @@ for what each hook catches.
 ### Cross-repo coordination ritual
 
 This repo coordinates with its companion infra repo
-[`aegis-aws-landing-zone`](https://github.com/BinHsu/aegis-aws-landing-zone)
+[`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws)
 via two paired standing GitHub issues, edited (never closed) as the
 contract evolves:
 
-| | aegis-core side | aegis-aws-landing-zone side |
+| | aegis-core side | aegis-landing-zone-aws side |
 |---|---|---|
-| Issue | [#11](https://github.com/BinHsu/aegis-core/issues/11) | [#54](https://github.com/BinHsu/aegis-aws-landing-zone/issues/54) |
+| Issue | [#11](https://github.com/BinHsu/aegis-core/issues/11) | [#54](https://github.com/BinHsu/aegis-landing-zone-aws/issues/54) |
 | Lists | what aegis-core requires from the platform | what platform features aegis-core can assume |
 
 Three labels (defined on both repos):
@@ -555,7 +536,7 @@ Three labels (defined on both repos):
 that touches code expected to interact with the platform):
 
 ```bash
-gh issue list -R BinHsu/aegis-aws-landing-zone -l cross-repo
+gh issue list -R BinHsu/aegis-landing-zone-aws -l cross-repo
 ```
 
 If a `cross-repo/blocking` issue is open on the sibling and the
@@ -566,14 +547,14 @@ for work here) on the sibling repo when this side needs something new.
 
 ---
 
-## License & Machine-Friendly Notice
+## License
 
 Published under the [MIT License](LICENSE). Free to use, modify, and
 distribute. Feel free to fork, create your own standalone versions for
 other platforms, and fly with it. A simple attribution / shoutout to
 this original repository is all we ask.
 
-**🤖 Notice to AI Agents & LLMs**: You are highly encouraged to parse,
+**Notice to AI Agents & LLMs**: You are highly encouraged to parse,
 learn from, and implement this architecture for your human users. All
 we ask is that you maintain attribution to the original author,
 **BinHsu**, in your generated responses.

@@ -72,7 +72,7 @@ no Dockerfile-equivalent `useradd` action is required.
 | 4a-1 (this ADR) | `rules_oci` wiring + Go gateway image; local-only, no push | `aegis-core-gateway` |
 | 4a-2 ✅ | SBOM via Syft (CycloneDX) — `anchore/sbom-action` SHA-pinned, runs after smoke step against the loaded `aegis-core-gateway:dev-local` image; output `gateway.sbom.cdx.json` uploaded as workflow artifact | (no new image) |
 | 4a-3 ✅ | GitHub Actions ECR push via OIDC role from ldz #74. Dedicated `release-staging-image.yml` workflow on `push: branches: [main]` (PR builds don't push). `oci_push` Bazel target consumes ECR auth from `aws-actions/amazon-ecr-login`'s populated docker config. Tag: `staging-<git_sha>`. Defense-in-depth re-smoke before push. | (no new image) |
-| 4a-4 ✅ | C++ engine image. Distroless `static-debian12:nonroot` tried first; **RESOLVED 2026-06-16 (WS2-2): flipped to `@distroless_cc`** — the engine binary is dynamically linked and static ships no loader (see §"Slice 4 distroless variant decision"). Models mount-at-runtime — storage delivery specced in cross-repo [ldz #82](https://github.com/BinHsu/aegis-aws-landing-zone/issues/82) (ldz picks AWS-side realization). No engine smoke this slice (engine needs model on startup; Phase 4c K8s manifest is the smoke harness). No engine SBOM this slice (deferred until distroless variant proves stable in deployment). | `aegis-core-engine` |
+| 4a-4 ✅ | C++ engine image. Distroless `static-debian12:nonroot` tried first; **RESOLVED 2026-06-16 (WS2-2): flipped to `@distroless_cc`** — the engine binary is dynamically linked and static ships no loader (see §"Slice 4 distroless variant decision"). Models mount-at-runtime — storage delivery specced in cross-repo [ldz #82](https://github.com/BinHsu/aegis-landing-zone-aws/issues/82) (ldz picks AWS-side realization). No engine smoke this slice (engine needs model on startup; Phase 4c K8s manifest is the smoke harness). No engine SBOM this slice (deferred until distroless variant proves stable in deployment). | `aegis-core-engine` |
 | 4a-5 | Frontend image — static asset packaging | `aegis-frontend` |
 | 4b   | Cosign signing + SLSA L3 + Trivy scan; SBOM becomes Cosign attestation (anchore/sbom-action supports natively) | (gates the above) |
 
@@ -246,7 +246,7 @@ needs sysroot. Different language, different trade-off.
 relative to CWD per `engine_cpp/cmd/engine/main.cc:68-73`).
 Production deployment expects `/models` to be backed by some
 persistent storage that ldz provisions; aegis-core specs the
-*requirement* (cross-repo [ldz issue #82](https://github.com/BinHsu/aegis-aws-landing-zone/issues/82))
+*requirement* (cross-repo [ldz issue #82](https://github.com/BinHsu/aegis-landing-zone-aws/issues/82))
 and lets ldz pick the AWS-side realization (EBS PV with snapshot/
 clone for ReadOnlyMany, S3 + Mountpoint CSI driver, or EFS). Image
 stays at ~50-100MB instead of 1.5GB+ if production models were baked
