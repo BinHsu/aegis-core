@@ -1,5 +1,7 @@
 # Runbook — Fork aegis-core and Deploy to Your Own AWS
 
+<!-- docs ahead of code: this runbook references `aegis-aws-landing-zone` as the companion infra repo. The upstream infra repo has been renamed/reorganized to `aegis-platform-aws`. Fork operators using the upstream platform should refer to aegis-platform-aws; this runbook's Terraform paths and output names may differ. -->
+
 | Field | Value |
 | --- | --- |
 | Audience | **Fork operator** who wants the deploy chain (ECR push, S3+CloudFront frontend) to land in their own AWS account, not the upstream's |

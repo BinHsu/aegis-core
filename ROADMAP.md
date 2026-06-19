@@ -182,7 +182,7 @@ the privacy posture defined in `ARCHITECTURE.md` §9.
   no DynamoDB, no S3, no SQS. Pod Identity's only value is when you're
   actually making AWS API calls. **How to close:** when Phase 4 OCI
   packaging adds the EKS deployment surface from the
-  `aegis-aws-landing-zone` repo, wire
+  `aegis-platform-aws` repo, wire
   `github.com/aws/aws-sdk-go-v2/config.LoadDefaultConfig` — it picks up
   Pod Identity credentials via the service-account IAM role without any
   Go-side code changes. Tracking this as Phase 4 ops wiring, not a Go

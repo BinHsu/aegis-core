@@ -33,39 +33,31 @@ frontend_web/
 
 ## Development
 
-```bash
-# First-time setup
-cd frontend_web
-npm install          # or pnpm install
+Use the `tools/scripts/frontend.sh` wrapper — it drives a hermetic Node 20 + pnpm
+managed by `aspect_rules_js` (ADR-0015). No system `node` or `npm` required.
 
-# Dev server with HMR
-npm run dev
-# → Local: http://localhost:5173/
+```bash
+# First-time setup (hermetic pnpm install via Bazel-managed Node)
+./tools/scripts/frontend.sh install
+
+# Dev server with HMR on :5173
+./tools/scripts/frontend.sh dev
 
 # Type-check only (CI-friendly, no build)
-npm run typecheck
+./tools/scripts/frontend.sh typecheck
 
-# Production build
-npm run build        # outputs dist/
-npm run preview      # serve dist/ locally
+# Production build → frontend_web/dist/
+./tools/scripts/frontend.sh build
 ```
 
-## Bazel integration — **deferred to Phase 4**
+## Bazel integration
 
-Unlike `engine_cpp/` and `gateway_go/`, the frontend is currently
-NPM-managed, not Bazel-wrapped. Reasoning:
-
-- Frontend tooling (Vite, React, Next, Bun) evolves rapidly; pinning
-  it into Bazel creates constant version drift.
-- The frontend's only production artifact is a static bundle — there
-  is no downstream Bazel consumer of its build outputs until Phase 4a
-  OCI packaging.
-- `aspect_rules_js` + `rules_nodejs` + `rules_ts` bzlmod setup is
-  non-trivial and its value here is low until the packaging story
-  matters.
-
-When Phase 4a lands, we wrap this directory with `aspect_rules_js` to
-produce a deterministic Bazel artifact that `rules_oci` can embed.
+The frontend is wrapped under `aspect_rules_js` as of Phase 3a (ADR-0015). The
+`tools/scripts/frontend.sh` script invokes pnpm through the Bazel-managed
+Node toolchain — the same Node version that CI uses. Local `node_modules/` is
+populated by this script, not by a system npm or nvm. See ADR-0015 for the
+hermetic-Node rationale and the `rules_oci` packaging wiring for the CloudFront
+deploy path.
 
 ## Provider interfaces (ADR-0002 Constraint 2)
 

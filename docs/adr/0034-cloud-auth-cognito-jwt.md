@@ -63,6 +63,8 @@ Concretely:
 - Bearer injection: the existing `frontend_web/src/lib/gateway-client.ts` wrapper attaches `metadata: { Authorization: \`Bearer ${idToken}\` }` on every outbound gRPC-Web call. Interceptor-style, one change point.
 - **Token storage: memory-only** — `oidc-client-ts` configured with `userStore: InMemoryWebStorage`. Rationale: mitigate XSS token exfiltration. Trade-off: silent-auth refresh on every SPA reload. If cold-apply UX surfaces friction, revisit — do not regress to `localStorage` without a compensating mitigation.
 
+<!-- docs ahead of code: the shipped implementation in frontend_web/src/lib/auth.ts uses WebStorageStateStore (localStorage), not InMemoryWebStorage. The code comment at auth.ts:124 acknowledges this as a deliberate trade-off ("Phase 3 landed localStorage with an explicit tradeoff comment"). A separate ADR update is needed to close this gap formally. -->
+
 ### D3. `custom:tenant_id` propagation path
 
 **Pick**: reuse the existing wire. `Principal.TenantID` is populated by D1's `OIDCProvider`; ADR-0022 §"Query path" already specifies the gateway → engine gRPC-metadata hop and the engine-side Qdrant filter.
