@@ -28,17 +28,17 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-oidc-context": "^3.2.0",
-    "react-router-dom": "^7.1.0"
+    "react-router-dom": "^7.15.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1",
+    "@playwright/test": "^1.55.1",
     "@types/node": "^20.19.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
     "happy-dom": "^20.9.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7",
+    "vite": "^6.4.3",
     "vitest": "^4.1.4"
   }
 }
