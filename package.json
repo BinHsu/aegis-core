@@ -7,5 +7,12 @@
     "node": ">=20.0.0",
     "pnpm": ">=8.0.0"
   },
-  "packageManager": "pnpm@8.6.7"
+  "packageManager": "pnpm@8.6.7",
+  "pnpm": {
+    "//overrides": "Force patch-level bumps of transitive deps flagged by Dependabot. postcss 8.5.10 fixes CVE-2026-41305 (moderate); @babel/core 7.29.6 fixes CVE-2026-49356 (low). Both are pulled transitively (vite / @vitejs/plugin-react) at API-compatible patch versions, so an override is the lowest-risk fix until the parents widen their ranges.",
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10 <9",
+      "@babel/core@<7.29.6": ">=7.29.6 <8"
+    }
+  }
 }

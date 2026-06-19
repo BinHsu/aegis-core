@@ -60,13 +60,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # Same cache shape as release-staging-image.yml. Note the cache key is
       # NOT arch-qualified there; this workflow is the only arm64 builder, so
       # give it its own key prefix to avoid cross-arch artifact mixing.
       - name: Cache Bazel
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ${{ github.workspace }}/.bazel_cache
@@ -138,16 +138,24 @@ jobs:
           echo "::notice title=Gateway image pushed::${GHCR_GATEWAY}:${TAG} (${DIGEST})"
 
       - name: Summary
+        # Step outputs are surfaced through env, not interpolated directly
+        # into the run: body — ${{ }} expansion into a shell here is the
+        # run-shell-injection sink semgrep flags. Reading them as quoted
+        # $VAR shell variables removes the code-execution path.
+        env:
+          ENGINE_REF: ${{ steps.push-engine.outputs.ref }}
+          GATEWAY_REF: ${{ steps.push-gateway.outputs.ref }}
+          PUSH_GATEWAY: ${{ inputs.push_gateway }}
         run: |
           {
             echo "## Core images pushed to GHCR (linux/arm64)"
-            echo "- engine:  \`${{ steps.push-engine.outputs.ref }}\`"
-            if [ "${{ inputs.push_gateway }}" = "true" ]; then
-              echo "- gateway: \`${{ steps.push-gateway.outputs.ref }}\`"
+            echo "- engine:  \`${ENGINE_REF}\`"
+            if [ "${PUSH_GATEWAY}" = "true" ]; then
+              echo "- gateway: \`${GATEWAY_REF}\`"
             fi
             echo ""
             echo "Pull into the local cluster registry, e.g.:"
             echo '```'
-            echo "crane copy ${{ steps.push-engine.outputs.ref }} <node-ip>:5000/aegis-core@<digest>"
+            echo "crane copy ${ENGINE_REF} <node-ip>:5000/aegis-core@<digest>"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

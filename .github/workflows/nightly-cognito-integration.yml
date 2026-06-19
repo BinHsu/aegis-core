@@ -60,7 +60,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # AWS OIDC: STS AssumeRoleWithWebIdentity → temporary creds.
       # The configure-aws-credentials action exports them as
@@ -134,7 +134,7 @@ jobs:
       # their cost is sub-second and runs as a free regression check
       # on the same nightly cadence.
       - name: Cache Bazel
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ${{ github.workspace }}/.bazel_cache
