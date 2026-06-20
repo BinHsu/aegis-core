@@ -55,12 +55,24 @@ go_binary(
 # a Linux artifact regardless of the host running `bazel build`. Devs
 # can also `bazel build :gateway_linux_amd64` directly to inspect "what
 # does my code look like as a Linux ELF" without needing Docker.
-#
-# When Slice 3 (multi-arch image_index) lands, sibling targets
-# :gateway_linux_arm64 etc. get added here; YAGNI for Slice 1.
 go_cross_binary(
     name = "gateway_linux_amd64",
     platform = "@rules_go//go/toolchain:linux_amd64",
+    target = ":gateway",
+    visibility = ["//visibility:public"],
+)
+
+# Explicit linux/arm64 cross-compile target — the on-prem / Graviton path.
+# The local Talos cluster (apple/container) and Graviton EKS nodepools run
+# linux/arm64; //packaging/gateway:image_arm64 consumes this so the GHCR
+# image published by release-onprem-image.yml carries a real arm64 ELF
+# instead of an amd64 binary that `exec format error`s on arm64 nodes.
+# Mirrors :gateway_linux_amd64 — same pure-Go `:gateway`, different target
+# platform. (The engine cross-compiles natively via local_config_cc on the
+# arm64 runner, so it needs no equivalent here.)
+go_cross_binary(
+    name = "gateway_linux_arm64",
+    platform = "@rules_go//go/toolchain:linux_arm64",
     target = ":gateway",
     visibility = ["//visibility:public"],
 )
