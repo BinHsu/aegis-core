@@ -204,13 +204,34 @@ jobs:
           TAG="staging-${GITHUB_SHA}"
           REPO="${ECR_REGISTRY}/${ECR_REPOSITORY}"
           echo "Pushing ${REPO}:${TAG}"
-          # Capture push output so we can extract the manifest digest
-          # for the downstream Cosign sign + attest steps. oci_push
-          # prints the digest as `<repo>@sha256:...` on its last lines.
           ./tools/bazelisk/bazelisk run //packaging/gateway:push_staging -- \
             --repository "${REPO}" \
-            --tag "${TAG}" 2>&1 | tee /tmp/gateway-push.log
-          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/gateway-push.log | tail -1)
+            --tag "${TAG}"
+
+          # REGISTRY-AUTHORITATIVE digest resolution (fix #141).
+          # `aws ecr describe-images` by the immutable just-pushed tag is
+          # the only ground truth for what is pullable. Greeter publish.yml
+          # :134-138 proved this pattern necessary after buildx/oci_push log
+          # grep reported a digest that did not exist in the registry →
+          # ErrImagePull NotFound in downstream pods.
+          DIGEST="$(aws ecr describe-images \
+            --region "${AWS_REGION}" \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${TAG}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+
+          # Sanity check: fail loudly on empty or malformed digest so a
+          # silent empty value never flows into Cosign sign/attest or the
+          # deploy-repo digest pin.
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::ecr describe-images returned empty digest for ${ECR_REPOSITORY}:${TAG} — aborting"
+            exit 1
+          fi
+          case "${DIGEST}" in
+            sha256:[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]) ;;
+            *) echo "::error::resolved gateway digest is not sha256:<64 hex>: '${DIGEST}'"; exit 1 ;;
+          esac
+
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "ref=${REPO}@${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "::notice title=Gateway image pushed::${REPO}:${TAG} (${DIGEST})"
@@ -273,8 +294,29 @@ jobs:
           echo "Pushing ${REPO}:${TAG}"
           ./tools/bazelisk/bazelisk run //packaging/engine:push_staging -- \
             --repository "${REPO}" \
-            --tag "${TAG}" 2>&1 | tee /tmp/engine-push.log
-          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/engine-push.log | tail -1)
+            --tag "${TAG}"
+
+          # REGISTRY-AUTHORITATIVE digest resolution (fix #141).
+          # Same pattern as the gateway step above — see that comment for
+          # the full rationale. The same ECR repo holds both images
+          # (distinguished by tag prefix); `imageTag` selects this push
+          # unambiguously.
+          DIGEST="$(aws ecr describe-images \
+            --region "${AWS_REGION}" \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${TAG}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+
+          # Sanity check: fail loudly on empty or malformed digest.
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::ecr describe-images returned empty digest for ${ECR_REPOSITORY}:${TAG} — aborting"
+            exit 1
+          fi
+          case "${DIGEST}" in
+            sha256:[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]) ;;
+            *) echo "::error::resolved engine digest is not sha256:<64 hex>: '${DIGEST}'"; exit 1 ;;
+          esac
+
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "ref=${REPO}@${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "::notice title=Engine image pushed::${REPO}:${TAG} (${DIGEST})"
