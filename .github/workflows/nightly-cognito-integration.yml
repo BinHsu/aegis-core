@@ -74,6 +74,31 @@ jobs:
           role-to-assume: ${{ env.COGNITO_INTEGRATION_ROLE_ARN }}
           role-session-name: aegis-core-cognito-integration-${{ github.run_id }}
 
+      # Self-gating: staging is ephemeral — brought up for verification then torn down to $0.
+      # If the staging Cognito pool is absent, skip all tests with a green result.
+      # A clean "0 pools" result = staging is down → skip.
+      # An AWS API error (permissions, network) = real failure → red.
+      - name: Preflight — check staging Cognito pool exists
+        id: preflight
+        run: |
+          set -euo pipefail
+          # list-user-pools exits 0 on both "pool found" and "no pools" — only
+          # an API-level error (auth failure, network, throttle) causes non-zero.
+          # We intentionally let API errors propagate as red; only a clean empty
+          # result (staging torn down) becomes a green skip.
+          EXISTS=$(aws cognito-idp list-user-pools \
+            --max-results 60 \
+            --region "$AWS_REGION" \
+            --query "length(UserPools[?Name=='aegis-core-staging'])" \
+            --output text)
+          if [ "$EXISTS" -gt 0 ]; then
+            echo "cognito_present=true" >> "$GITHUB_OUTPUT"
+            echo "Staging Cognito pool 'aegis-core-staging' found — proceeding with integration tests."
+          else
+            echo "cognito_present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Nightly Cognito integration skipped::Staging Cognito absent — skipping nightly integration (staging is torn down). Re-enable tests by bringing staging back up."
+          fi
+
       # Read live values from SSM PS rather than hard-coding the
       # Cognito IDs into the workflow. Two reasons per ldz #76 §A:
       # (1) survives any baking-into-Secrets drift; (2) the SSM PS
@@ -81,6 +106,7 @@ jobs:
       # the wrong place for them to live if they ever rotate.
       - name: Read Cognito IDs from SSM Parameter Store
         id: ssm
+        if: steps.preflight.outputs.cognito_present == 'true'
         run: |
           set -euo pipefail
           # The Cognito SSM parameters are stored as `SecureString` (KMS
@@ -134,6 +160,7 @@ jobs:
       # their cost is sub-second and runs as a free regression check
       # on the same nightly cadence.
       - name: Cache Bazel
+        if: steps.preflight.outputs.cognito_present == 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
@@ -144,6 +171,7 @@ jobs:
             bazel-cognito-integration-${{ runner.os }}-
 
       - name: Run auth integration test against live Cognito
+        if: steps.preflight.outputs.cognito_present == 'true'
         run: |
           set -euo pipefail
           ./tools/bazelisk/bazelisk test \
@@ -155,8 +183,10 @@ jobs:
       # If the test failed, surface a workflow annotation pointing at
       # the most likely causes — operator triaging the morning
       # alert shouldn't have to re-derive the failure-mode taxonomy.
+      # Guard with cognito_present so this hint only fires for real
+      # test failures, not for the clean "staging is down" skip path.
       - name: Failure triage hint
-        if: failure()
+        if: failure() && steps.preflight.outputs.cognito_present == 'true'
         run: |
           cat <<'EOF' >&2
           ::error title=Cognito integration failed::
