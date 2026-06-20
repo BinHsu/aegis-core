@@ -120,9 +120,16 @@ jobs:
           echo "ref=${GHCR_ENGINE}@${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "::notice title=Engine image pushed::${GHCR_ENGINE}:${TAG} (${DIGEST})"
 
+      # arm64 gateway target (:image_arm64 / :push_onprem), NOT the amd64
+      # :image / :push_staging the ECR workflow uses. The gateway is pure Go
+      # and would cross-compile either arch, but :image packs the amd64
+      # cross-binary on an amd64 base — publishing THAT under the arm64 GHCR
+      # name shipped an amd64 ELF that `exec format error`d on the arm64
+      # Talos / Graviton nodes. :image_arm64 packs the linux/arm64 binary on
+      # the arm64 distroless base (see packaging/gateway/BUILD.bazel).
       - name: Build gateway OCI image (linux/arm64)
         if: ${{ inputs.push_gateway }}
-        run: ./tools/bazelisk/bazelisk build //packaging/gateway:image
+        run: ./tools/bazelisk/bazelisk build //packaging/gateway:image_arm64
 
       - name: Push gateway image to GHCR
         id: push-gateway
@@ -130,7 +137,7 @@ jobs:
         run: |
           set -euxo pipefail
           TAG="onprem-${GITHUB_SHA}"
-          ./tools/bazelisk/bazelisk run //packaging/gateway:push_staging -- \
+          ./tools/bazelisk/bazelisk run //packaging/gateway:push_onprem -- \
             --repository "${GHCR_GATEWAY}" \
             --tag "${TAG}" 2>&1 | tee /tmp/gateway-push.log
           DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/gateway-push.log | tail -1)

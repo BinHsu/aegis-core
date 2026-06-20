@@ -3,15 +3,28 @@
 # Strategy in ADR-0025; per-attribute rationale inline below.
 #
 # Targets:
-#   //packaging/gateway:image         — OCI image directory (CI smoke target;
-#                                       no docker daemon needed to build)
-#   //packaging/gateway:image_load    — wraps :image for `docker load`
-#                                       (`bazel run` invokes the loader)
+#   //packaging/gateway:image          — amd64 OCI image directory (ECR/staging
+#                                        path; CI smoke target, no docker daemon
+#                                        needed to build)
+#   //packaging/gateway:image_load     — wraps :image for `docker load`
+#                                        (`bazel run` invokes the loader)
+#   //packaging/gateway:push_staging   — amd64 push (ECR via release-staging-image.yml)
+#   //packaging/gateway:image_arm64    — arm64 OCI image directory (on-prem /
+#                                        Graviton path: GHCR + local Talos)
+#   //packaging/gateway:image_arm64_load
+#                                      — wraps :image_arm64 for `docker load`
+#   //packaging/gateway:push_onprem    — arm64 push (GHCR via release-onprem-image.yml)
+#
+# Two arch variants, not a multi-arch image_index: the staging/ECR path is
+# amd64 (ubuntu-latest builders) and the on-prem/GHCR path is arm64
+# (ubuntu-24.04-arm builders feeding apple/container + Graviton). Each
+# workflow builds the single variant it needs; an image_index that fuses
+# both is deferred (Slice 3) — YAGNI while the two consumers are arch-pinned.
 #
 # NOT in this slice (deferred):
 #   - SBOM generation (Slice 2, Syft + CycloneDX)
-#   - ECR push (Slice 3, GitHub Actions OIDC role)
 #   - Cosign / SLSA L3 (Phase 4b)
+#   - multi-arch image_index fusing amd64 + arm64 (Slice 3)
 
 load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
@@ -27,8 +40,8 @@ load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 #     fragile across rules_pkg versions.
 # The image entrypoint is /usr/local/bin/gateway (clean Unix
 # convention); the underlying cross-binary's filename
-# `gateway_linux_amd64` is an artefact of the go_cross_binary rule
-# name and is hidden from the runtime via this rename.
+# (`gateway_linux_amd64` / `gateway_linux_arm64`) is an artefact of the
+# go_cross_binary rule name and is hidden from the runtime via this rename.
 pkg_files(
     name = "gateway_files",
     srcs = ["//gateway_go/cmd/gateway:gateway_linux_amd64"],
@@ -42,6 +55,25 @@ pkg_files(
 pkg_tar(
     name = "gateway_layer",
     srcs = [":gateway_files"],
+)
+
+# arm64 sibling of gateway_files/gateway_layer — packs the linux/arm64
+# cross-binary at the same /usr/local/bin/gateway path. Kept as a parallel
+# pair (not parameterised) so the amd64 layer above stays byte-for-byte
+# identical for the unchanged ECR path.
+pkg_files(
+    name = "gateway_files_arm64",
+    srcs = ["//gateway_go/cmd/gateway:gateway_linux_arm64"],
+    attributes = pkg_attributes(mode = "0755"),
+    prefix = "/usr/local/bin",
+    renames = {
+        "//gateway_go/cmd/gateway:gateway_linux_arm64": "gateway",
+    },
+)
+
+pkg_tar(
+    name = "gateway_layer_arm64",
+    srcs = [":gateway_files_arm64"],
 )
 
 # Compose the image:
@@ -81,6 +113,46 @@ oci_load(
     name = "image_load",
     image = ":image",
     repo_tags = ["aegis-core-gateway:dev-local"],
+)
+
+# arm64 image — the on-prem / Graviton variant consumed by
+# release-onprem-image.yml (GHCR). Identical composition to :image but
+# packs the arm64 layer and pins the arm64 distroless base EXPLICITLY.
+#
+# Why an explicit arm64 base instead of `@distroless_static`:
+#   `@distroless_static` is a multi-platform repo that resolves to the
+#   target-platform variant via a platform transition. On the single-arch
+#   arm64 on-prem runner that resolves correctly, but naming the arm64
+#   image directly (`@distroless_static_linux_arm64_v8`, already fetched in
+#   MODULE.bazel) removes any ambiguity on a multi-arch runner and makes
+#   the arm64 intent self-documenting at the build target. The previous
+#   bug was the on-prem workflow building :image (amd64 binary) and
+#   publishing it under the arm64 GHCR name — explicitness here is the fix.
+oci_image(
+    name = "image_arm64",
+    base = "@distroless_static_linux_arm64_v8",
+    entrypoint = ["/usr/local/bin/gateway"],
+    exposed_ports = [
+        "8080/tcp",
+        "9090/tcp",
+    ],
+    labels = {
+        "org.opencontainers.image.source": "https://github.com/BinHsu/aegis-core",
+        "org.opencontainers.image.title": "aegis-core-gateway",
+        "org.opencontainers.image.description": "Aegis Gateway — gRPC + gRPC-Web + WebRTC entry point.",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+    },
+    tars = [":gateway_layer_arm64"],
+    user = "nonroot",
+    visibility = ["//visibility:public"],
+)
+
+# Local smoke for the arm64 image (only loads cleanly on an arm64 docker
+# daemon — e.g. Apple Silicon). Mirrors :image_load.
+oci_load(
+    name = "image_arm64_load",
+    image = ":image_arm64",
+    repo_tags = ["aegis-core-gateway:dev-local-arm64"],
 )
 
 # ECR push target — Phase 4a Slice 3.
@@ -124,6 +196,22 @@ oci_push(
     name = "push_staging",
     image = ":image",
     repository = "251774439261.dkr.ecr.eu-central-1.amazonaws.com/aegis-core",
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)
+
+# GHCR push for the arm64 on-prem image. Sibling of :push_staging, pushing
+# :image_arm64 instead of :image. release-onprem-image.yml ALWAYS passes
+# `--repository ghcr.io/binhsu/aegis-core-gateway` + `--tag onprem-<sha>`
+# at runtime; the BUILD-time `repository` below is rules_oci's required
+# default (analysis fails on an empty value) and is the upstream operator's
+# local-convenience GHCR target — never the secret-bearing value. Same
+# `target_compatible_with = linux` push-from-CI-only discipline as
+# :push_staging.
+oci_push(
+    name = "push_onprem",
+    image = ":image_arm64",
+    repository = "ghcr.io/binhsu/aegis-core-gateway",
     target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//visibility:public"],
 )
