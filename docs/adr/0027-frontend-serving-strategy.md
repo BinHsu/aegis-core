@@ -145,7 +145,7 @@ Final design: nine atomic Variables (`AWS_ACCOUNT_ID`, `AWS_REGION`, `ECR_REPO_N
 
 Real secrets (`BUILDBUDDY_API_KEY` today; future Cosign signing keys) stay in GH Secrets. The Secrets-vs-Variables split now matches the real semantic split: credentials vs config.
 
-The fork runbook (`docs/runbooks/fork-and-self-deploy.md`) documents the 9 Variables a forker sets, with a primary path (Terraform outputs from forked ldz, per ldz #93) and a fallback path (`aws cli` queries) for the values.
+The 9 Variables a forker sets, with a primary path (Terraform outputs from forked ldz, per ldz #93) and a fallback path (`aws cli` queries), were documented in a fork runbook that has since been removed as the architecture pivoted to GHCR public images (ADR-0023).
 
 ## Cross-repo trail
 

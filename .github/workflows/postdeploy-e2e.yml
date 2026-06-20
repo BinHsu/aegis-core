@@ -16,11 +16,9 @@ name: Post-deploy E2E smoke
 #
 #   Layer 1 — vars.FRONTEND_DOMAIN (fork-friendly gate):
 #     Driven by the existing `vars.FRONTEND_DOMAIN` repository variable
-#     (provisioned in Phase 4a, documented in
-#     `docs/runbooks/fork-and-self-deploy.md`). The frontend is served
-#     by S3 + CloudFront per ADR-0027. Forks that haven't populated
-#     FRONTEND_DOMAIN see the job skip cleanly with operator guidance
-#     pointing back at the runbook.
+#     (provisioned in Phase 4a, documented in ADR-0027). The frontend is
+#     served by S3 + CloudFront per ADR-0027. Forks that haven't populated
+#     FRONTEND_DOMAIN see the job skip cleanly with operator guidance.
 #
 #   Layer 2 — staging Cognito pool existence (ephemeral-environment gate):
 #     Staging is ephemeral — brought up for verification then torn to $0.
@@ -82,7 +80,7 @@ jobs:
             echo "vars.FRONTEND_DOMAIN unset — skipping (fork-friendly default)."
             echo "Set repository variable FRONTEND_DOMAIN to your staging frontend"
             echo "host (e.g. aegis-app.staging.example.com) per"
-            echo "docs/runbooks/fork-and-self-deploy.md to enable the real run."
+            echo "See ADR-0027 for the Variables a forker must set to enable the real run."
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
