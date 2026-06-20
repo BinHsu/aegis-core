@@ -12,15 +12,25 @@ name: Post-deploy E2E smoke
 #   - Manual `workflow_dispatch` for targeted runs after a cold-apply
 #     or a deliberate staging change.
 #
-# Gating:
+# Gating (two-layer):
 #
-# Driven by the existing `vars.FRONTEND_DOMAIN` repository variable
-# (provisioned in Phase 4a, documented in
-# `docs/runbooks/fork-and-self-deploy.md`). The frontend is served by
-# S3 + CloudFront per ADR-0027 — independent of the EKS workload-tier
-# lifecycle, so this nightly runs even while ldz's cluster is torn
-# down. Forks that haven't populated FRONTEND_DOMAIN see the job
-# skip cleanly with operator guidance pointing back at the runbook.
+#   Layer 1 — vars.FRONTEND_DOMAIN (fork-friendly gate):
+#     Driven by the existing `vars.FRONTEND_DOMAIN` repository variable
+#     (provisioned in Phase 4a, documented in
+#     `docs/runbooks/fork-and-self-deploy.md`). The frontend is served
+#     by S3 + CloudFront per ADR-0027. Forks that haven't populated
+#     FRONTEND_DOMAIN see the job skip cleanly with operator guidance
+#     pointing back at the runbook.
+#
+#   Layer 2 — staging Cognito pool existence (ephemeral-environment gate):
+#     Staging is ephemeral — brought up for verification then torn to $0.
+#     Even when FRONTEND_DOMAIN is set, the staging environment may be
+#     down. After AWS auth, we probe whether the Cognito pool
+#     'aegis-core-staging' exists. Clean absence → green skip with a
+#     ::notice annotation. A real AWS API error (auth failure, network,
+#     throttle) propagates as red so infra problems are never masked.
+#     This mirrors the pattern introduced in nightly-cognito-integration.yml
+#     via PR #161.
 #
 # Why nightly (not per-commit): post-deploy E2E tests the *deployed*
 # surface, not the pre-merge code. Running it per-commit would test
@@ -45,7 +55,14 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  id-token: write # OIDC token exchange to AWS STS (preflight Cognito probe)
   contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  # Same role as nightly-cognito-integration — cognito-idp:list-user-pools
+  # is the read-only probe used in the preflight step below.
+  COGNITO_INTEGRATION_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-cognito-integration
 
 jobs:
   playwright:
@@ -72,16 +89,57 @@ jobs:
             echo "url=https://${FRONTEND_DOMAIN}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install frontend deps
+      # AWS OIDC: STS AssumeRoleWithWebIdentity → temporary creds.
+      # Only needed for the preflight Cognito probe; skipped entirely
+      # when FRONTEND_DOMAIN is unset (fork path).
+      - name: Configure AWS credentials (OIDC)
         if: steps.gate.outputs.should_run == 'true'
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.COGNITO_INTEGRATION_ROLE_ARN }}
+          role-session-name: aegis-core-postdeploy-e2e-${{ github.run_id }}
+
+      # Self-gating: staging is ephemeral — brought up for verification
+      # then torn down to $0. If the staging Cognito pool is absent, skip
+      # all tests with a green result rather than failing against a
+      # non-existent environment.
+      #
+      # list-user-pools exits 0 on both "pool found" and "no pools" —
+      # only an API-level error (auth failure, network, throttle) causes
+      # non-zero. API errors propagate as red (infra failures are never
+      # masked); only a clean empty result becomes a green skip.
+      #
+      # Mirrors the preflight added to nightly-cognito-integration.yml
+      # via PR #161.
+      - name: Preflight — check staging Cognito pool exists
+        id: preflight
+        if: steps.gate.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          EXISTS=$(aws cognito-idp list-user-pools \
+            --max-results 60 \
+            --region "$AWS_REGION" \
+            --query "length(UserPools[?Name=='aegis-core-staging'])" \
+            --output text)
+          if [ "$EXISTS" -gt 0 ]; then
+            echo "cognito_present=true" >> "$GITHUB_OUTPUT"
+            echo "Staging Cognito pool 'aegis-core-staging' found — proceeding with E2E smoke tests."
+          else
+            echo "cognito_present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Post-deploy E2E smoke skipped::Staging Cognito absent — skipping post-deploy E2E (staging is torn down). Re-enable tests by bringing staging back up."
+          fi
+
+      - name: Install frontend deps
+        if: steps.preflight.outputs.cognito_present == 'true'
         run: ./tools/scripts/frontend.sh install
 
       - name: Install Playwright browsers
-        if: steps.gate.outputs.should_run == 'true'
+        if: steps.preflight.outputs.cognito_present == 'true'
         run: ./tools/scripts/frontend.sh e2e:install
 
       - name: Run post-deploy spec
-        if: steps.gate.outputs.should_run == 'true'
+        if: steps.preflight.outputs.cognito_present == 'true'
         env:
           AEGIS_POSTDEPLOY_URL: ${{ steps.gate.outputs.url }}
           # Forward CI=true so the Playwright config applies its
@@ -97,7 +155,7 @@ jobs:
             -g "post-deploy happy-path smoke"
 
       - name: Upload Playwright report on failure
-        if: failure() && steps.gate.outputs.should_run == 'true'
+        if: failure() && steps.preflight.outputs.cognito_present == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report-postdeploy
