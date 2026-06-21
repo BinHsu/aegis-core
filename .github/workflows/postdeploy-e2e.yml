@@ -20,15 +20,21 @@ name: Post-deploy E2E smoke
 #     served by S3 + CloudFront per ADR-0027. Forks that haven't populated
 #     FRONTEND_DOMAIN see the job skip cleanly with operator guidance.
 #
-#   Layer 2 — staging Cognito existence (ephemeral-environment gate):
+#   Layer 2 — staging liveness (ephemeral-environment gate):
 #     Staging is ephemeral — brought up for verification then torn to $0.
 #     Even when FRONTEND_DOMAIN is set, the staging environment may be
-#     down. After AWS auth, we probe the SSM parameter
-#     /aegis/staging/cognito/user-pool-id (torn down with staging).
-#     ParameterNotFound → green skip with a ::notice annotation. A real
-#     AWS API error (auth failure, network, throttle) propagates as red
-#     so infra problems are never masked. This mirrors the pattern in
-#     nightly-cognito-integration.yml.
+#     down. We probe the PUBLIC gateway health endpoint directly —
+#     `https://${GATEWAY_DOMAIN}/healthz` — instead of an AWS-internal
+#     proxy. This is credential-free (no OIDC/IAM/KMS) and tests the
+#     actual deployed surface. curl's outcome gives a clean three-way:
+#       - transport failure (DNS/refused/timeout) → staging is gone → green skip
+#       - HTTP 200 → staging up & healthy → run the smoke suite
+#       - reachable but non-200 → staging up but broken → red
+#     Why not the SSM probe it replaced: the /aegis/staging/cognito/*
+#     params are written by a manual operator step (not Terraform), so
+#     they orphan on teardown — ParameterNotFound was not a reliable
+#     "staging is down" signal. A public liveness probe has no such proxy
+#     gap. This mirrors the gate in nightly-cognito-integration.yml.
 #
 # Why nightly (not per-commit): post-deploy E2E tests the *deployed*
 # surface, not the pre-merge code. Running it per-commit would test
@@ -53,14 +59,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  id-token: write # OIDC token exchange to AWS STS (preflight Cognito probe)
-  contents: read
-
-env:
-  AWS_REGION: eu-central-1
-  # Same role as nightly-cognito-integration — cognito-idp:list-user-pools
-  # is the read-only probe used in the preflight step below.
-  COGNITO_INTEGRATION_ROLE_ARN: arn:aws:iam::251774439261:role/github-actions-aegis-core-cognito-integration
+  contents: read # checkout only — the liveness gate is a public, unauthenticated curl
 
 jobs:
   playwright:
@@ -87,75 +86,52 @@ jobs:
             echo "url=https://${FRONTEND_DOMAIN}" >> "$GITHUB_OUTPUT"
           fi
 
-      # AWS OIDC: STS AssumeRoleWithWebIdentity → temporary creds.
-      # Only needed for the preflight Cognito probe; skipped entirely
-      # when FRONTEND_DOMAIN is unset (fork path).
-      - name: Configure AWS credentials (OIDC)
-        if: steps.gate.outputs.should_run == 'true'
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.COGNITO_INTEGRATION_ROLE_ARN }}
-          role-session-name: aegis-core-postdeploy-e2e-${{ github.run_id }}
-
-      # Self-gating: staging is ephemeral — brought up for verification
-      # then torn down to $0. If the staging Cognito SSM parameter is
-      # absent, skip all tests with a green result rather than failing
-      # against a non-existent environment.
-      #
-      # ParameterNotFound = staging is down → green skip. Any other AWS
-      # API error (permissions, network, throttle) propagates as red so
-      # infra failures are never masked.
-      #
-      # We probe the SSM parameter /aegis/staging/cognito/user-pool-id
-      # rather than cognito-idp:list-user-pools: the integration role is
-      # scoped to ssm:GetParameter[s] on /aegis/staging/cognito/* but NOT
-      # to cognito-idp:ListUserPools, so the list-user-pools probe failed
-      # with AccessDeniedException under `set -e` before the skip branch
-      # could run. GetParameter is already in the role policy and the
-      # parameter is torn down with the rest of staging.
-      #
-      # Mirrors the preflight in nightly-cognito-integration.yml.
-      - name: Preflight — check staging Cognito pool exists
+      # Liveness gate (credential-free): probe the PUBLIC gateway health
+      # endpoint to decide whether staging is actually serving traffic.
+      # No AWS OIDC/IAM/KMS — /healthz is unauthenticated. curl's outcome
+      # classifies three ways:
+      #   - transport failure (DNS/refused/timeout, exit != 0) → staging
+      #     gone (teardown removed DNS + ALB) → green skip
+      #   - HTTP 200 → staging up & healthy → run the smoke suite
+      #   - reachable but non-200 → staging up but broken → red
+      - name: Preflight — is staging serving?
         id: preflight
         if: steps.gate.outputs.should_run == 'true'
+        env:
+          GATEWAY_DOMAIN: ${{ vars.GATEWAY_DOMAIN }}
         run: |
           set -uo pipefail
-          # No `set -e`: classify the probe's exit explicitly so a clean
-          # ParameterNotFound becomes a green skip while real API errors stay red.
-          # We query only Parameter.Name (never the value), so this is an
-          # existence check — but `--with-decryption` is required by the
-          # ssm-with-decryption-guard pre-commit hook (Incident 16). The role
-          # holds kms:Decrypt on alias/aegis-staging-secrets, and a missing
-          # parameter returns ParameterNotFound before KMS is ever invoked, so
-          # the skip path is unaffected.
-          if PROBE=$(aws ssm get-parameter \
-              --name /aegis/staging/cognito/user-pool-id \
-              --with-decryption \
-              --region "$AWS_REGION" \
-              --query 'Parameter.Name' \
-              --output text 2>&1); then
-            echo "cognito_present=true" >> "$GITHUB_OUTPUT"
-            echo "Staging Cognito SSM parameter present — proceeding with E2E smoke tests."
-          elif printf '%s' "$PROBE" | grep -q 'ParameterNotFound'; then
-            echo "cognito_present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Post-deploy E2E smoke skipped::Staging Cognito absent — skipping post-deploy E2E (staging is torn down). Re-enable tests by bringing staging back up."
+          if [ -z "${GATEWAY_DOMAIN:-}" ]; then
+            echo "::error title=GATEWAY_DOMAIN unset::Set repository variable GATEWAY_DOMAIN (e.g. aegis-api.staging.aws.binhsu.org) so the liveness probe can reach the gateway."
+            exit 1
+          fi
+          URL="https://${GATEWAY_DOMAIN}/healthz"
+          # -sS: quiet but show transport errors; no -f, so we read the
+          # status code ourselves and distinguish "down" (no connection)
+          # from "broken" (connected, non-200).
+          HTTP=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null)
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "staging_up=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Post-deploy E2E smoke skipped::Gateway ${URL} unreachable (curl exit ${RC}) — staging is torn down. Skipping. Bring staging up to re-enable."
+          elif [ "$HTTP" = "200" ]; then
+            echo "staging_up=true" >> "$GITHUB_OUTPUT"
+            echo "Gateway ${URL} returned 200 — staging is up; running E2E smoke tests."
           else
-            echo "::error title=Cognito preflight probe failed::SSM get-parameter on /aegis/staging/cognito/user-pool-id failed with a non-NotFound error (likely IAM, KMS, network, or throttle). Raw CLI output below." >&2
-            printf '%s\n' "$PROBE" >&2
+            echo "::error title=Gateway unhealthy::${URL} is reachable but returned HTTP ${HTTP} (expected 200). Staging is up but the gateway is unhealthy — failing so the problem is visible." >&2
             exit 1
           fi
 
       - name: Install frontend deps
-        if: steps.preflight.outputs.cognito_present == 'true'
+        if: steps.preflight.outputs.staging_up == 'true'
         run: ./tools/scripts/frontend.sh install
 
       - name: Install Playwright browsers
-        if: steps.preflight.outputs.cognito_present == 'true'
+        if: steps.preflight.outputs.staging_up == 'true'
         run: ./tools/scripts/frontend.sh e2e:install
 
       - name: Run post-deploy spec
-        if: steps.preflight.outputs.cognito_present == 'true'
+        if: steps.preflight.outputs.staging_up == 'true'
         env:
           AEGIS_POSTDEPLOY_URL: ${{ steps.gate.outputs.url }}
           # Forward CI=true so the Playwright config applies its
@@ -171,7 +147,7 @@ jobs:
             -g "post-deploy happy-path smoke"
 
       - name: Upload Playwright report on failure
-        if: failure() && steps.preflight.outputs.cognito_present == 'true'
+        if: failure() && steps.preflight.outputs.staging_up == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report-postdeploy

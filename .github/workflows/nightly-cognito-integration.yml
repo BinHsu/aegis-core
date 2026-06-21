@@ -62,58 +62,64 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      # AWS OIDC: STS AssumeRoleWithWebIdentity → temporary creds.
-      # The configure-aws-credentials action exports them as
+      # Liveness gate (credential-free): before assuming any AWS role, probe
+      # the PUBLIC Cognito OIDC discovery document to decide whether staging's
+      # user pool still exists. No AWS OIDC/IAM/KMS needed. Note the host
+      # cognito-idp.<region>.amazonaws.com is AWS-owned and always up, so the
+      # "down" signal here is an HTTP 4xx (pool deleted), NOT a transport
+      # failure (contrast the gateway /healthz probe in postdeploy-e2e.yml,
+      # whose host is staging-owned and disappears on teardown):
+      #   - COGNITO_AUTHORITY unset → fork without staging → green skip
+      #   - HTTP 200 → pool exists → assume role and run the integration test
+      #   - HTTP 4xx → pool deleted (staging torn down) → green skip
+      #   - transport failure or 5xx → genuine anomaly → red
+      #
+      # This replaces an SSM get-parameter probe: the /aegis/staging/cognito/*
+      # params are written by a manual operator step (not Terraform), so they
+      # orphan on teardown and could not reliably signal "staging is down".
+      - name: Preflight — is staging Cognito up?
+        id: preflight
+        env:
+          COGNITO_AUTHORITY: ${{ vars.COGNITO_AUTHORITY }}
+        run: |
+          set -uo pipefail
+          if [ -z "${COGNITO_AUTHORITY:-}" ]; then
+            echo "staging_up=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Nightly Cognito integration skipped::vars.COGNITO_AUTHORITY unset — no staging Cognito pool configured (fork-friendly default). Skipping."
+            exit 0
+          fi
+          URL="${COGNITO_AUTHORITY%/}/.well-known/openid-configuration"
+          # -sS: quiet but show transport errors; no -f, so we read the status
+          # code ourselves and classify down (4xx) vs broken (5xx/transport).
+          HTTP=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null)
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "::error title=Cognito OIDC endpoint unreachable::Could not reach ${URL} (curl exit ${RC}). cognito-idp.<region>.amazonaws.com is normally always up, so this is a real network/AWS anomaly — failing." >&2
+            exit 1
+          elif [ "$HTTP" = "200" ]; then
+            echo "staging_up=true" >> "$GITHUB_OUTPUT"
+            echo "Cognito OIDC discovery at ${URL} returned 200 — pool is up; running integration test."
+          elif [ "$HTTP" -ge 400 ] && [ "$HTTP" -lt 500 ]; then
+            echo "staging_up=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Nightly Cognito integration skipped::Cognito OIDC discovery returned HTTP ${HTTP} — staging user pool is gone (torn down). Skipping. Bring staging up (and refresh vars.COGNITO_AUTHORITY) to re-enable."
+          else
+            echo "::error title=Cognito OIDC endpoint error::${URL} returned HTTP ${HTTP} (expected 200 or 4xx). Unexpected server-side error — failing so it is visible." >&2
+            exit 1
+          fi
+
+      # AWS OIDC: STS AssumeRoleWithWebIdentity → temporary creds. Only after
+      # the credential-free liveness gate confirms the pool is up. The
+      # configure-aws-credentials action exports them as
       # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
       # env vars; bazel test forwards them via env_inherit in
       # gateway_go/internal/auth/BUILD.bazel.
       - name: Configure AWS credentials (OIDC)
+        if: steps.preflight.outputs.staging_up == 'true'
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.COGNITO_INTEGRATION_ROLE_ARN }}
           role-session-name: aegis-core-cognito-integration-${{ github.run_id }}
-
-      # Self-gating: staging is ephemeral — brought up for verification then torn down to $0.
-      # If the staging Cognito SSM parameter is absent, skip all tests with a green result.
-      # ParameterNotFound = staging is down → green skip.
-      # Any other AWS API error (permissions, network, throttle) = real failure → red.
-      #
-      # We probe the SSM parameter /aegis/staging/cognito/user-pool-id rather than
-      # cognito-idp:list-user-pools: the integration role is scoped to ssm:GetParameter[s]
-      # on /aegis/staging/cognito/* but NOT to cognito-idp:ListUserPools, so the
-      # list-user-pools probe failed with AccessDeniedException under `set -e` before the
-      # skip branch could run (the guard never reached its "absent → skip" path). The SSM
-      # parameter is the canonical signal that staging is up — it's torn down with the rest
-      # of staging — and GetParameter is already in the role policy.
-      - name: Preflight — check staging Cognito pool exists
-        id: preflight
-        run: |
-          set -uo pipefail
-          # No `set -e`: we classify the probe's exit explicitly so a clean
-          # ParameterNotFound becomes a green skip while real API errors stay red.
-          # We query only Parameter.Name (never the value), so this is an
-          # existence check — but `--with-decryption` is required by the
-          # ssm-with-decryption-guard pre-commit hook (Incident 16). The role
-          # holds kms:Decrypt on alias/aegis-staging-secrets, and a missing
-          # parameter returns ParameterNotFound before KMS is ever invoked, so
-          # the skip path is unaffected.
-          if PROBE=$(aws ssm get-parameter \
-              --name /aegis/staging/cognito/user-pool-id \
-              --with-decryption \
-              --region "$AWS_REGION" \
-              --query 'Parameter.Name' \
-              --output text 2>&1); then
-            echo "cognito_present=true" >> "$GITHUB_OUTPUT"
-            echo "Staging Cognito SSM parameter present — proceeding with integration tests."
-          elif printf '%s' "$PROBE" | grep -q 'ParameterNotFound'; then
-            echo "cognito_present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Nightly Cognito integration skipped::Staging Cognito absent — skipping nightly integration (staging is torn down). Re-enable tests by bringing staging back up."
-          else
-            echo "::error title=Cognito preflight probe failed::SSM get-parameter on /aegis/staging/cognito/user-pool-id failed with a non-NotFound error (likely IAM, KMS, network, or throttle). Raw CLI output below." >&2
-            printf '%s\n' "$PROBE" >&2
-            exit 1
-          fi
 
       # Read live values from SSM PS rather than hard-coding the
       # Cognito IDs into the workflow. Two reasons per ldz #76 §A:
@@ -122,7 +128,7 @@ jobs:
       # the wrong place for them to live if they ever rotate.
       - name: Read Cognito IDs from SSM Parameter Store
         id: ssm
-        if: steps.preflight.outputs.cognito_present == 'true'
+        if: steps.preflight.outputs.staging_up == 'true'
         run: |
           set -euo pipefail
           # The Cognito SSM parameters are stored as `SecureString` (KMS
@@ -176,7 +182,7 @@ jobs:
       # their cost is sub-second and runs as a free regression check
       # on the same nightly cadence.
       - name: Cache Bazel
-        if: steps.preflight.outputs.cognito_present == 'true'
+        if: steps.preflight.outputs.staging_up == 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
@@ -187,7 +193,7 @@ jobs:
             bazel-cognito-integration-${{ runner.os }}-
 
       - name: Run auth integration test against live Cognito
-        if: steps.preflight.outputs.cognito_present == 'true'
+        if: steps.preflight.outputs.staging_up == 'true'
         run: |
           set -euo pipefail
           ./tools/bazelisk/bazelisk test \
@@ -199,10 +205,10 @@ jobs:
       # If the test failed, surface a workflow annotation pointing at
       # the most likely causes — operator triaging the morning
       # alert shouldn't have to re-derive the failure-mode taxonomy.
-      # Guard with cognito_present so this hint only fires for real
+      # Guard with staging_up so this hint only fires for real
       # test failures, not for the clean "staging is down" skip path.
       - name: Failure triage hint
-        if: failure() && steps.preflight.outputs.cognito_present == 'true'
+        if: failure() && steps.preflight.outputs.staging_up == 'true'
         run: |
           cat <<'EOF' >&2
           ::error title=Cognito integration failed::
