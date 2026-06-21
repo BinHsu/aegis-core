@@ -101,6 +101,13 @@ jobs:
           GATEWAY_DOMAIN: ${{ vars.GATEWAY_DOMAIN }}
         run: |
           set -uo pipefail
+          # GitHub's default step shell is `bash -e {0}`, so errexit is ON even
+          # though we never set it. Turn it OFF here: a failing `HTTP=$(curl …)`
+          # (e.g. DNS-fail when staging is torn down) would otherwise kill the
+          # step on the first attempt — defeating the retry loop and the
+          # transport-failure → skip classification below. We read curl's exit
+          # code explicitly instead of letting -e act on it.
+          set +e
           if [ -z "${GATEWAY_DOMAIN:-}" ]; then
             echo "::error title=GATEWAY_DOMAIN unset::Set repository variable GATEWAY_DOMAIN (e.g. aegis-api.staging.aws.binhsu.org) so the liveness probe can reach the gateway."
             exit 1
