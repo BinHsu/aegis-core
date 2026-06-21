@@ -363,7 +363,7 @@ jobs:
       # signed (no late race against a re-tagged image).
       - name: Trivy CVE scan — gateway image (block on CRITICAL)
         # aquasecurity/trivy-action v0.35.0
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.push-gateway.outputs.ref }}
           severity: CRITICAL
@@ -402,7 +402,7 @@ jobs:
             "${{ steps.push-engine.outputs.ref }}"
 
       - name: Trivy CVE scan — engine image (block on CRITICAL)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.push-engine.outputs.ref }}
           severity: CRITICAL
