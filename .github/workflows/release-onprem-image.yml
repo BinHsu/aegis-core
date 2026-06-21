@@ -58,6 +58,11 @@ jobs:
     name: Build + push core images to GHCR (linux/arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
+    # Surface the pushed digests so bump-image-tag can pin the deploy overlay
+    # BY DIGEST (ADR-14/17). gateway_ref is "" when push_gateway input is false.
+    outputs:
+      engine_ref: ${{ steps.push-engine.outputs.ref }}
+      gateway_ref: ${{ steps.push-gateway.outputs.ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -166,3 +171,108 @@ jobs:
             echo "crane copy ${ENGINE_REF} <node-ip>:5000/aegis-core@<digest>"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Pin the STAGING overlay in aegis-core-deploy to the digests just pushed,
+  # via a PR + auto-merge (ADR-10/14/23 "build once, promote by digest"). This
+  # replaces the bump-image-tag job from the retired release-staging-image.yml;
+  # the difference is the refs are now FULL GHCR refs the deploy repo owns
+  # directly (ADR-23), not the registry-less `aegis-core@<digest>` the ECR path
+  # spliced. Staging only — prod is promoted by a separate gated PR (ADR-14
+  # atomic promotion, enforced by the deploy repo's validate.yml Guard D).
+  bump-image-tag:
+    name: Pin staging digests in aegis-core-deploy (PR + auto-merge)
+    runs-on: ubuntu-latest
+    needs: push-onprem-image
+    timeout-minutes: 10
+    # Never writes to THIS repo. The cross-repo write to aegis-core-deploy is
+    # authenticated by AEGIS_CORE_DEPLOY_PAT (fine-grained: contents:write +
+    # pull-requests:write on that repo), not GITHUB_TOKEN. No AWS here.
+    steps:
+      - name: Pin staging overlay digests (PR + auto-merge)
+        env:
+          DEPLOY_PAT: ${{ secrets.AEGIS_CORE_DEPLOY_PAT }}
+          # Full GHCR refs from the push job. GATEWAY_REF is "" when the
+          # push_gateway dispatch input was false (gateway steps skipped).
+          ENGINE_REF: ${{ needs.push-onprem-image.outputs.engine_ref }}
+          GATEWAY_REF: ${{ needs.push-onprem-image.outputs.gateway_ref }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+
+          # Fail-soft: a missing deploy credential is an ops gap, not a build
+          # failure — the images are already in GHCR. Warn (naming the secret)
+          # and exit 0 rather than red the release run.
+          if [ -z "${DEPLOY_PAT:-}" ]; then
+            echo "::warning title=Digest bump skipped::AEGIS_CORE_DEPLOY_PAT not set — cannot open the tag-bump PR. Create a fine-grained PAT (BinHsu/aegis-core-deploy, contents:write + pull-requests:write) and store it as the AEGIS_CORE_DEPLOY_PAT repository secret."
+            exit 0
+          fi
+          echo "::add-mask::${DEPLOY_PAT}"
+
+          # Both refs required — a gateway-only or engine-only pin would leave
+          # the overlay half-updated and trip the deploy repo's move-together
+          # guard at the next staging bring-up. Empty gateway = push_gateway
+          # was false; warn and skip cleanly.
+          if [ -z "${ENGINE_REF:-}" ] || [ -z "${GATEWAY_REF:-}" ]; then
+            echo "::warning title=Digest bump skipped::One or both image refs are empty (gateway='${GATEWAY_REF:-}', engine='${ENGINE_REF:-}'). Re-dispatch with push_gateway=true to pin both images."
+            exit 0
+          fi
+
+          # Validate ref shape before writing — guards against a grep miss
+          # producing a malformed pin in a repo ArgoCD syncs.
+          ref_re='^ghcr\.io/binhsu/aegis-core-(gateway|engine)@sha256:[0-9a-f]{64}$'
+          for ref in "${GATEWAY_REF}" "${ENGINE_REF}"; do
+            if [[ ! "${ref}" =~ ${ref_re} ]]; then
+              echo "::error title=Malformed image ref::'${ref}' is not ghcr.io/binhsu/aegis-core-{gateway,engine}@sha256:<64-hex> — aborting before writing a bad pin."
+              exit 1
+            fi
+          done
+
+          SHORT_SHA="${RUN_SHA:0:12}"
+
+          git clone --depth 1 \
+            "https://x-access-token:${DEPLOY_PAT}@github.com/BinHsu/aegis-core-deploy.git" \
+            deploy
+          cd deploy
+
+          # Each digest file is a JSON6902 one-element list; set [0].value.
+          # All edits before any git op = one atomic commit (ADR-14
+          # both-or-neither). seed == engine digest (validate.yml Guard C).
+          yq -i ".[0].value = \"${GATEWAY_REF}\"" k8s/overlays/staging/digest-gateway.yaml
+          yq -i ".[0].value = \"${ENGINE_REF}\""  k8s/overlays/staging/digest-engine.yaml
+          yq -i ".[0].value = \"${ENGINE_REF}\""  k8s/overlays/staging/digest-seed.yaml
+
+          if git diff --quiet; then
+            echo "::notice title=Digest bump::aegis-core-deploy staging overlay already at these digests; nothing to bump."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="release/tag-${SHORT_SHA}"
+          git checkout -b "${BRANCH}"
+          git add k8s/overlays/staging/digest-gateway.yaml \
+                  k8s/overlays/staging/digest-engine.yaml \
+                  k8s/overlays/staging/digest-seed.yaml
+          git commit \
+            -m "ci(deploy): pin aegis-core staging digests (${SHORT_SHA})" \
+            -m "Automated by release-onprem-image.yml in aegis-core (ADR-10/14/23)." \
+            -m "gateway: ${GATEWAY_REF}" \
+            -m "engine:  ${ENGINE_REF}" \
+            -m "seed:    ${ENGINE_REF}  (== engine, ADR-14)"
+          # --force: re-dispatch for the same source SHA reuses the branch name.
+          git push --force origin "${BRANCH}"
+
+          export GH_TOKEN="${DEPLOY_PAT}"
+          EXISTING_PR="$(gh pr list --repo BinHsu/aegis-core-deploy \
+            --head "${BRANCH}" --state open --json number --jq '.[].number')"
+          if [ -z "${EXISTING_PR}" ]; then
+            gh pr create --repo BinHsu/aegis-core-deploy \
+              --base main --head "${BRANCH}" \
+              --title "ci(deploy): pin aegis-core staging digests (${SHORT_SHA})" \
+              --body "$(printf 'Pins the **staging** overlay BY DIGEST to the build from aegis-core \x60%s\x60 (ADR-10/14/23; gateway + engine + seed move atomically).\n\n- Gateway: \x60%s\x60\n- Engine:  \x60%s\x60\n- Seed:    \x60%s\x60 (== engine, ADR-14)\n\nAutomated by release-onprem-image.yml. Auto-merge armed: squash-merges once validate.yml passes. **Staging only — prod promotion is a separate gated PR.**' \
+                "${RUN_SHA}" "${GATEWAY_REF}" "${ENGINE_REF}" "${ENGINE_REF}")"
+          fi
+          # Arms auto-merge; GitHub squash-merges only after validate.yml passes.
+          gh pr merge --auto --squash --repo BinHsu/aegis-core-deploy "${BRANCH}"
+          echo "::notice title=Digest bump PR::aegis-core-deploy PR opened + auto-merge armed for ${BRANCH}."
