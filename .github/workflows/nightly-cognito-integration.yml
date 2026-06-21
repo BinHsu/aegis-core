@@ -91,10 +91,20 @@ jobs:
           URL="${COGNITO_AUTHORITY%/}/.well-known/openid-configuration"
           # -sS: quiet but show transport errors; no -f, so we read the status
           # code ourselves and classify down (4xx) vs broken (5xx/transport).
-          HTTP=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null)
-          RC=$?
+          #
+          # Retry transport failures (RC != 0) up to 3 attempts before treating
+          # them as a hard anomaly: this host is AWS-owned and always up, so a
+          # transport failure is rare — but a single transient runner/DNS blip
+          # must not red the nightly. Any HTTP response ends the loop at once.
+          HTTP=000; RC=0
+          for attempt in 1 2 3; do
+            HTTP=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null)
+            RC=$?
+            [ "$RC" -eq 0 ] && break
+            [ "$attempt" -lt 3 ] && { echo "Probe attempt ${attempt} failed (curl exit ${RC}); retrying…"; sleep 5; }
+          done
           if [ "$RC" -ne 0 ]; then
-            echo "::error title=Cognito OIDC endpoint unreachable::Could not reach ${URL} (curl exit ${RC}). cognito-idp.<region>.amazonaws.com is normally always up, so this is a real network/AWS anomaly — failing." >&2
+            echo "::error title=Cognito OIDC endpoint unreachable::Could not reach ${URL} after 3 attempts (curl exit ${RC}). cognito-idp.<region>.amazonaws.com is normally always up, so this is a real network/AWS anomaly — failing." >&2
             exit 1
           elif [ "$HTTP" = "200" ]; then
             echo "staging_up=true" >> "$GITHUB_OUTPUT"

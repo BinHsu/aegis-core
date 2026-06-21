@@ -109,11 +109,22 @@ jobs:
           # -sS: quiet but show transport errors; no -f, so we read the
           # status code ourselves and distinguish "down" (no connection)
           # from "broken" (connected, non-200).
-          HTTP=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null)
-          RC=$?
+          #
+          # Retry transport failures (RC != 0) up to 3 attempts before
+          # concluding "down": a single transient runner/DNS blip must not
+          # produce a false-green skip while staging is actually up. Any HTTP
+          # response (even an error code) ends the loop immediately — that's
+          # a real answer to classify, not a transport failure.
+          HTTP=000; RC=0
+          for attempt in 1 2 3; do
+            HTTP=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null)
+            RC=$?
+            [ "$RC" -eq 0 ] && break
+            [ "$attempt" -lt 3 ] && { echo "Probe attempt ${attempt} failed (curl exit ${RC}); retrying…"; sleep 5; }
+          done
           if [ "$RC" -ne 0 ]; then
             echo "staging_up=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Post-deploy E2E smoke skipped::Gateway ${URL} unreachable (curl exit ${RC}) — staging is torn down. Skipping. Bring staging up to re-enable."
+            echo "::notice title=Post-deploy E2E smoke skipped::Gateway ${URL} unreachable after 3 attempts (curl exit ${RC}) — staging is torn down. Skipping. Bring staging up to re-enable."
           elif [ "$HTTP" = "200" ]; then
             echo "staging_up=true" >> "$GITHUB_OUTPUT"
             echo "Gateway ${URL} returned 200 — staging is up; running E2E smoke tests."
