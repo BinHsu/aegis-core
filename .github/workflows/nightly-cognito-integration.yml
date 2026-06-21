@@ -83,6 +83,12 @@ jobs:
           COGNITO_AUTHORITY: ${{ vars.COGNITO_AUTHORITY }}
         run: |
           set -uo pipefail
+          # GitHub's default step shell is `bash -e {0}`, so errexit is ON even
+          # though we never set it. Turn it OFF here: a failing `HTTP=$(curl …)`
+          # would otherwise kill the step on the first attempt — defeating the
+          # retry loop and the transport-failure classification below. We read
+          # curl's exit code explicitly instead of letting -e act on it.
+          set +e
           if [ -z "${COGNITO_AUTHORITY:-}" ]; then
             echo "staging_up=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Nightly Cognito integration skipped::vars.COGNITO_AUTHORITY unset — no staging Cognito pool configured (fork-friendly default). Skipping."
