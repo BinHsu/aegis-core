@@ -20,15 +20,15 @@ name: Post-deploy E2E smoke
 #     served by S3 + CloudFront per ADR-0027. Forks that haven't populated
 #     FRONTEND_DOMAIN see the job skip cleanly with operator guidance.
 #
-#   Layer 2 — staging Cognito pool existence (ephemeral-environment gate):
+#   Layer 2 — staging Cognito existence (ephemeral-environment gate):
 #     Staging is ephemeral — brought up for verification then torn to $0.
 #     Even when FRONTEND_DOMAIN is set, the staging environment may be
-#     down. After AWS auth, we probe whether the Cognito pool
-#     'aegis-core-staging' exists. Clean absence → green skip with a
-#     ::notice annotation. A real AWS API error (auth failure, network,
-#     throttle) propagates as red so infra problems are never masked.
-#     This mirrors the pattern introduced in nightly-cognito-integration.yml
-#     via PR #161.
+#     down. After AWS auth, we probe the SSM parameter
+#     /aegis/staging/cognito/user-pool-id (torn down with staging).
+#     ParameterNotFound → green skip with a ::notice annotation. A real
+#     AWS API error (auth failure, network, throttle) propagates as red
+#     so infra problems are never masked. This mirrors the pattern in
+#     nightly-cognito-integration.yml.
 #
 # Why nightly (not per-commit): post-deploy E2E tests the *deployed*
 # surface, not the pre-merge code. Running it per-commit would test
@@ -99,33 +99,51 @@ jobs:
           role-session-name: aegis-core-postdeploy-e2e-${{ github.run_id }}
 
       # Self-gating: staging is ephemeral — brought up for verification
-      # then torn down to $0. If the staging Cognito pool is absent, skip
-      # all tests with a green result rather than failing against a
-      # non-existent environment.
+      # then torn down to $0. If the staging Cognito SSM parameter is
+      # absent, skip all tests with a green result rather than failing
+      # against a non-existent environment.
       #
-      # list-user-pools exits 0 on both "pool found" and "no pools" —
-      # only an API-level error (auth failure, network, throttle) causes
-      # non-zero. API errors propagate as red (infra failures are never
-      # masked); only a clean empty result becomes a green skip.
+      # ParameterNotFound = staging is down → green skip. Any other AWS
+      # API error (permissions, network, throttle) propagates as red so
+      # infra failures are never masked.
       #
-      # Mirrors the preflight added to nightly-cognito-integration.yml
-      # via PR #161.
+      # We probe the SSM parameter /aegis/staging/cognito/user-pool-id
+      # rather than cognito-idp:list-user-pools: the integration role is
+      # scoped to ssm:GetParameter[s] on /aegis/staging/cognito/* but NOT
+      # to cognito-idp:ListUserPools, so the list-user-pools probe failed
+      # with AccessDeniedException under `set -e` before the skip branch
+      # could run. GetParameter is already in the role policy and the
+      # parameter is torn down with the rest of staging.
+      #
+      # Mirrors the preflight in nightly-cognito-integration.yml.
       - name: Preflight — check staging Cognito pool exists
         id: preflight
         if: steps.gate.outputs.should_run == 'true'
         run: |
-          set -euo pipefail
-          EXISTS=$(aws cognito-idp list-user-pools \
-            --max-results 60 \
-            --region "$AWS_REGION" \
-            --query "length(UserPools[?Name=='aegis-core-staging'])" \
-            --output text)
-          if [ "$EXISTS" -gt 0 ]; then
+          set -uo pipefail
+          # No `set -e`: classify the probe's exit explicitly so a clean
+          # ParameterNotFound becomes a green skip while real API errors stay red.
+          # We query only Parameter.Name (never the value), so this is an
+          # existence check — but `--with-decryption` is required by the
+          # ssm-with-decryption-guard pre-commit hook (Incident 16). The role
+          # holds kms:Decrypt on alias/aegis-staging-secrets, and a missing
+          # parameter returns ParameterNotFound before KMS is ever invoked, so
+          # the skip path is unaffected.
+          if PROBE=$(aws ssm get-parameter \
+              --name /aegis/staging/cognito/user-pool-id \
+              --with-decryption \
+              --region "$AWS_REGION" \
+              --query 'Parameter.Name' \
+              --output text 2>&1); then
             echo "cognito_present=true" >> "$GITHUB_OUTPUT"
-            echo "Staging Cognito pool 'aegis-core-staging' found — proceeding with E2E smoke tests."
-          else
+            echo "Staging Cognito SSM parameter present — proceeding with E2E smoke tests."
+          elif printf '%s' "$PROBE" | grep -q 'ParameterNotFound'; then
             echo "cognito_present=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Post-deploy E2E smoke skipped::Staging Cognito absent — skipping post-deploy E2E (staging is torn down). Re-enable tests by bringing staging back up."
+          else
+            echo "::error title=Cognito preflight probe failed::SSM get-parameter on /aegis/staging/cognito/user-pool-id failed with a non-NotFound error (likely IAM, KMS, network, or throttle). Raw CLI output below." >&2
+            printf '%s\n' "$PROBE" >&2
+            exit 1
           fi
 
       - name: Install frontend deps

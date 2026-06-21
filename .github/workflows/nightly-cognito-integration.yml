@@ -75,28 +75,44 @@ jobs:
           role-session-name: aegis-core-cognito-integration-${{ github.run_id }}
 
       # Self-gating: staging is ephemeral — brought up for verification then torn down to $0.
-      # If the staging Cognito pool is absent, skip all tests with a green result.
-      # A clean "0 pools" result = staging is down → skip.
-      # An AWS API error (permissions, network) = real failure → red.
+      # If the staging Cognito SSM parameter is absent, skip all tests with a green result.
+      # ParameterNotFound = staging is down → green skip.
+      # Any other AWS API error (permissions, network, throttle) = real failure → red.
+      #
+      # We probe the SSM parameter /aegis/staging/cognito/user-pool-id rather than
+      # cognito-idp:list-user-pools: the integration role is scoped to ssm:GetParameter[s]
+      # on /aegis/staging/cognito/* but NOT to cognito-idp:ListUserPools, so the
+      # list-user-pools probe failed with AccessDeniedException under `set -e` before the
+      # skip branch could run (the guard never reached its "absent → skip" path). The SSM
+      # parameter is the canonical signal that staging is up — it's torn down with the rest
+      # of staging — and GetParameter is already in the role policy.
       - name: Preflight — check staging Cognito pool exists
         id: preflight
         run: |
-          set -euo pipefail
-          # list-user-pools exits 0 on both "pool found" and "no pools" — only
-          # an API-level error (auth failure, network, throttle) causes non-zero.
-          # We intentionally let API errors propagate as red; only a clean empty
-          # result (staging torn down) becomes a green skip.
-          EXISTS=$(aws cognito-idp list-user-pools \
-            --max-results 60 \
-            --region "$AWS_REGION" \
-            --query "length(UserPools[?Name=='aegis-core-staging'])" \
-            --output text)
-          if [ "$EXISTS" -gt 0 ]; then
+          set -uo pipefail
+          # No `set -e`: we classify the probe's exit explicitly so a clean
+          # ParameterNotFound becomes a green skip while real API errors stay red.
+          # We query only Parameter.Name (never the value), so this is an
+          # existence check — but `--with-decryption` is required by the
+          # ssm-with-decryption-guard pre-commit hook (Incident 16). The role
+          # holds kms:Decrypt on alias/aegis-staging-secrets, and a missing
+          # parameter returns ParameterNotFound before KMS is ever invoked, so
+          # the skip path is unaffected.
+          if PROBE=$(aws ssm get-parameter \
+              --name /aegis/staging/cognito/user-pool-id \
+              --with-decryption \
+              --region "$AWS_REGION" \
+              --query 'Parameter.Name' \
+              --output text 2>&1); then
             echo "cognito_present=true" >> "$GITHUB_OUTPUT"
-            echo "Staging Cognito pool 'aegis-core-staging' found — proceeding with integration tests."
-          else
+            echo "Staging Cognito SSM parameter present — proceeding with integration tests."
+          elif printf '%s' "$PROBE" | grep -q 'ParameterNotFound'; then
             echo "cognito_present=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Nightly Cognito integration skipped::Staging Cognito absent — skipping nightly integration (staging is torn down). Re-enable tests by bringing staging back up."
+          else
+            echo "::error title=Cognito preflight probe failed::SSM get-parameter on /aegis/staging/cognito/user-pool-id failed with a non-NotFound error (likely IAM, KMS, network, or throttle). Raw CLI output below." >&2
+            printf '%s\n' "$PROBE" >&2
+            exit 1
           fi
 
       # Read live values from SSM PS rather than hard-coding the
