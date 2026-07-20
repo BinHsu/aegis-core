@@ -9,10 +9,12 @@
   },
   "packageManager": "pnpm@8.6.7",
   "pnpm": {
-    "//overrides": "Force patch-level bumps of transitive deps flagged by Dependabot. postcss 8.5.10 fixes CVE-2026-41305 (moderate); @babel/core 7.29.6 fixes CVE-2026-49356 (low). Both are pulled transitively (vite / @vitejs/plugin-react) at API-compatible patch versions, so an override is the lowest-risk fix until the parents widen their ranges.",
+    "//overrides": "Force patch-level bumps of transitive deps flagged by Dependabot. postcss 8.5.10 fixes CVE-2026-41305 (moderate); @babel/core 7.29.6 fixes CVE-2026-49356 (low). ws 8.21.0 fixes a HIGH-severity DoS advisory (transitive via happy-dom, devDependency only); react-router 7.15.1 fixes a LOW-severity advisory (transitive via react-router-dom). All are pulled transitively at API-compatible patch versions, so an override is the lowest-risk fix until the parents widen their ranges.",
     "overrides": {
       "postcss@<8.5.10": ">=8.5.10 <9",
-      "@babel/core@<7.29.6": ">=7.29.6 <8"
+      "@babel/core@<7.29.6": ">=7.29.6 <8",
+      "ws": ">=8.21.0 <9",
+      "react-router": ">=7.15.1 <8"
     }
   }
 }
