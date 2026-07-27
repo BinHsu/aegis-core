@@ -22,3 +22,10 @@ cd "$REPO_ROOT"
 # checked-in tree is now byte-for-byte what the generator produced.
 # Keeping a no-op rewrite here would mean a future generator change
 # gets silently edited instead of showing up in review.
+#
+# "Byte-for-byte" is a requirement, not an aspiration: the
+# proto-codegen-drift job in ci-baseline.yml re-runs this script and
+# diffs the result. Anything that rewrites the generated tree after the
+# fact breaks that check, which is why .pre-commit-config.yaml excludes
+# frontend_web/src/gen/ from prettier and from the whitespace / EOF
+# fixers. Do not "tidy" generated output.
