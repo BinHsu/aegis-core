@@ -115,8 +115,13 @@ jobs:
         run: ./tools/scripts/proto_gen.sh
 
       - name: Verify no diff
+        # `frontend_web/src/gen/`, not `frontend_web/gen/`. buf.gen.yaml
+        # writes the TypeScript tree under src/ so Vite's `@/` alias
+        # resolves it; the old pathspec pointed at a directory that has
+        # never existed, which made `git diff` match nothing and let TS
+        # codegen drift through unnoticed.
         run: |
-          if ! git diff --exit-code -- gateway_go/gen/ frontend_web/gen/ 2>/dev/null; then
+          if ! git diff --exit-code -- gateway_go/gen/ frontend_web/src/gen/ 2>/dev/null; then
             echo "::error::Generated proto code is out of sync with .proto sources."
             echo "::error::Run ./tools/scripts/proto_gen.sh locally and commit the result."
             exit 1

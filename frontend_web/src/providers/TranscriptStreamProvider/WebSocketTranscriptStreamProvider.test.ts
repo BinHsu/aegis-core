@@ -26,13 +26,19 @@
 
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 
+// protobuf-es v2: `create(FooSchema)` replaces `new Foo()` and
+// `toBinary(FooSchema, msg)` replaces `msg.toBinary()`. Messages are
+// plain objects now, so the schema constant has to travel with them.
+import { create, toBinary } from "@bufbuild/protobuf";
+
 import {
   HintUrgency as ProtoHintUrgency,
   MeetingState as ProtoMeetingState,
-  MeetingStateChange,
-  PrompterHint,
-  TranscriptSegment,
-  ViewerEvent as ProtoViewerEvent,
+  MeetingStateChangeSchema,
+  PrompterHintSchema,
+  TranscriptSegmentSchema,
+  ViewerEventSchema,
+  type ViewerEvent as ProtoViewerEvent,
 } from "@/gen/proto/aegis/v1/aegis_pb";
 
 import { WebSocketTranscriptStreamProvider } from "./WebSocketTranscriptStreamProvider";
@@ -108,9 +114,9 @@ afterEach(() => {
 // ---- Helpers ----
 
 function encodeViewerEvent(build: (ve: ProtoViewerEvent) => void): ArrayBuffer {
-  const ve = new ProtoViewerEvent();
+  const ve = create(ViewerEventSchema);
   build(ve);
-  const bytes = ve.toBinary();
+  const bytes = toBinary(ViewerEventSchema, ve);
   // The provider expects an ArrayBuffer; WebSocket frames with
   // `binaryType = "arraybuffer"` arrive as such. Make sure the
   // underlying buffer is exactly the right size (toBinary() returns
@@ -144,7 +150,7 @@ describe("WebSocketTranscriptStreamProvider — binary frame decoding (Incident 
 
     const frame = encodeViewerEvent((ve) => {
       ve.sequence = 7n;
-      const t = new TranscriptSegment();
+      const t = create(TranscriptSegmentSchema);
       t.segmentId = 3n;
       t.speakerLabel = "Speaker_0";
       t.text = "ask not what your country can do for you";
@@ -173,7 +179,7 @@ describe("WebSocketTranscriptStreamProvider — binary frame decoding (Incident 
     provider.subscribe(REQUEST, { onEvent: (ev) => events.push(ev) });
 
     const frame = encodeViewerEvent((ve) => {
-      const h = new PrompterHint();
+      const h = create(PrompterHintSchema);
       h.hintId = 12n;
       h.suggestion = "Taiwan's population is ~23 million.";
       h.urgency = ProtoHintUrgency.HIGH;
@@ -196,7 +202,7 @@ describe("WebSocketTranscriptStreamProvider — binary frame decoding (Incident 
     provider.subscribe(REQUEST, { onEvent: (ev) => events.push(ev) });
 
     const frame = encodeViewerEvent((ve) => {
-      const s = new MeetingStateChange();
+      const s = create(MeetingStateChangeSchema);
       s.state = ProtoMeetingState.ACTIVE;
       s.reason = "joined";
       ve.payload = { case: "stateChange", value: s };
