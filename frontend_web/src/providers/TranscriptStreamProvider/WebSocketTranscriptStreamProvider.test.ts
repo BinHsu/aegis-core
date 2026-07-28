@@ -527,23 +527,111 @@ describe("WebSocketTranscriptStreamProvider — 64-bit conversion boundaries", (
     );
   });
 
-  // NAMED GAP — the clamp is one-sided. `bigintToNumber` guards only the
-  // upper bound, so google.protobuf.Timestamp's signed `seconds` has no
-  // lower clamp at -Number.MAX_SAFE_INTEGER. A B-1 / B / B+1 sweep on the
-  // negative side would therefore assert lossy pass-through, which would
-  // lock in behaviour that has never been reviewed as intended. Flagged
-  // for a decision rather than tested; see PR #193.
-  test("zero is the natural lower bound for the unsigned fields", () => {
-    const got = decodeOneFrame((ve) => {
-      ve.sequence = 0n;
+  // NAMED ASYMMETRY — `bigintToNumber` guards only the upper bound, so
+  // google.protobuf.Timestamp's SIGNED `seconds` has no lower clamp. That
+  // path is measured, not guessed: seconds = -9223372036854775808 (int64
+  // min) round-trips through protobuf and then `Number()` yields
+  // -9223372036854776000, losing precision silently instead of clamping
+  // or erroring. No test asserts that value here, because pinning it
+  // would cement behaviour nobody has reviewed as intended. Flagged for a
+  // decision on timestampToMs; see PR #193. The unsigned fields are a
+  // different story and are fully covered below.
+});
+
+// ---- Lower boundary of the unsigned fields: zero ----
+//
+// sequence, segment_id and hint_id are proto uint64, so their lower bound
+// is B = 0. B-1 = -1 is not merely unusual, it is unrepresentable:
+// protobuf-es v2 refuses to encode it, so a negative value can never
+// reach the decoder over the wire at all. The sweep below asserts that
+// rejection at -1 rather than skipping it, then ordinary pass-through at
+// 0 and 1.
+//
+// The uint64 MAXIMUM (2^64-1) is included too. It is the largest thing a
+// hostile or buggy gateway can actually put on the wire for these fields,
+// it decodes cleanly as a bigint, and it must therefore hit the clamp.
+
+/** [field label, set the field on a fresh ViewerEvent, read it back off the decoded event] */
+type UnsignedFieldCase = readonly [
+  string,
+  (ve: ProtoViewerEvent, value: bigint) => void,
+  (ev: ViewerEvent) => number,
+];
+
+const UNSIGNED_FIELDS: readonly UnsignedFieldCase[] = [
+  [
+    "ViewerEvent.sequence",
+    (ve, value) => {
+      ve.sequence = value;
+      withTranscriptPayload(ve);
+    },
+    (ev) => ev.sequence,
+  ],
+  [
+    "TranscriptSegment.segment_id",
+    (ve, value) => {
       const t = create(TranscriptSegmentSchema);
-      t.segmentId = 0n;
+      t.segmentId = value;
       ve.payload = { case: "transcript", value: t };
-    });
-    if (got.kind !== "transcript") {
-      throw new Error(`expected kind=transcript, got kind=${got.kind}`);
-    }
-    expect(got.sequence).toBe(0);
-    expect(got.segmentId).toBe(0);
-  });
+    },
+    (ev) => {
+      if (ev.kind !== "transcript") {
+        throw new Error(`expected kind=transcript, got kind=${ev.kind}`);
+      }
+      return ev.segmentId;
+    },
+  ],
+  [
+    "PrompterHint.hint_id",
+    (ve, value) => {
+      const h = create(PrompterHintSchema);
+      h.hintId = value;
+      h.suggestion = "boundary probe";
+      ve.payload = { case: "hint", value: h };
+    },
+    (ev) => {
+      if (ev.kind !== "hint") {
+        throw new Error(`expected kind=hint, got kind=${ev.kind}`);
+      }
+      return ev.hintId;
+    },
+  ],
+];
+
+describe("WebSocketTranscriptStreamProvider — unsigned lower boundary (zero)", () => {
+  test.each(UNSIGNED_FIELDS)(
+    "%s at B-1 (-1) cannot be encoded at all — protobuf-es rejects it",
+    (_label, setField) => {
+      expect(() => encodeViewerEvent((ve) => setField(ve, -1n))).toThrow(
+        /invalid uint64: -1/,
+      );
+    },
+  );
+
+  test.each(UNSIGNED_FIELDS)(
+    "%s at B (0) decodes to 0",
+    (_label, setField, readField) => {
+      expect(readField(decodeOneFrame((ve) => setField(ve, 0n)))).toBe(0);
+    },
+  );
+
+  test.each(UNSIGNED_FIELDS)(
+    "%s at B+1 (1) decodes to 1",
+    (_label, setField, readField) => {
+      expect(readField(decodeOneFrame((ve) => setField(ve, 1n)))).toBe(1);
+    },
+  );
+
+  test.each(UNSIGNED_FIELDS)(
+    "%s at the uint64 maximum (2^64-1) clamps to Number.MAX_SAFE_INTEGER",
+    (_label, setField, readField) => {
+      const got = readField(
+        decodeOneFrame((ve) => setField(ve, 18446744073709551615n)),
+      );
+      expect(got).toBe(9007199254740991);
+      // Without the clamp this would be 18446744073709552000 — the lossy
+      // Number() of 2^64-1 — so this assertion is not vacuous.
+      expect(got).not.toBe(Number(18446744073709551615n));
+    },
+  );
 });
