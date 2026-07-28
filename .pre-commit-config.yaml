@@ -22,7 +22,7 @@ default_language_version:
 # output. A formatting hook that rewrites generated files makes those two
 # guarantees mutually exclusive: pre-commit reformats, the drift job
 # regenerates plain, and CI fails forever with no source-level cause.
-# (Surfaced 2026-07-28 during the protobuf-es v2 migration, once the
+# (Surfaced 2026-07-29 during the protobuf-es v2 migration, once the
 # drift job's pathspec was corrected to actually cover this tree.)
 # Read-only hooks — gitleaks, check-yaml, buf lint — still see the files.
 
