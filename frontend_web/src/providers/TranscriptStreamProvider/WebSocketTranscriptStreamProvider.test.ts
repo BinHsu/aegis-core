@@ -386,7 +386,11 @@ function withTranscriptPayload(ve: ProtoViewerEvent): void {
 // appear if the clamp were missing — null where no clamp applies]
 type BoundaryRow = readonly [string, bigint, number, number | null];
 
-const SEQUENCE_ROWS: readonly BoundaryRow[] = [
+// Shared by all three uint64 fields — sequence, segment_id and hint_id
+// have the same domain and the same clamp, so they have the same
+// expectations. emitted_at.seconds gets its own rows further down
+// because timestampToMs scales the value by 1000.
+const UINT64_CLAMP_ROWS: readonly BoundaryRow[] = [
   ["B-1", B_MINUS_1, 9007199254740990, null],
   ["B", B, 9007199254740991, null],
   ["B+1", B_PLUS_1, 9007199254740991, 9007199254740992],
@@ -398,7 +402,7 @@ describe("WebSocketTranscriptStreamProvider — 64-bit conversion boundaries", (
     expect(B).toBe(BigInt(Number.MAX_SAFE_INTEGER));
   });
 
-  test.each(SEQUENCE_ROWS)(
+  test.each(UINT64_CLAMP_ROWS)(
     "ViewerEvent.sequence at %s (wire %d) decodes to %d",
     (_label, wire, expected, unclamped) => {
       const got = decodeOneFrame((ve) => {
@@ -412,7 +416,7 @@ describe("WebSocketTranscriptStreamProvider — 64-bit conversion boundaries", (
     },
   );
 
-  test.each(SEQUENCE_ROWS)(
+  test.each(UINT64_CLAMP_ROWS)(
     "TranscriptSegment.segment_id at %s (wire %d) decodes to %d",
     (_label, wire, expected, unclamped) => {
       const got = decodeOneFrame((ve) => {
@@ -430,7 +434,7 @@ describe("WebSocketTranscriptStreamProvider — 64-bit conversion boundaries", (
     },
   );
 
-  test.each(SEQUENCE_ROWS)(
+  test.each(UINT64_CLAMP_ROWS)(
     "PrompterHint.hint_id at %s (wire %d) decodes to %d",
     (_label, wire, expected, unclamped) => {
       const got = decodeOneFrame((ve) => {
