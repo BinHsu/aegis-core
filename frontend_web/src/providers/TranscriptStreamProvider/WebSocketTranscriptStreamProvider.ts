@@ -16,10 +16,19 @@
 // segments emit on engine, broadcast delivers to WS subscriber, but
 // host UI shows nothing". See docs/incidents.md for context.
 
+// protobuf-es v2: messages are plain objects, not classes, so decoding
+// goes through the free function `fromBinary(schema, bytes)` instead of
+// the old static `ProtoViewerEvent.fromBinary(bytes)`. The descriptor
+// that used to live on the class now lives in a separate runtime
+// constant, `ViewerEventSchema`; `ViewerEvent` is a pure type. Enums
+// are still emitted as TypeScript enums with the same member names, so
+// the two mapping functions below are unchanged.
+import { fromBinary } from "@bufbuild/protobuf";
+
 import {
   HintUrgency as ProtoHintUrgency,
   MeetingState as ProtoMeetingState,
-  ViewerEvent as ProtoViewerEvent,
+  ViewerEventSchema,
 } from "@/gen/proto/aegis/v1/aegis_pb";
 
 import type {
@@ -102,7 +111,7 @@ function mapHintUrgency(u: ProtoHintUrgency): HintUrgency {
 // if the proto payload oneof is unset (indicates a malformed frame
 // or a future variant we don't know how to render yet).
 function decodeBinaryFrame(buf: ArrayBuffer): ViewerEvent | null {
-  const proto = ProtoViewerEvent.fromBinary(new Uint8Array(buf));
+  const proto = fromBinary(ViewerEventSchema, new Uint8Array(buf));
   const emittedAtMs = timestampToMs(proto.emittedAt);
   const sequence = bigintToNumber(proto.sequence);
 

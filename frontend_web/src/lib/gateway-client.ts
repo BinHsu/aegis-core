@@ -24,10 +24,20 @@
 // the Local-mode default. The Cloud-mode auth layer registers a getter
 // via setAuthTokenGetter that returns the current bearer token.
 
-import { createPromiseClient, type PromiseClient } from "@connectrpc/connect";
+// Connect-ES v2 API: `createClient` replaces v1's `createPromiseClient`
+// (v1 also had a callback-style client; v2 has only the promise one, so
+// the qualifier in the name became noise). `Client` likewise replaces
+// `PromiseClient`.
+//
+// The service descriptor now comes from the protobuf-es-generated
+// `aegis_pb.ts`, not from a separate `aegis_connect.ts`. Connect-ES v2
+// removed `protoc-gen-connect-es` because protobuf-es v2 already emits
+// a `GenService` descriptor for every service in the file. That file is
+// deleted and the plugin entry is gone from buf.gen.yaml.
+import { createClient, type Client } from "@connectrpc/connect";
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
 
-import { Gateway } from "@/gen/proto/aegis/v1/aegis_connect.js";
+import { Gateway } from "@/gen/proto/aegis/v1/aegis_pb.js";
 
 import type { AppConfig } from "./config";
 
@@ -48,7 +58,7 @@ export function setAuthTokenGetter(getter: (() => string | null) | null): void {
   authTokenGetter = getter;
 }
 
-let client: PromiseClient<typeof Gateway> | null = null;
+let client: Client<typeof Gateway> | null = null;
 
 /**
  * Build the singleton Gateway client from runtime config. Call once in
@@ -69,14 +79,14 @@ export function initGatewayClient(cfg: AppConfig): void {
       },
     ],
   });
-  client = createPromiseClient(Gateway, transport);
+  client = createClient(Gateway, transport);
 }
 
 /**
  * The singleton Gateway client. Throws if accessed before
  * initGatewayClient() — a loud failure beats a silent unconfigured RPC.
  */
-export function getGatewayClient(): PromiseClient<typeof Gateway> {
+export function getGatewayClient(): Client<typeof Gateway> {
   if (client === null) {
     throw new Error(
       "gateway-client: getGatewayClient() before initGatewayClient(). " +
