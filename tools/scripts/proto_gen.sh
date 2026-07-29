@@ -14,16 +14,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 ./tools/buf/buf generate
 
-# Post-process the connect-es output. Connect-ES v1.6.1's
-# `target=ts` generator unconditionally emits `// @ts-nocheck` on its
-# service files, which silently disables type checking and turns
-# every method's response into `Message<unknown>` at consume sites.
-# That defeats the whole point of generating TypeScript. Strip the
-# directive so callers get real types. (Fixed in upstream v2; remove
-# this when the BSR plugin catches up — see buf.gen.yaml.)
-TS_FILES=$(find frontend_web/src/gen -name "*.ts" 2>/dev/null || true)
-if [[ -n "$TS_FILES" ]]; then
-  # Use perl rather than sed -i because BSD sed and GNU sed disagree
-  # on the -i empty-string argument; perl is uniform across both.
-  perl -i -ne 'print unless m{^// \@ts-nocheck\s*$}' $TS_FILES
-fi
+# No post-processing. Earlier revisions stripped a `// @ts-nocheck`
+# line that connect-es v1.6.1's `target=ts` generator emitted into its
+# service files, which disabled type checking on every generated RPC
+# signature. protoc-gen-es v2 does not emit that directive and the
+# connect-es generator is gone entirely (see buf.gen.yaml), so the
+# checked-in tree is now byte-for-byte what the generator produced.
+# Keeping a no-op rewrite here would mean a future generator change
+# gets silently edited instead of showing up in review.
+#
+# "Byte-for-byte" is a requirement, not an aspiration: the
+# proto-codegen-drift job in ci-baseline.yml re-runs this script and
+# diffs the result. Anything that rewrites the generated tree after the
+# fact breaks that check, which is why .pre-commit-config.yaml excludes
+# frontend_web/src/gen/ from prettier and from the whitespace / EOF
+# fixers. Do not "tidy" generated output.
