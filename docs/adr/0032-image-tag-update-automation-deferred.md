@@ -1,5 +1,8 @@
 # ADR-0032: Image Tag Update Automation
 
+> **Superseded by [ADR-0036](0036-deploy-topology-platform-tier.md).** See it for the
+> current image-tag automation (cross-repo bump PR + auto-merge against `aegis-core-deploy`).
+
 | Field    | Value                                                                       |
 | -------- | --------------------------------------------------------------------------- |
 | Status   | Superseded by ADR-0036 (2026-05-18 — same-repo `bump-image-tag` mechanism replaced by a cross-repo bump PR + auto-merge against `aegis-core-deploy`). Re-decided 2026-05-17 (automation implemented); originally deferred 2026-04-20 |
