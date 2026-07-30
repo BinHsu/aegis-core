@@ -8,7 +8,7 @@
 version: 2
 
 # =============================================================================
-# MAINTENANCE FREEZE (from 2026-07-31, expected to lift ~2026-Q1/Q2):
+# MAINTENANCE FREEZE (from 2026-07-31, expected to lift ~2027-Q1/Q2):
 # the owner is starting a new job and won't be able to tend this repo for six
 # months or more. Every `open-pull-requests-limit` below is set to 0 so
 # Dependabot stops opening version-update PRs — a public repo with dozens of
