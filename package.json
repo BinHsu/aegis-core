@@ -9,12 +9,13 @@
   },
   "packageManager": "pnpm@8.6.7",
   "pnpm": {
-    "//overrides": "Force patch-level bumps of transitive deps flagged by Dependabot. postcss 8.5.10 fixes CVE-2026-41305 (moderate); @babel/core 7.29.6 fixes CVE-2026-49356 (low). ws 8.21.0 fixes a HIGH-severity DoS advisory (transitive via happy-dom, devDependency only); react-router 7.15.1 fixes a LOW-severity advisory (transitive via react-router-dom). All are pulled transitively at API-compatible patch versions, so an override is the lowest-risk fix until the parents widen their ranges.",
+    "//overrides": "Force patch-level bumps of transitive deps flagged by Dependabot. postcss >=8.5.18 fixes GHSA-r28c-9q8g-f849 (HIGH, path traversal via sourceMappingURL previous-source-map auto-loading; transitive under vite, devDependency only); @babel/core 7.29.6 fixes CVE-2026-49356 (low); ws 8.21.0 fixes a HIGH-severity DoS advisory (transitive via happy-dom, devDependency only). Each is pulled transitively at an API-compatible version, so an override is the lowest-risk fix until the parents widen their ranges.",
+    "//overrides-key-form": "Use a BARE package name as the override key, not the \"pkg@<version>\" selector form. pnpm matches that selector against the dependent's DECLARED range, not the resolved version, so it silently no-ops when the declared range merely overlaps the selector. Measured on pnpm 8.6.7: vite declares \"postcss\": \"^8.5.6\"; with the key \"postcss@<8.5.18\" the lockfile still resolved postcss 8.5.15 (vulnerable, override never fired), and the earlier \"postcss@<8.5.10\" key had been a no-op for the same reason — 8.5.15 came from vite's own range, not from the override. Switching the key to bare \"postcss\" moved it to 8.5.25. The \"@babel/core@<7.29.6\" key below is left as-is only because @babel/core already resolves to 7.29.7 on its own; treat it as decorative, not load-bearing, and switch it to a bare key if it ever needs to actually bite.",
+    "//overrides-scope": "Overrides are only for TRANSITIVE deps we cannot fix at the declaration site — a direct dependency gets bumped in its own package.json instead. That is why the former \"react-router\": \">=7.15.1 <8\" entry is gone: GHSA-qwww-vcr4-c8h2 (HIGH) is first patched in 8.3.0, above that override's ceiling, and react-router v8 deleted the react-router-dom re-export package, so frontend_web now depends on react-router ^8.3.0 directly. The direct range reaches the fix on its own, and keeping the override could only hold it back.",
     "overrides": {
-      "postcss@<8.5.10": ">=8.5.10 <9",
+      "postcss": ">=8.5.18 <9",
       "@babel/core@<7.29.6": ">=7.29.6 <8",
-      "ws": ">=8.21.0 <9",
-      "react-router": ">=7.15.1 <8"
+      "ws": ">=8.21.0 <9"
     }
   }
 }

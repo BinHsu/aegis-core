@@ -35,10 +35,17 @@ export default defineConfig({
     sourcemap: true,
     // Keep chunking predictable so Cloud-mode cache invalidation by
     // filename works cleanly.
+    //
+    // "react-router/dom" is listed separately on purpose. Rollup matches
+    // manualChunks entries by resolved module id, and the package's "." and
+    // "./dom" subpath exports resolve to different modules. Naming only
+    // "react-router" left dom-export/dom-router-provider.js (which main.tsx
+    // pulls in for RouterProvider) stranded in the app chunk, so a
+    // router-only version bump would have dirtied the app chunk hash too.
     rollupOptions: {
       output: {
         manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
+          react: ["react", "react-dom", "react-router", "react-router/dom"],
         },
       },
     },
