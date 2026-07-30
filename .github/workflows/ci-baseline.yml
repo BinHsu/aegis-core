@@ -8,7 +8,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Required for GitHub merge queue. Every context in main-protection's
+  # required_status_checks list is a job in THIS workflow, so without a
+  # merge_group trigger a queued PR waits forever on checks that never
+  # run — the queue deadlocks rather than failing visibly. Adding the
+  # trigger must therefore land BEFORE the merge_queue rule is enabled.
+  merge_group:
+    types: [checks_requested]
 
+# github.ref is the queue's own gh-readonly-queue/... ref on merge_group
+# events, so each queued entry gets its own concurrency group and entries
+# do not cancel each other.
 concurrency:
   group: ci-baseline-${{ github.ref }}
   cancel-in-progress: true
