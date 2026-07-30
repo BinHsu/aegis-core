@@ -35,13 +35,13 @@ importers:
         version: 19.2.7
       react-dom:
         specifier: ^19.2.7
-        version: 19.2.7(react@19.2.7)
+        version: 19.2.8(react@19.2.7)
       react-oidc-context:
         specifier: ^3.2.0
         version: 3.2.0(oidc-client-ts@3.1.0)(react@19.2.7)
       react-router:
         specifier: ^8.3.0
-        version: 8.3.0(react-dom@19.2.7)(react@19.2.7)
+        version: 8.3.0(react-dom@19.2.8)(react@19.2.7)
     devDependencies:
       '@playwright/test':
         specifier: ^1.55.1
@@ -54,7 +54,7 @@ importers:
         version: 19.1.0
       '@types/react-dom':
         specifier: ^19.1.0
-        version: 19.1.0(@types/react@19.1.0)
+        version: 19.2.3(@types/react@19.1.0)
       '@vitejs/plugin-react':
         specifier: ^4.3.4
         version: 4.3.4(vite@6.4.3)
@@ -821,10 +821,10 @@ packages:
       undici-types: 8.3.0
     dev: true
 
-  /@types/react-dom@19.1.0(@types/react@19.1.0):
-    resolution: {integrity: sha512-21E2zejNNRtjG4hKIyJz4aWswGEcNFTgttA0bZIRGjj1HA/tbSUxIJnIcYbn98pwJck0cS1bsQhn6eaKqbcFWw==}
+  /@types/react-dom@19.2.3(@types/react@19.1.0):
+    resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
     peerDependencies:
-      '@types/react': ^19.0.0
+      '@types/react': ^19.2.0
     dependencies:
       '@types/react': 19.1.0
     dev: true
@@ -1371,10 +1371,10 @@ packages:
       react: 19.2.7
     dev: false
 
-  /react-dom@19.2.7(react@19.2.7):
-    resolution: {integrity: sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ==}
+  /react-dom@19.2.8(react@19.2.7):
+    resolution: {integrity: sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==}
     peerDependencies:
-      react: ^19.2.7
+      react: ^19.2.8
     dependencies:
       react: 19.2.7
       scheduler: 0.27.0
@@ -1396,7 +1396,7 @@ packages:
     engines: {node: '>=0.10.0'}
     dev: true
 
-  /react-router@8.3.0(react-dom@19.2.7)(react@19.2.7):
+  /react-router@8.3.0(react-dom@19.2.8)(react@19.2.7):
     resolution: {integrity: sha512-qyPMvW83jGIct3yiieisxdk9M745anqhpIMKN5m1t6yBMfgVPpt77aHOqs5fUlEJRMCGffg9BaQLH9oPVOL7xQ==}
     engines: {node: '>=22.22.0'}
     peerDependencies:
@@ -1408,7 +1408,7 @@ packages:
     dependencies:
       cookie-es: 3.1.1
       react: 19.2.7
-      react-dom: 19.2.7(react@19.2.7)
+      react-dom: 19.2.8(react@19.2.7)
     dev: false
 
   /react@19.2.7:
