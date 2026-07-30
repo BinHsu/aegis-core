@@ -13,7 +13,12 @@
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+// react-router v8 removed the `react-router-dom` re-export package. Everything
+// non-DOM comes from `react-router`; the DOM `RouterProvider` (the one that
+// wires React's flushSync for us) comes from `react-router/dom`. See the
+// official v8 upgrade guide, "react-router-dom" section.
+import { createBrowserRouter } from "react-router";
+import { RouterProvider } from "react-router/dom";
 
 import { loadConfig } from "./lib/config";
 import { initGatewayClient } from "./lib/gateway-client";
