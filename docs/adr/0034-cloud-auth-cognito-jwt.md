@@ -5,8 +5,8 @@
 | Status     | Accepted — 2026-04-23. Phase 4e implementation slices added to ROADMAP.md on acceptance. |
 | Date       | 2026-04-23 |
 | Deciders   | Project author |
-| Context    | LDZ committed via `aegis-aws-landing-zone` ADR-026 (cross-repo issue aegis-core#76, Partially Accepted 2026-04-23) to provision a Cognito User Pool in `staging/auth/`. This ADR records how aegis-core consumes that pool: gateway JWT validation, SPA OAuth flow, `custom:tenant_id` propagation into `ADR-0022`'s multi-tenancy filter. |
-| Related    | ADR-0001 (CreateMeeting + session tokens), ADR-0022 (multi-tenancy via `custom:tenant_id`), ADR-0020 (engine owns inference, not auth), ADR-0031 (LOCAL mode escape-hatch pattern), aegis-core #76 (consumption contract thread), aegis-aws-landing-zone PR #138 (ADR-026 Cognito commitment) |
+| Context    | LDZ committed via `aegis-landing-zone-aws` ADR-026 (cross-repo issue aegis-core#76, Partially Accepted 2026-04-23) to provision a Cognito User Pool in `staging/auth/`. This ADR records how aegis-core consumes that pool: gateway JWT validation, SPA OAuth flow, `custom:tenant_id` propagation into `ADR-0022`'s multi-tenancy filter. |
+| Related    | ADR-0001 (CreateMeeting + session tokens), ADR-0022 (multi-tenancy via `custom:tenant_id`), ADR-0020 (engine owns inference, not auth), ADR-0031 (LOCAL mode escape-hatch pattern), aegis-core #76 (consumption contract thread), aegis-landing-zone-aws PR #138 (ADR-026 Cognito commitment) |
 | Supersedes | Phase 2 `StaticJWTProvider`'s CLOUD path usage. `StaticJWTProvider` itself remains for integration-test scenarios that need pre-shared-secret tokens. LOCAL `NoOpProvider` unchanged. |
 
 ## Context

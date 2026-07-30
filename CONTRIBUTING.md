@@ -427,13 +427,13 @@ Three common postures for a fork:
 ### β→δ migration is a cross-repo event
 
 When this repo migrates β→δ, it is a coordinated change with the
-sibling `aegis-aws-landing-zone` repo per
+sibling `aegis-landing-zone-aws` repo per
 [README §Cross-repo coordination ritual](README.md#cross-repo-coordination-ritual):
 the sibling owns the S3 bucket, the dedicated
 `github-actions-aegis-core` IAM role, and the OIDC trust policy
 (full spec in ADR-0014 §"δ prerequisites — what
-`aegis-aws-landing-zone` must provide"). The migration opens a
-`cross-repo/blocking` issue on `aegis-aws-landing-zone` first,
+`aegis-landing-zone-aws` must provide"). The migration opens a
+`cross-repo/blocking` issue on `aegis-landing-zone-aws` first,
 waits for the sibling to provision resources, then swaps the CI
 flag in a single PR here. Do not self-migrate before the sibling
 confirms the resources exist; CI will fail on every run until

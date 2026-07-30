@@ -20,25 +20,25 @@
     "e2e:install": "playwright install --with-deps chromium webkit"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "^1.10.0",
-    "@connectrpc/connect": "^1.6.1",
-    "@connectrpc/connect-web": "^1.6.1",
+    "@bufbuild/protobuf": "^2.13.0",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-web": "^2.1.2",
     "oidc-client-ts": "^3.1.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-oidc-context": "^3.2.0",
-    "react-router-dom": "^7.1.0"
+    "react-router-dom": "^7.15.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1",
-    "@types/node": "^20.19.0",
+    "@playwright/test": "^1.55.1",
+    "@types/node": "^26.1.1",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
     "happy-dom": "^20.9.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7",
+    "vite": "^6.4.3",
     "vitest": "^4.1.4"
   }
 }

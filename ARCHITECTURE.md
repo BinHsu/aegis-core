@@ -110,6 +110,60 @@ Notes on the diagrams:
 *   **Gateway Pods**: Lightweight Go pods handling I/O multiplexing.
 *   **Multi-Tenancy**: Data separation via DynamoDB; physical compute separation for VIP clients via Fargate/Dedicated Instances.
 
+#### 2.1 gateway_go — Internal Components (C4 Level 3)
+
+The diagram below zooms into the `gateway_go` binary. Components are derived directly from the source tree under `gateway_go/cmd/gateway/` and `gateway_go/internal/`.
+
+```mermaid
+C4Component
+    title gateway_go — Internal Components (C4 Level 3)
+
+    Container_Boundary(gw, "gateway_go (Go binary — :8080 HTTP / :9090 gRPC / :8081 metrics)") {
+        Component(main, "Bootstrap / main", "Go", "Wires all components; starts HTTP, gRPC, and metrics listeners; manages process context and graceful drain")
+        Component(oidc, "OIDCProvider", "Go / lestrrat-go/jwx", "Fetches and caches Cognito JWKS every 15 min (RS256); validates iss, aud, exp; maps sub + custom:tenant_id to Principal")
+        Component(authz, "Auth Interceptors", "Go / google.golang.org/grpc", "Unary + stream gRPC interceptors; calls Provider.Authenticate on every inbound RPC; attaches Principal to context")
+        Component(grpcsvc, "GatewayService", "Go / grpc", "Implements aegis.v1.Gateway: CreateMeeting, EndMeeting, NegotiateWebRTC, JoinAsViewer, SendOfficerHint, ListCorpora")
+        Component(pipeline, "Audio Pipeline", "Go", "Reads Opus RTP payloads from Negotiator.AudioChan; forwards verbatim to engine StreamTranscribe; fans transcript egress via Session.Broadcast")
+        Component(webrtc, "WebRTC Negotiator", "Go / pion", "Non-trickle SDP exchange; exposes AudioChan and ICEChan per session; ICE state drives PAUSE/RESUME/END_STREAM control messages")
+        Component(session, "Session Registry", "Go", "Process-scoped in-memory registry; allocates session IDs; fan-out Subscribe/Broadcast per ADR-0004")
+        Component(token, "JWT Issuer", "Go / HMAC-SHA256", "Issues and verifies short-lived viewer join tokens scoped to a session ID")
+        Component(health, "Health + Readiness Handlers", "Go / net/http", "GET /healthz — probes engine Health RPC, returns JSON; GET /readyz — drain-aware 503 during shutdown")
+        Component(ws, "WebSocket Handler", "Go / gorilla/websocket", "Local-mode viewer transport on /ws/viewer; reuses Session.Subscribe; shares registry and token issuer with gRPC path")
+        Component(metrics, "Metrics Server", "Go / prometheus/client_go", "Exposes /metrics on :8081; RED + domain gauges (active_sessions, hints_emitted, transient_loss)")
+        Component(tracing, "OTel Tracer", "Go / opentelemetry-go", "Initializes OTLP exporter (stdout in local mode, gRPC in cloud); propagates W3C traceparent to engine via gRPC metadata")
+        Component(profiling, "Pyroscope Profiler", "Go / grafana/pyroscope-go", "Continuous CPU/alloc profiling to Grafana Cloud Pyroscope; fail-soft on empty/unreachable endpoint")
+        Component(cors, "CORS Policy", "Go / net/http", "Permissive in local mode; strict origin allowlist from AEGIS_ALLOWED_ORIGINS in cloud mode (ADR-0027)")
+        Component(grpcweb, "gRPC-Web Bridge", "Go / improbable-eng/grpc-web", "Wraps gRPC server for browser clients on :8080; content-type sniff routes to grpc-web or native HTTP handlers")
+    }
+
+    System_Ext(cognito, "AWS Cognito", "Cognito User Pool — issues RS256 ID tokens; exposes JWKS endpoint")
+    System_Ext(engine, "aegis-core engine (C++)", "Whisper.cpp inference; gRPC StreamTranscribe bidi stream; Health + ListCorpora RPCs")
+
+    Rel(main, oidc, "constructs (DEPLOY_MODE=cloud)")
+    Rel(main, authz, "registers interceptors using")
+    Rel(main, grpcsvc, "registers with gRPC server")
+    Rel(main, health, "registers /healthz and /readyz on HTTP mux")
+    Rel(main, ws, "registers /ws/viewer on HTTP mux")
+    Rel(main, grpcweb, "wraps gRPC server for :8080")
+    Rel(main, tracing, "initializes; propagates via otelgrpc stats handler")
+    Rel(main, profiling, "initializes; fail-soft")
+    Rel(main, pipeline, "factory closure injected into GatewayService.NegotiateWebRTC")
+    Rel(authz, oidc, "calls Authenticate on each inbound RPC")
+    Rel(authz, grpcsvc, "forwards authenticated request to")
+    Rel(grpcsvc, session, "creates / deletes / looks up sessions")
+    Rel(grpcsvc, token, "issues viewer join tokens; verifies on JoinAsViewer")
+    Rel(grpcsvc, webrtc, "delegates SDP exchange to")
+    Rel(grpcsvc, pipeline, "calls factory on NegotiateWebRTC success; calls stop on EndMeeting")
+    Rel(pipeline, session, "calls Session.Broadcast with transcript ViewerEvents")
+    Rel(pipeline, engine, "streams Opus payloads; receives EgressMessage transcripts", "gRPC bidi / StreamTranscribe")
+    Rel(webrtc, pipeline, "provides AudioChan (Opus RTP) and ICEChan (connection state)")
+    Rel(ws, session, "subscribes to session fan-out")
+    Rel(ws, token, "verifies viewer join token")
+    Rel(health, engine, "calls Health RPC to report engine status", "gRPC / 2 s timeout")
+    Rel(oidc, cognito, "fetches and caches JWKS", "HTTPS /.well-known/jwks.json")
+    Rel(cors, grpcweb, "supplies origin predicate")
+```
+
 ### 3. SRE / FinOps Capacity Management (Multi-Tenancy)
 The Go GW acts as a "Fleet Manager" routing tenants to their respective C++ engine pods based on tier constraints:
 *   **Tier 3 (Shared/Economy)**: Uses a pre-warmed pool of C++ Pods running 24/7 on shared nodes. Scales via K8s HPA to prevent cold starts.
@@ -151,7 +205,7 @@ To satisfy both "beginner-friendly local execution" and "EKS Cloud Deployment", 
 *   **Process Supervisor Pattern**: 
     - In `CLOUD` mode, Go GW and C++ Engine run in separate K8s Pods communicating via gRPC over mutually-authenticated TLS (no service mesh — see [ADR-0031](docs/adr/0031-mtls-without-service-mesh.md)).
     - In `LOCAL` mode, a user simply runs `bazel run //:app_local`. The Go GW acts as a local supervisor, programmatically spinning up the C++ binary as a child background process (`exec.Command`) to simulate the microservice network internally, without requiring the user to open multiple terminals. **mTLS is bypassed in LOCAL** — parent and child processes share the host's trust domain, so gRPC runs plaintext on localhost (see ADR-0031 §"LOCAL mode posture" for the threat-model reasoning and the credentials-factory injection pattern that keeps application code mode-oblivious).
-*   **Gateway ↔ Engine Topology (N:N-ready by design)**: The code is written to support 1:1, 1:N, and M:N deployments without change — deployment realizes the actual topology, not application code. See [ADR-0017](docs/adr/0017-gateway-engine-topology.md) for the invariants (round-robin gRPC LB, per-replica session state, stream-auto-pinning), the "never hardcode a single engine" review rule, and the cross-repo split between this repo (code N-ready) and `aegis-aws-landing-zone` (Headless Service + ALB session affinity).
+*   **Gateway ↔ Engine Topology (N:N-ready by design)**: The code is written to support 1:1, 1:N, and M:N deployments without change — deployment realizes the actual topology, not application code. See [ADR-0017](docs/adr/0017-gateway-engine-topology.md) for the invariants (round-robin gRPC LB, per-replica session state, stream-auto-pinning), the "never hardcode a single engine" review rule, and the cross-repo split between this repo (code N-ready) and `aegis-landing-zone-aws` (Headless Service + ALB session affinity).
 
 ### 6. AI Models & Hardware Resource Optimization
 The system targets an absolute physical ceiling of **16GB Unified Memory** (e.g., MacBook Air M4 base-high tier) to guarantee successful `LOCAL` mode deployments without crashing.
@@ -166,17 +220,17 @@ The system targets an absolute physical ceiling of **16GB Unified Memory** (e.g.
 
 ### 7. Cross-Repository Cloud Infrastructure (DevOps Boundary)
 This repository (`aegis-core`) is an Application Monorepo. However, it relies on a separately maintained Infrastructure as Code (IaC) repository for underlying AWS network orchestration.
-*   **Infra Repository**: [aegis-aws-landing-zone](https://github.com/BinHsu/aegis-aws-landing-zone)
+*   **Infra Repository**: [`aegis-landing-zone-aws`](https://github.com/BinHsu/aegis-landing-zone-aws)
 *   **Boundary Rules**:
     - **App Repo (Here / The Payload)**: Holds ALL application logic, Bazel build rules, Github Actions CI code, and Kubernetes Deployment/Service/Helm YAMLs. The App dictates how it wants to run on K8s (e.g., replica count, resource limits).
     - **Infra Repo (There / The Pointer)**: Holds Terraform/CDK to spin up the actual AWS EKS Clusters, DynamoDB Tables, S3 Buckets, and cross-account IAM OIDC identity providers. It also hosts the ArgoCD *configuration* (the `Application` CRD) that simply points ArgoCD to watch this App Repo.
 *   **GitOps Conflict Prevention (Zero Overlap)**:
     - ArgoCD Server runs in the Infra repo's EKS cluster, but it polls the K8s manifests located in THIS Application repository.
     - Application engineers push K8s YAML changes here. ArgoCD detects the change and automatically syncs the EKS cluster.
-    - *Note to future Agents: Do not try to insert Terraform code to build an EKS cluster here. Direct the user to the `aegis-aws-landing-zone` repository.*
+    - *Note to future Agents: Do not try to insert Terraform code to build an EKS cluster here. Direct the user to the `aegis-landing-zone-aws` repository.*
 
 ### 8. Enterprise Standards (Security & Observability)
-To pass strict compliance and enterprise security audits, this application enforces the following patterns. (The infrastructure for these is provisioned in the `aegis-aws-landing-zone` repository).
+To pass strict compliance and enterprise security audits, this application enforces the following patterns. (The infrastructure for these is provisioned in the `aegis-landing-zone-aws` repository).
 *   **Zero Trust Networking (mTLS)**: Even within the EKS cluster, the communication between the Go Gateway and the C++ Engine is protected by Mutual TLS. Delivery mechanism is cert-manager + gRPC-native TLS with in-process rotation — **not** a service mesh. See [ADR-0031](docs/adr/0031-mtls-without-service-mesh.md) for the rejection-of-mesh rationale, cost comparison against Istio / Linkerd / SPIFFE SPIRE, and triggers to revisit. (ARCH originally named `e.g., Istio` as an example of the solution family; that hint is preserved under ADR-0031's Phase 5 placeholder.)
 *   **Identity First (EKS Pod Identity & Cognito)**: 
     - *Server-side*: No hardcoded AWS credentials or IAM static keys exist. The Go Gateway authenticates to DynamoDB/S3 using **EKS Pod Identity**, transparently assuming IAM roles. 
@@ -309,9 +363,9 @@ Container images are built via **`rules_oci` v2** as Bazel actions — no `Docke
 
 **Push to ECR** (live as of Phase 4a-3) is wired in a dedicated `.github/workflows/release-staging-image.yml` workflow that triggers only on `push: branches: [main]` — matching the trust scope of the `github-actions-aegis-core-ecr` IAM role provisioned in landing-zone (`refs/heads/main` only; `job_workflow_ref` further pinned by ldz to this specific workflow file). Tag scheme: `staging-<git_sha>` for the gateway image, `engine-staging-<git_sha>` for the engine image (Slice 4a-4). Both ship from the same workflow so the OIDC trust scope stays single-file. PR builds validate (build + smoke + SBOM for the gateway) but do not push, by design. Full rationale: ADR-0025; wirings in `packaging/gateway/BUILD.bazel` and `packaging/engine/BUILD.bazel`.
 
-**Frontend deploy** (live as of Phase 4a-5) is wired in a separate `.github/workflows/release-staging-frontend.yml` workflow — same `push: branches: [main]` trigger, separate OIDC role `github-actions-aegis-core-frontend` (per [ldz #90](https://github.com/BinHsu/aegis-aws-landing-zone/issues/90) commitment). Frontend is NOT a container; the React + Vite SPA builds to `frontend_web/dist/` and syncs to S3, fronted by a CloudFront distribution at `aegis-app.staging.binhsu.org`. Gateway sits at `aegis-api.staging.binhsu.org` (split subdomain — path-based routing rejected because CloudFront's WebSocket-upgrade story on `/ws/*` is awkward). Cross-origin gateway calls require explicit CORS allowlist via `AEGIS_ALLOWED_ORIGINS` env var on the gateway pod (`gateway_go/internal/cors/` package; Local-mode permissive default preserved per ADR-0007). Full rationale: ADR-0027.
+**Frontend deploy** (live as of Phase 4a-5) is wired in a separate `.github/workflows/release-staging-frontend.yml` workflow — same `push: branches: [main]` trigger, separate OIDC role `github-actions-aegis-core-frontend` (per [ldz #90](https://github.com/BinHsu/aegis-landing-zone-aws/issues/90) commitment). Frontend is NOT a container; the React + Vite SPA builds to `frontend_web/dist/` and syncs to S3, fronted by a CloudFront distribution at `aegis-app.staging.binhsu.org`. Gateway sits at `aegis-api.staging.binhsu.org` (split subdomain — path-based routing rejected because CloudFront's WebSocket-upgrade story on `/ws/*` is awkward). Cross-origin gateway calls require explicit CORS allowlist via `AEGIS_ALLOWED_ORIGINS` env var on the gateway pod (`gateway_go/internal/cors/` package; Local-mode permissive default preserved per ADR-0007). Full rationale: ADR-0027.
 
-The engine image is built by CI on Linux runners; Camp B trust means no defensive `target_compatible_with` gate against Mac builds (the doctrine forbids them anyway, and dev `bazel query` / IDE completion stays unblocked). Models are NOT shipped in the engine image; runtime expects `/models` to be backed by ldz-provisioned storage (EBS PV, S3+CSI, or EFS — ldz picks per cross-repo issue [aegis-aws-landing-zone#82](https://github.com/BinHsu/aegis-aws-landing-zone/issues/82)). The engine reads `AEGIS_MODEL_PATH` env var or falls back to `models/...` relative to CWD. Image stays at ~50-100MB rather than 1.5GB+ if models were baked in.
+The engine image is built by CI on Linux runners; Camp B trust means no defensive `target_compatible_with` gate against Mac builds (the doctrine forbids them anyway, and dev `bazel query` / IDE completion stays unblocked). Models are NOT shipped in the engine image; runtime expects `/models` to be backed by ldz-provisioned storage (EBS PV, S3+CSI, or EFS — ldz picks per cross-repo issue [aegis-landing-zone-aws#82](https://github.com/BinHsu/aegis-landing-zone-aws/issues/82)). The engine reads `AEGIS_MODEL_PATH` env var or falls back to `models/...` relative to CWD. Image stays at ~50-100MB rather than 1.5GB+ if models were baked in.
 
 #### 10.2 Static Analysis (SAST)
 
@@ -364,7 +418,7 @@ Per CLAUDE.md Rule 2, all tests must have legitimate inputs producing verifiable
 - **Metrics**: RED (Rate / Errors / Duration) metrics on every gRPC method; USE (Utilization / Saturation / Errors) metrics on every pod; domain metrics include `aegis_core_gateway_host_transient_loss_total`, `aegis_core_gateway_questions_detected_total`, `aegis_core_gateway_hints_emitted_total`, `aegis_core_engine_budget_bytes_used`, `aegis_core_engine_sessions_active`, and others. Every metric family carries the full `aegis_core_` repo-name prefix per CLAUDE.md Rule 11.
 - **Logging**: structured JSON logs with compile-time PII redaction (ADR-0005 R3). In Cloud mode, logs ship via the platform-provided Grafana Alloy DaemonSet to Grafana Cloud Loki (per ldz ADR-022 + aegis-core#111); in Local mode, logs go to stdout.
 - **Continuous profiling**: the Go Gateway samples CPU, allocation, and goroutine profiles via the `github.com/grafana/pyroscope-go` client and ships them to a Grafana Cloud Pyroscope ingest endpoint (ADR-0035). The integration is fail-soft — an empty or unreachable `AEGIS_PYROSCOPE_ENDPOINT` degrades profiling to a no-op without blocking startup or the request path — so the code ships before the landing-zone provisions ingest. Profiling data is operational telemetry only (function names + line numbers); transcript and audio never appear. Engine-side (C++) profiling is deferred to a later slice.
-- **Dashboards and alerts**: `aegis-aws-landing-zone` repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
+- **Dashboards and alerts**: `aegis-landing-zone-aws` repository provisions Grafana dashboards and PagerDuty integration; SLO violations page the on-call.
 
 #### 10.7 Secrets and Credentials
 

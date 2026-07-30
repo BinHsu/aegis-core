@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/BinHsu/aegis-core/security/advisories/new
+    about: Report a security vulnerability privately via GitHub Security Advisories.
+  - name: Question / Discussion
+    url: https://github.com/BinHsu/aegis-core/discussions
+    about: Ask a question or start a discussion.

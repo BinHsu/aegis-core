@@ -20,6 +20,13 @@ updates:
     labels:
       - dependencies
       - github-actions
+    # 7-day cooldown: a newly published action tag/release could be a
+    # supply-chain compromise (Semgrep p/ci
+    # dependabot-missing-cooldown). Waiting a week before Dependabot
+    # proposes it lets a malicious release get caught/pulled upstream
+    # first.
+    cooldown:
+      default-days: 7
 
   # ---------------------------------------------------------------------------
   # Go modules (gateway_go/). grpc-go + protobuf-go bump frequently;
@@ -54,13 +61,37 @@ updates:
         update-types:
           - "version-update:semver-minor"
           - "version-update:semver-major"
+    # 7-day cooldown — same supply-chain rationale as the
+    # github-actions block above (Semgrep p/ci
+    # dependabot-missing-cooldown).
+    cooldown:
+      default-days: 7
 
   # ---------------------------------------------------------------------------
-  # NPM (frontend_web/). Vite and React moved fast; don't auto-open PRs
-  # for every patch — monthly + patch-level only to keep signal high.
+  # NPM (frontend_web/, but rooted at "/"). Vite and React moved fast;
+  # don't auto-open PRs for every patch — monthly + patch-level only to
+  # keep signal high.
+  #
+  # directory is "/" and NOT "/frontend_web", even though frontend_web is
+  # the only workspace member. frontend_web is a pnpm workspace whose
+  # pnpm-lock.yaml and pnpm-workspace.yaml live at the repo root, not
+  # inside frontend_web/. The npm updater treats `directory` as its root
+  # and does not look above it, so pointed at "/frontend_web" it can edit
+  # frontend_web/package.json but has no lockfile in scope to update
+  # alongside it. The resulting PR carries a bumped manifest and a stale
+  # lockfile, which fails `pnpm install --frozen-lockfile` in CI every
+  # time.
+  #
+  # This is exactly what happened in PR #188 (@types/node ^20.19.0 ->
+  # ^26.1.1): Dependabot bumped frontend_web/package.json only, the root
+  # pnpm-lock.yaml didn't move, and "Frontend live-browser smoke
+  # (Playwright)" failed with ERR_PNPM_OUTDATED_LOCKFILE. Rooting the
+  # updater at "/" gives it visibility into the root lockfile so it can
+  # update both files together, same as it already does for the bazel and
+  # github-actions stanzas above.
   # ---------------------------------------------------------------------------
   - package-ecosystem: npm
-    directory: "/frontend_web"
+    directory: "/"
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
@@ -68,6 +99,12 @@ updates:
       - dependencies
       - frontend
     versioning-strategy: increase-if-necessary
+    # 7-day cooldown — same supply-chain rationale as above (Semgrep
+    # p/ci dependabot-missing-cooldown). npm's registry has the
+    # highest typosquat/compromised-maintainer volume of the four
+    # ecosystems here, so this is the block where it matters most.
+    cooldown:
+      default-days: 7
 
   # ---------------------------------------------------------------------------
   # Bazel MODULE.bazel deps. Dependabot has native bzlmod support.
@@ -87,6 +124,10 @@ updates:
       - dependency-name: "ggml"
       - dependency-name: "whisper_cpp"
       - dependency-name: "llama_cpp"
+    # 7-day cooldown — same supply-chain rationale as above (Semgrep
+    # p/ci dependabot-missing-cooldown).
+    cooldown:
+      default-days: 7
 # Python pip stanza removed alongside tools/rag/ deletion — the engine
 # will own both seed-time and query-time bge-m3 embedding per
 # ADR-0020 (forthcoming), so the repo no longer has a Python runtime

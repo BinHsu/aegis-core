@@ -6,7 +6,7 @@
 | Date     | 2026-04-19                                                                  |
 | Deciders | Project author                                                              |
 | Context  | Phase 4b "Sign & Scan" first mini-slice. Image artifacts in ECR today are unsigned — anyone with `ecr:PutImage` (the OIDC role, or hypothetically a compromised CI runner) can publish whatever they like under the legitimate tag. Cryptographic provenance closes the gap, and pairs with Phase 4b's downstream Trivy scan + admission verification work. |
-| Related  | ADR-0025 (OCI packaging strategy), ADR-0026 v2 (model lifecycle / CI populator), ADR-0027 (frontend serving), `aegis-aws-landing-zone#83` (ECR resource policy defense-in-depth), `ARCHITECTURE.md` §10.1 (Supply Chain Integrity) |
+| Related  | ADR-0025 (OCI packaging strategy), ADR-0026 v2 (model lifecycle / CI populator), ADR-0027 (frontend serving), `aegis-landing-zone-aws#83` (ECR resource policy defense-in-depth), `ARCHITECTURE.md` §10.1 (Supply Chain Integrity) |
 
 ## Context
 
@@ -86,4 +86,4 @@ Keyed signing's only advantage is offline verification (no Sigstore lookup neede
 
 ## Cross-repo trail
 
-- [`aegis-aws-landing-zone#96`](https://github.com/BinHsu/aegis-aws-landing-zone/issues/96) (cross-repo, filed in this slice) — request ldz to wire Kyverno `verify-image` admission policy in EKS staging when Phase 4c K8s manifests land. Verification config: cert subject regexp `^repo:BinHsu/aegis-core:ref:refs/heads/main$` (or fork-equivalent), OIDC issuer `https://token.actions.githubusercontent.com`.
+- [`aegis-landing-zone-aws#96`](https://github.com/BinHsu/aegis-landing-zone-aws/issues/96) (cross-repo, filed in this slice) — request ldz to wire Kyverno `verify-image` admission policy in EKS staging when Phase 4c K8s manifests land. Verification config: cert subject regexp `^repo:BinHsu/aegis-core:ref:refs/heads/main$` (or fork-equivalent), OIDC issuer `https://token.actions.githubusercontent.com`.

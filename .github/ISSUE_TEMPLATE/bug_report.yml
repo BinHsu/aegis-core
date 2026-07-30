@@ -1,0 +1,46 @@
+name: Bug Report
+description: Report a reproducible bug in aegis-core.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening an issue, search [existing issues](https://github.com/BinHsu/aegis-core/issues) and the [CHANGELOG](https://github.com/BinHsu/aegis-core/blob/main/CHANGELOG.md).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `git describe --tags` or the image tag.
+      placeholder: "v0.1.0-demo-lan"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / error output
+      render: shell
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and found no duplicate.
+          required: true
+        - label: I am running a supported version.
+          required: true

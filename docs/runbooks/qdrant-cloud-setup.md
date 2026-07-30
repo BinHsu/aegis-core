@@ -19,7 +19,7 @@ record the endpoint for the (forthcoming) `engine --seed
 Same structural shape as
 [`buildbuddy-cache-setup.md`](buildbuddy-cache-setup.md) — signup
 + key + GHA secret. This is the Qdrant analogue: Qdrant Inc. owns
-the SaaS; we do NOT provision through `aegis-aws-landing-zone`
+the SaaS; we do NOT provision through `aegis-landing-zone-aws`
 because Qdrant Cloud is not an AWS-managed service (it runs on
 AWS but is operated by Qdrant).
 

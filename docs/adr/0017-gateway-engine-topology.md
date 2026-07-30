@@ -16,7 +16,7 @@ the Local-mode launcher (`bazel run //:app_local`) starts exactly one
 of each as subprocesses on a single host.
 
 Phase 4+ Cloud-mode deployment (per the contract on
-[`aegis-aws-landing-zone#54`](https://github.com/BinHsu/aegis-aws-landing-zone/issues/54))
+[`aegis-landing-zone-aws#54`](https://github.com/BinHsu/aegis-landing-zone-aws/issues/54))
 will run both behind EKS. The question: **is the application code
 obligated to know the cluster topology, or is topology purely a
 deploy-time concern?**
@@ -92,7 +92,7 @@ layer.**
 ### What deployment realizes
 
 Deployment is where topology is actually chosen. The infra side
-(`aegis-aws-landing-zone`) configures:
+(`aegis-landing-zone-aws`) configures:
 
 - **Engine tier**: Kubernetes Deployment with N replicas (N ≥ 1).
   Exposed via a Headless Service that gRPC's DNS resolver expands
@@ -108,7 +108,7 @@ Deployment is where topology is actually chosen. The infra side
 
 ### Cross-repo coordination
 
-A standing cross-repo issue on `aegis-aws-landing-zone` captures
+A standing cross-repo issue on `aegis-landing-zone-aws` captures
 the infra-side configuration needed for M:N:
 
 - Headless Service DNS format for the engine pool (used by
@@ -151,9 +151,9 @@ the infra-side configuration needed for M:N:
 - Session affinity complexity sits in the landing-zone repo,
   which means cross-repo coordination is non-trivial. The
   paired standing issues (`aegis-core#11` ↔
-  `aegis-aws-landing-zone#54`) are the coordination mechanism;
+  `aegis-landing-zone-aws#54`) are the coordination mechanism;
   this ADR should land alongside a `cross-repo/fyi` notice on
-  `aegis-aws-landing-zone`.
+  `aegis-landing-zone-aws`.
 
 ## Alternatives Considered
 
@@ -214,5 +214,5 @@ the infra-side configuration needed for M:N:
       discussing the dual-mode topology.
 - [ ] `README.md` ADR index table gets row for ADR-0017.
 - [ ] Cross-repo `cross-repo/fyi` issue on
-      `aegis-aws-landing-zone` signaling the session-affinity
+      `aegis-landing-zone-aws` signaling the session-affinity
       requirement (no action yet — informational).
