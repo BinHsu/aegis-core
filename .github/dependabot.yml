@@ -13,11 +13,13 @@ version: 2
 # months or more. Every `open-pull-requests-limit` below is set to 0 so
 # Dependabot stops opening version-update PRs — a public repo with dozens of
 # unattended bot PRs piling up reads worse than one with the cadence
-# deliberately turned down. This does NOT touch security updates, which are a
-# separate GitHub mechanism (repo Settings → Code security → Dependabot
-# security updates) and keep firing regardless of this file. To resume normal
-# cadence, restore each entry's previous limit (noted inline) and delete this
-# block.
+# deliberately turned down. This does NOT touch security updates: those are a
+# separate GitHub mechanism, controlled in repo Settings → Code security →
+# Dependabot security updates, not in this file — this file cannot enable or
+# disable that setting. It is currently ON (verified 2026-07-31), so security
+# PRs keep flowing; if someone turns that setting off, they stop, independent
+# of anything here. To resume normal cadence, restore each entry's previous
+# limit (noted inline) and delete this block.
 # =============================================================================
 
 updates:
