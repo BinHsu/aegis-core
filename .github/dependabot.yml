@@ -7,6 +7,22 @@
 
 version: 2
 
+# =============================================================================
+# MAINTENANCE FREEZE — in effect from the merge of this change (authored
+# 2026-07-31, expected to lift ~2027-Q1/Q2). The owner is starting a new job
+# and won't be able to tend this repo for six months or more. Every
+# `open-pull-requests-limit` below is set to 0 so
+# Dependabot stops opening version-update PRs — a public repo with dozens of
+# unattended bot PRs piling up reads worse than one with the cadence
+# deliberately turned down. This does NOT touch security updates: those are a
+# separate GitHub mechanism, controlled in repo Settings → Code security →
+# Dependabot security updates, not in this file — this file cannot enable or
+# disable that setting. It is currently ON (verified 2026-07-31), so security
+# PRs keep flowing; if someone turns that setting off, they stop, independent
+# of anything here. To resume normal cadence, restore each entry's previous
+# limit (noted inline) and delete this block.
+# =============================================================================
+
 updates:
   # ---------------------------------------------------------------------------
   # GitHub Actions — catches workflow action version drift.
@@ -16,7 +32,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0 # frozen; previous limit was 5
     labels:
       - dependencies
       - github-actions
@@ -37,7 +53,7 @@ updates:
     schedule:
       interval: weekly
       day: tuesday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0 # frozen; previous limit was 5
     labels:
       - dependencies
       - go
@@ -94,7 +110,7 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0 # frozen; previous limit was 3
     labels:
       - dependencies
       - frontend
@@ -113,7 +129,7 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0 # frozen; previous limit was 3
     labels:
       - dependencies
       - bazel
