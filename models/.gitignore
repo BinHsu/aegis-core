@@ -13,5 +13,10 @@ cache/
 downloads/
 tmp/
 
+# CAS model dirs — local dev symlinks onto external storage (T7 items dir),
+# not tracked; content lives at AEGIS_MODEL_PATH regardless of link target.
+/bge-m3-q4km
+/whisper-tiny-en
+
 # PGP signature (Phase 4+ — tracked separately when signing is enabled)
 # manifest.json.sig
