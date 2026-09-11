@@ -32,7 +32,11 @@ BAZELISK_DIR="$REPO_ROOT/.bazelisk"
 # crashes when --output_user_root contains a space (the error manifests
 # as "DottedVersion$InvalidDottedVersionException ... got 'None'", which
 # is really a path-quoting bug in sandbox setup). A repo cloned to
-# e.g. "/Volumes/Samsung PSSD T7 Media/aegis-core" hits this.
+# e.g. "/Volumes/Samsung PSSD T7 Media/aegis-core" hit this. That
+# volume was renamed to "T7" on 2026-07-31, so the current path
+# "/Volumes/T7/aegis-core" no longer triggers the branch below. The
+# check stays: it is generic, and any future clone under a path with
+# a space needs it.
 #
 # Policy: if the repo path contains a space, transparently route the
 # cache to /tmp/aegis-bazel-<hash>. This is a documented Rule 6
