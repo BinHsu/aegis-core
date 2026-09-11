@@ -9,7 +9,7 @@
 //   - NO export, NO history (L3, L4 — intentional features)
 
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router";
 
 import {
   type HintUrgency,

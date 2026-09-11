@@ -14,6 +14,33 @@
 default_language_version:
   python: python3
 
+# Generated trees are excluded from every hook that REWRITES file content
+# (trailing-whitespace, end-of-file-fixer, mixed-line-ending, prettier).
+# `buf.gen.yaml` is the formatter of record for anything under
+# frontend_web/src/gen/, and the proto-codegen-drift job in
+# ci-baseline.yml asserts the checked-in tree equals raw `buf generate`
+# output. A formatting hook that rewrites generated files makes those two
+# guarantees mutually exclusive: pre-commit reformats, the drift job
+# regenerates plain, and CI fails forever with no source-level cause.
+# (Surfaced 2026-07-29 during the protobuf-es v2 migration, once the
+# drift job's pathspec was corrected to actually cover this tree.)
+# Read-only hooks — gitleaks, check-yaml, buf lint — still see the files.
+#
+# pnpm-lock.yaml (repo root) is excluded the same way and for the same
+# reason: it is a generated file, and pnpm@8.6.7 is its tool of record
+# (ADR-0015, root package.json's packageManager pin), not Prettier.
+# Native pnpm output is single-quoted / single-line; Prettier rewrites it
+# to double-quoted / multi-line `resolution:` blocks. Once
+# .github/dependabot.yml's npm stanza is rooted at "/" so Dependabot can
+# author this file directly, an unexcluded rewriting hook would reformat
+# every Dependabot-authored lockfile and fail "Pre-commit hooks" in
+# ci-baseline.yml with "files were modified by this hook" — trading
+# ERR_PNPM_OUTDATED_LOCKFILE for a formatter red light on the same PRs.
+# Excluded from trailing-whitespace / end-of-file-fixer /
+# mixed-line-ending / prettier; still visible to check-yaml,
+# check-added-large-files, gitleaks, detect-private-key, and the other
+# read-only hooks, which only inspect and never rewrite.
+
 repos:
   # ---------------------------------------------------------------------------
   # Generic hygiene
@@ -22,8 +49,14 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
-        exclude: '\.md$' # preserve Markdown line-break trailing spaces
+        # `\.md$` preserves Markdown line-break trailing spaces;
+        # frontend_web/src/gen/ and pnpm-lock.yaml are generated (see
+        # note above).
+        exclude: '(\.md$|^frontend_web/src/gen/|^pnpm-lock\.yaml$)'
       - id: end-of-file-fixer
+        # protoc-gen-es emits a trailing blank line; leave it alone.
+        # pnpm-lock.yaml is generated (see note above).
+        exclude: '(^frontend_web/src/gen/|^pnpm-lock\.yaml$)'
       - id: check-yaml
         args: ["--allow-multiple-documents"]
       - id: check-json
@@ -35,6 +68,8 @@ repos:
       - id: detect-private-key
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        # pnpm-lock.yaml is generated (see note above).
+        exclude: '(^frontend_web/src/gen/|^pnpm-lock\.yaml$)'
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
 
@@ -82,15 +117,19 @@ repos:
       - id: prettier
         types_or: [javascript, jsx, ts, tsx, json, yaml, css, html]
         exclude: |
-          (?x)^(
-            docs/adr/.*\.md|
-            ARCHITECTURE\.md|
-            ROADMAP\.md|
-            CONTRIBUTING\.md|
-            SECURITY\.md|
-            CLAUDE\.md|
-            README\.md
-          )$
+          (?x)(
+            ^frontend_web/src/gen/|
+            ^pnpm-lock\.yaml$|
+            ^(
+              docs/adr/.*\.md|
+              ARCHITECTURE\.md|
+              ROADMAP\.md|
+              CONTRIBUTING\.md|
+              SECURITY\.md|
+              CLAUDE\.md|
+              README\.md
+            )$
+          )
 
   # ---------------------------------------------------------------------------
   # Protobuf lint and breaking-change detection

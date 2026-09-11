@@ -2,6 +2,16 @@
 
 [![CI](https://github.com/BinHsu/aegis-core/actions/workflows/ci-baseline.yml/badge.svg)](https://github.com/BinHsu/aegis-core/actions/workflows/ci-baseline.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/BinHsu/aegis-core/badge)](https://securityscorecards.dev/viewer/?uri=github.com/BinHsu/aegis-core)
 
+## Maintenance status
+
+Actively maintained through 2026-07-31. Paused from the merge of this change
+while the owner starts a new job; expected to resume around 2027-Q1/Q2.
+Security updates still flow: Dependabot security updates are enabled on this
+repo (verified 2026-07-31) and are not affected by the version-update limit
+below. Only version-update PRs are paused. Issues and PRs may not get a timely
+response in the meantime. The repo is left in a known-good state at the freeze
+point, not mid-refactor.
+
 <!-- session-close-review: status + narrative -->
 
 > **A chief-of-staff's tool for the moment before the principal speaks.**

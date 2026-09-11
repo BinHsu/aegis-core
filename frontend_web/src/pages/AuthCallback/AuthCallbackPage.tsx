@@ -12,7 +12,7 @@
 // keeps the router config mode-agnostic.
 
 import { useEffect, useState, type JSX } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { handleSignInCallback } from "@/lib/auth";
 

@@ -8,7 +8,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Required for GitHub merge queue. Every context in main-protection's
+  # required_status_checks list is a job in THIS workflow, so without a
+  # merge_group trigger a queued PR waits forever on checks that never
+  # run — the queue deadlocks rather than failing visibly. Adding the
+  # trigger must therefore land BEFORE the merge_queue rule is enabled.
+  merge_group:
+    types: [checks_requested]
 
+# github.ref is the queue's own gh-readonly-queue/... ref on merge_group
+# events, so each queued entry gets its own concurrency group and entries
+# do not cancel each other.
 concurrency:
   group: ci-baseline-${{ github.ref }}
   cancel-in-progress: true
@@ -38,6 +48,60 @@ jobs:
 
       - name: Run pre-commit
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+
+  # ---------------------------------------------------------------------------
+  # Lockfile format guard — cheap, fast-failing check that the repo-root
+  # pnpm-lock.yaml still declares lockfileVersion 6.0. Root package.json
+  # pins "packageManager": "pnpm@8.6.7", and ADR-0015 explains why: 6.0 is
+  # the lockfile format aspect_rules_js's npm_translate_lock expects. Both
+  # this workflow's "Install frontend deps (hermetic pnpm)" step and
+  # release-staging-frontend.yml consume this lockfile via Bazel.
+  #
+  # If the lockfile is ever regenerated with a pnpm newer than 8.6.7 (e.g.
+  # a Dependabot npm PR that runs its own pnpm), lockfileVersion drifts to
+  # 9.0 and the Bazel build breaks, not just frontend tests. No Bazel, no
+  # pnpm install, no network here — just a checkout and a grep, so this
+  # fails loud in seconds instead of surfacing later as a confusing Bazel
+  # error.
+  #
+  # The value match is tolerant of quoting: native pnpm@8.6.7 output is
+  # single-quoted (lockfileVersion: '6.0'), but the repo's prettier
+  # pre-commit hook rewrites it to double-quoted (lockfileVersion: "6.0")
+  # once it runs. Both are legitimate depending on whether prettier has
+  # touched the file yet, so the check accepts bare, single-quoted, or
+  # double-quoted "6.0" — but the value itself must match exactly
+  # ("16.0" or "6.01" still fail; this is not a substring match).
+  # ---------------------------------------------------------------------------
+  lockfile-format-guard:
+    name: Lockfile format guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Assert pnpm-lock.yaml is lockfileVersion 6.0
+        run: |
+          set -euo pipefail
+          file="pnpm-lock.yaml"
+          expected_desc='lockfileVersion 6.0 (bare, single-quoted, or double-quoted)'
+          if [ ! -f "$file" ]; then
+            echo "::error::${file} not found at repo root. Expected ${expected_desc}. Regenerate with pnpm@8.6.7 per ADR-0015 (docs/ADR/0015-hermetic-nodejs-via-aspect-rules-js.md)."
+            exit 1
+          fi
+          found=$(grep -m1 '^lockfileVersion:' "$file" || true)
+          if [ -z "$found" ]; then
+            echo "::error::${file} has no lockfileVersion line at all. Expected ${expected_desc}. Regenerate with pnpm@8.6.7 per ADR-0015 (docs/ADR/0015-hermetic-nodejs-via-aspect-rules-js.md)."
+            exit 1
+          fi
+          # Anchored to the whole line: cannot match a nested key, and
+          # cannot substring-match "16.0" / "6.01" — the value between
+          # the optional quotes must be exactly 6.0.
+          regex="^lockfileVersion:[[:space:]]*[\"']?6\.0[\"']?[[:space:]]*\$"
+          if ! printf '%s\n' "$found" | grep -Eq "$regex"; then
+            echo "::error::${file} lockfileVersion mismatch. Expected: ${expected_desc}. Found: ${found}. Regenerate the lockfile with pnpm@8.6.7 (root package.json packageManager pin) per ADR-0015 — a different lockfileVersion (e.g. 9.0 from a newer pnpm) breaks aspect_rules_js's npm_translate_lock and the Bazel build, not just the frontend tests."
+            exit 1
+          fi
+          echo "OK: ${file} declares ${expected_desc} (found: ${found})"
 
   # ---------------------------------------------------------------------------
   # Secret scanning — redundant with GitHub push protection + pre-commit
@@ -115,8 +179,13 @@ jobs:
         run: ./tools/scripts/proto_gen.sh
 
       - name: Verify no diff
+        # `frontend_web/src/gen/`, not `frontend_web/gen/`. buf.gen.yaml
+        # writes the TypeScript tree under src/ so Vite's `@/` alias
+        # resolves it; the old pathspec pointed at a directory that has
+        # never existed, which made `git diff` match nothing and let TS
+        # codegen drift through unnoticed.
         run: |
-          if ! git diff --exit-code -- gateway_go/gen/ frontend_web/gen/ 2>/dev/null; then
+          if ! git diff --exit-code -- gateway_go/gen/ frontend_web/src/gen/ 2>/dev/null; then
             echo "::error::Generated proto code is out of sync with .proto sources."
             echo "::error::Run ./tools/scripts/proto_gen.sh locally and commit the result."
             exit 1
@@ -434,7 +503,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.25"
           cache-dependency-path: gateway_go/go.sum
@@ -454,7 +523,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.25"
           cache-dependency-path: gateway_go/go.sum

@@ -7,3 +7,26 @@
 
 packages:
   - "frontend_web"
+
+# --- Supply-chain hardening (Semgrep p/ci package_managers.pnpm.*) ---
+# These three settings were added to pnpm in v10.16/v10.21/v10.26. The
+# repo currently pins `pnpm@8.6.7` (package.json packageManager field,
+# ADR-0015 — lockfileVersion 6.0, the format aspect_rules_js's
+# npm_translate_lock expects). pnpm 8.6.7 silently ignores unknown
+# workspace-config keys (verified: `pnpm install` with these three
+# keys present still runs clean, no error), so setting them now is a
+# harmless forward-compatible no-op that activates automatically once
+# the repo upgrades past pnpm v10.26 — no follow-up edit needed here
+# at that point.
+#
+# minimumReleaseAge: reject a dependency version published less than
+# 7 days (10080 minutes) ago — same cooldown rationale as .npmrc's
+# min-release-age and dependabot.yml's cooldown blocks.
+minimumReleaseAge: 10080
+# trustPolicy: refuse an update that would downgrade another
+# package's declared security settings (e.g. strip a postinstall
+# guard) — blocks one known supply-chain-takeover pattern.
+trustPolicy: no-downgrade
+# blockExoticSubdeps: refuse transitive deps resolved from non-registry
+# sources (git/tarball URLs), which bypass npm registry vetting.
+blockExoticSubdeps: true
