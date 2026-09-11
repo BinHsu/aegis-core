@@ -115,6 +115,11 @@ http_archive(
 http_archive(
     name = "whisper_cpp",
     build_file = "//engine_cpp/third_party/whisper_cpp:whisper_cpp.BUILD",
+    # Upstream CMakeLists.txt:29 writes bindings/javascript/package.json into its own
+    # source tree, which rules_foreign_cc's read-only sandbox rejects with "Operation
+    # not permitted" — see the patch file for the full explanation.
+    patch_args = ["-p1"],
+    patches = ["//engine_cpp/third_party/whisper_cpp:no-source-tree-write.patch"],
     sha256 = "b26f30e52c095ccb75da40b168437736605eb280de57381887bf9e2b65f31e66",
     strip_prefix = "whisper.cpp-1.8.4",
     urls = ["https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.4.tar.gz"],

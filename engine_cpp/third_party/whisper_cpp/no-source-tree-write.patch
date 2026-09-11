@@ -1,0 +1,16 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -25,8 +25,11 @@
+
+     include(git-vars)
+
+-    # configure project version
+-    configure_file(${CMAKE_SOURCE_DIR}/bindings/javascript/package-tmpl.json ${CMAKE_SOURCE_DIR}/bindings/javascript/package.json @ONLY)
++    # Upstream's configure_file() below writes bindings/javascript/package.json into
++    # CMAKE_SOURCE_DIR, but Bazel's rules_foreign_cc mounts an external repo's source
++    # tree read-only (sandboxed, immutable input) — the write fails with "Operation
++    # not permitted". Dropped rather than worked around: this build has no JS bindings
++    # target, so the generated package.json is never consumed.
+ else()
+     set(WHISPER_STANDALONE OFF)
+ endif()
