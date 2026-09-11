@@ -511,7 +511,12 @@ jobs:
       - name: Run govulncheck
         working-directory: gateway_go
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Pinned, not @latest: x/vuln v1.8.0 bumped its go.mod "go" directive
+          # to 1.26, which go-install refuses to build against the 1.25
+          # toolchain pinned above (fails the whole step before govulncheck
+          # even runs, unrelated to any actual vulnerability). v1.7.0 is the
+          # newest release whose go.mod still says "go 1.25.0".
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           # Advisory-only on PR time; tighten to hard-gate once main is clean.
           govulncheck ./... || true
 
