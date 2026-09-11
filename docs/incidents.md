@@ -52,6 +52,15 @@ the second; the first hid behind it for the first ~20 minutes.
    setup failed in a way that surfaced as a *different* error in
    `XcodeLocalEnvProvider`, not as a "bad path" message.
 
+   > **Note added 2026-07-31.** The volume was renamed from
+   > `Samsung PSSD T7 Media` to `T7`, so this repo now lives at
+   > `/Volumes/T7/aegis-core/` and the path no longer contains a space.
+   > The old paths quoted throughout this record are kept verbatim
+   > because they are what was observed at the time. The rename was
+   > forced by a second instance of the same class of bug: ESP-IDF
+   > documents that its build system does not support spaces in the
+   > path to ESP-IDF or to a project.
+
 2. **No full Xcode installed.** This Mac has only the Command Line
    Tools (`xcode-select -p` returns `/Library/Developer/CommandLineTools`).
    Bazel 7.4.1's `XcodeLocalEnvProvider` invokes `xcode-locator`
