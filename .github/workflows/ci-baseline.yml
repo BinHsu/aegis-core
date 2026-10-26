@@ -505,20 +505,19 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25"
+          go-version: "1.26.10"
           cache-dependency-path: gateway_go/go.sum
 
       - name: Run govulncheck
         working-directory: gateway_go
         run: |
-          # Pinned, not @latest: x/vuln v1.8.0 bumped its go.mod "go" directive
-          # to 1.26, which go-install refuses to build against the 1.25
-          # toolchain pinned above (fails the whole step before govulncheck
-          # even runs, unrelated to any actual vulnerability). v1.7.0 is the
-          # newest release whose go.mod still says "go 1.25.0".
-          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-          # Advisory-only on PR time; tighten to hard-gate once main is clean.
-          govulncheck ./... || true
+          # Pinned, not @latest. The toolchain above matches MODULE.bazel's
+          # go_sdk, so this scans the stdlib the shipped gateway is built with.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          # Hard gate since 2026-10-27, once main was clean. While this was
+          # advisory (`|| true`), the gateway shipped on Go 1.25.11 with five
+          # reachable stdlib CVEs and nothing turned red.
+          govulncheck ./...
 
   go-security-scan:
     name: Go security scan (gosec)
@@ -530,7 +529,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25"
+          go-version: "1.26.10"
           cache-dependency-path: gateway_go/go.sum
 
       - name: Run gosec
