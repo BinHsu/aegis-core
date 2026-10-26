@@ -181,7 +181,10 @@ go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 # golang.org/x/net, GO-2026-4394 in go.opentelemetry.io/otel/sdk). 1.25.11
 # is the latest stable 1.25 patch and carries the cumulative stdlib
 # security fixes since 1.24.13.
-go_sdk.download(version = "1.25.11")
+# Bumped to 1.26.10 (2026-10-27): Go 1.25 left support when 1.27 shipped, and
+# GO-2026-6809 (crypto/x509 distrust of compromised intermediates) has no
+# 1.25 fix. 1.26.10 also clears GO-2026-6090/6091/6218/5972 (fixed in 1.26.6).
+go_sdk.download(version = "1.26.10")
 
 # go_deps extension resolves gateway_go/go.mod into Bazel repositories
 # so rules_go targets can depend on Go module deps like grpc-go and
