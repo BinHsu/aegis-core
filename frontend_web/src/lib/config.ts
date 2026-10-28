@@ -61,7 +61,6 @@ function normalize(raw: RawConfig): AppConfig {
 
   const gatewayEndpoint =
     raw.gatewayEndpoint ??
-    undefined ??
     envStr("VITE_AEGIS_GATEWAY_ENDPOINT") ??
     defaultGatewayEndpoint();
 
