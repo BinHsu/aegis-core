@@ -226,9 +226,12 @@ jobs:
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
             /tmp/aegis-bazel-*
-          key: bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
+          # ImageOS/ImageVersion in the key: the cache holds Bazel's C++ toolchain
+          # config with absolute host paths, so a cache from an older runner image
+          # fails with "absolute path inclusion(s) found" (seen 2026-10-29).
+          key: bazel-unit-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
           restore-keys: |
-            bazel-unit-${{ runner.os }}-
+            bazel-unit-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-
 
       # ADR-0014 Option β (Phase A, demo horizon): BuildBuddy Personal
       # remote cache. Writes .bazelrc.user (gitignored, runner-local
@@ -428,9 +431,9 @@ jobs:
           path: |
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
-          key: bazel-e2e-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion') }}
+          key: bazel-e2e-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion') }}
           restore-keys: |
-            bazel-e2e-${{ runner.os }}-
+            bazel-e2e-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-
 
       - name: Install frontend deps (hermetic pnpm)
         run: ./tools/scripts/frontend.sh install
@@ -551,7 +554,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.x"
+          # Pinned: "3.x" floated to 3.15.1 on 2026-10-29 and semgrep-core
+          # segfaulted (exit -11) under it; 3.14.8 ran clean the day before.
+          python-version: "3.14"
 
       - name: Run Semgrep
         run: |
