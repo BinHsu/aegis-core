@@ -71,7 +71,7 @@ jobs:
       # NOT arch-qualified there; this workflow is the only arm64 builder, so
       # give it its own key prefix to avoid cross-arch artifact mixing.
       - name: Cache Bazel
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: |
             ${{ github.workspace }}/.bazel_cache
