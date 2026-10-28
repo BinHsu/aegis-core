@@ -34,7 +34,7 @@ jobs:
   # ---------------------------------------------------------------------------
   pre-commit:
     name: Pre-commit hooks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -74,7 +74,7 @@ jobs:
   # ---------------------------------------------------------------------------
   lockfile-format-guard:
     name: Lockfile format guard
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -110,7 +110,7 @@ jobs:
   # ---------------------------------------------------------------------------
   secret-scan:
     name: Gitleaks secret scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -128,7 +128,7 @@ jobs:
   # ---------------------------------------------------------------------------
   buf-lint:
     name: Proto lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -170,7 +170,7 @@ jobs:
   # ---------------------------------------------------------------------------
   proto-codegen-drift:
     name: Proto codegen drift check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -204,12 +204,18 @@ jobs:
   # ---------------------------------------------------------------------------
   bazel-unit-tests:
     name: Bazel unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # cold ggml builds run 17-28min; 30 was too tight (run 27428960657 hit the wall 2026-06-12)
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Identify runner image
+        id: runner-image
+        # ImageOS/ImageVersion are runner shell variables, not ${{ env }} values,
+        # so they reach cache keys only through a step output.
+        run: echo "id=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
 
       - name: Cache Bazel
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -226,9 +232,11 @@ jobs:
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
             /tmp/aegis-bazel-*
-          key: bazel-unit-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
+          # Runner image in the key: C++ compile outputs record the host compiler's
+          # absolute header paths, so they must not cross runner images.
+          key: bazel-unit-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
           restore-keys: |
-            bazel-unit-${{ runner.os }}-
+            bazel-unit-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-
 
       # ADR-0014 Option β (Phase A, demo horizon): BuildBuddy Personal
       # remote cache. Writes .bazelrc.user (gitignored, runner-local
@@ -257,7 +265,12 @@ jobs:
           build --bes_backend=grpcs://remote.buildbuddy.io
           build --bes_results_url=https://app.buildbuddy.io/invocation/
           build --remote_timeout=3600
+          build --remote_instance_name=${ImageOS}-${ImageVersion}
           EOF
+          # remote_instance_name partitions the cache per runner image. Action
+          # keys do not include the system compiler, so without it a GCC 15
+          # result (ubuntu 26.04 runs, 2026-10-26..29) was served to a GCC 13
+          # runner and failed "absolute path inclusion(s) found" in abseil.
           echo "BuildBuddy cache configured. Invocation dashboard: https://app.buildbuddy.io/"
 
       - name: Build proto + engine + gateway + gateway OCI image
@@ -385,7 +398,7 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-tauri-compliance:
     name: Frontend Tauri-compatibility check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -406,7 +419,7 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-e2e-smoke:
     name: Frontend live-browser smoke (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
@@ -422,15 +435,21 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
+      - name: Identify runner image
+        id: runner-image
+        # ImageOS/ImageVersion are runner shell variables, not ${{ env }} values,
+        # so they reach cache keys only through a step output.
+        run: echo "id=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+
       - name: Cache Bazel (Node toolchain)
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
-          key: bazel-e2e-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion') }}
+          key: bazel-e2e-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion') }}
           restore-keys: |
-            bazel-e2e-${{ runner.os }}-
+            bazel-e2e-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-
 
       - name: Install frontend deps (hermetic pnpm)
         run: ./tools/scripts/frontend.sh install
@@ -456,7 +475,7 @@ jobs:
   # ---------------------------------------------------------------------------
   markdown-link-check:
     name: Markdown link check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -497,7 +516,7 @@ jobs:
   # ---------------------------------------------------------------------------
   go-vulncheck:
     name: Go vulnerability scan (govulncheck)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -521,7 +540,7 @@ jobs:
 
   go-security-scan:
     name: Go security scan (gosec)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -543,7 +562,7 @@ jobs:
 
   semgrep:
     name: Semgrep SAST scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -551,7 +570,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.x"
+          # Pinned: "3.x" floated to 3.15.1 on 2026-10-29 and semgrep-core
+          # segfaulted (exit -11) under it; 3.14.8 ran clean the day before.
+          python-version: "3.14"
 
       - name: Run Semgrep
         run: |
