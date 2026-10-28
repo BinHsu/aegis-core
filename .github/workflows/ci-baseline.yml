@@ -211,6 +211,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
+      - name: Identify runner image
+        id: runner-image
+        # ImageOS/ImageVersion are runner shell variables, not ${{ env }} values,
+        # so they reach cache keys only through a step output.
+        run: echo "id=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+
       - name: Cache Bazel
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -226,12 +232,11 @@ jobs:
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
             /tmp/aegis-bazel-*
-          # ImageOS/ImageVersion in the key: the cache holds Bazel's C++ toolchain
-          # config with absolute host paths, so a cache from an older runner image
-          # fails with "absolute path inclusion(s) found" (seen 2026-10-29).
-          key: bazel-unit-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
+          # Runner image in the key: C++ compile outputs record the host compiler's
+          # absolute header paths, so they must not cross runner images.
+          key: bazel-unit-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion', '.bazelrc') }}
           restore-keys: |
-            bazel-unit-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-
+            bazel-unit-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-
 
       # ADR-0014 Option β (Phase A, demo horizon): BuildBuddy Personal
       # remote cache. Writes .bazelrc.user (gitignored, runner-local
@@ -260,7 +265,12 @@ jobs:
           build --bes_backend=grpcs://remote.buildbuddy.io
           build --bes_results_url=https://app.buildbuddy.io/invocation/
           build --remote_timeout=3600
+          build --remote_instance_name=${ImageOS}-${ImageVersion}
           EOF
+          # remote_instance_name partitions the cache per runner image. Action
+          # keys do not include the system compiler, so without it a GCC 15
+          # result (ubuntu 26.04 runs, 2026-10-26..29) was served to a GCC 13
+          # runner and failed "absolute path inclusion(s) found" in abseil.
           echo "BuildBuddy cache configured. Invocation dashboard: https://app.buildbuddy.io/"
 
       - name: Build proto + engine + gateway + gateway OCI image
@@ -425,15 +435,21 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
+      - name: Identify runner image
+        id: runner-image
+        # ImageOS/ImageVersion are runner shell variables, not ${{ env }} values,
+        # so they reach cache keys only through a step output.
+        run: echo "id=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+
       - name: Cache Bazel (Node toolchain)
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ${{ github.workspace }}/.bazel_cache
             ${{ github.workspace }}/.bazelisk
-          key: bazel-e2e-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion') }}
+          key: bazel-e2e-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelversion') }}
           restore-keys: |
-            bazel-e2e-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-
+            bazel-e2e-${{ runner.os }}-${{ steps.runner-image.outputs.id }}-
 
       - name: Install frontend deps (hermetic pnpm)
         run: ./tools/scripts/frontend.sh install
