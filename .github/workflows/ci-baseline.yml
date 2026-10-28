@@ -34,7 +34,7 @@ jobs:
   # ---------------------------------------------------------------------------
   pre-commit:
     name: Pre-commit hooks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -74,7 +74,7 @@ jobs:
   # ---------------------------------------------------------------------------
   lockfile-format-guard:
     name: Lockfile format guard
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -110,7 +110,7 @@ jobs:
   # ---------------------------------------------------------------------------
   secret-scan:
     name: Gitleaks secret scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -128,7 +128,7 @@ jobs:
   # ---------------------------------------------------------------------------
   buf-lint:
     name: Proto lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -170,7 +170,7 @@ jobs:
   # ---------------------------------------------------------------------------
   proto-codegen-drift:
     name: Proto codegen drift check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -204,7 +204,7 @@ jobs:
   # ---------------------------------------------------------------------------
   bazel-unit-tests:
     name: Bazel unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # cold ggml builds run 17-28min; 30 was too tight (run 27428960657 hit the wall 2026-06-12)
     timeout-minutes: 45
     steps:
@@ -385,7 +385,7 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-tauri-compliance:
     name: Frontend Tauri-compatibility check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -406,7 +406,7 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-e2e-smoke:
     name: Frontend live-browser smoke (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
@@ -456,7 +456,7 @@ jobs:
   # ---------------------------------------------------------------------------
   markdown-link-check:
     name: Markdown link check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -497,7 +497,7 @@ jobs:
   # ---------------------------------------------------------------------------
   go-vulncheck:
     name: Go vulnerability scan (govulncheck)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -521,7 +521,7 @@ jobs:
 
   go-security-scan:
     name: Go security scan (gosec)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -543,7 +543,7 @@ jobs:
 
   semgrep:
     name: Semgrep SAST scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
