@@ -2,7 +2,7 @@
 
 | Field    | Value |
 | -------- | ----- |
-| Status   | Proposed — aegis-core stance; cross-repo items pending agreement on ldz#214 |
+| Status   | **Accepted** (realized 2026) — the cross-repo ldz#214 items pending at write time are resolved; `aegis-platform-aws` and `aegis-core-deploy` are live on `main` |
 | Date     | 2026-05-18 |
 | Deciders | Project author |
 | Context  | aegis-core's Kubernetes deploy manifests currently live inside the branch-protected `aegis-core` repo (`apps/staging/`), which makes the CI image-tag automation fight branch protection (ADR-0032, Incident 18). This ADR records aegis-core's stance on the deploy topology — a three-layer split (account fabric / platform tier / workload) with the platform tier extracted into a shared `aegis-platform` repo and each workload's manifests in its own deploy repo. It is the decision artifact behind cross-repo issues ldz#213 / #214 / #215. |
